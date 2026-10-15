@@ -20,6 +20,12 @@ import (
 // supports must be in the calendar with the same two dates. A version
 // past the end of extended support is logged only.
 //
+// It also checks what it can of the extended-support premium without the
+// Pricing API: EKS still has a version in extended support, so the premium
+// still applies, and the premium was checked within premiumMaxAge. The
+// price itself is checked by hand against the EKS pricing page,
+// https://aws.amazon.com/eks/pricing/, and PremiumAsOf moved to that day.
+//
 // It runs in us-east-1 with read-only calls that cost nothing:
 //
 //   - eks:DescribeClusterVersions with includeAll, paged
@@ -37,6 +43,7 @@ func TestLiveSupportCalendar(t *testing.T) {
 		}
 		return p.UTC().Format(time.DateOnly)
 	}
+	extended := 0
 	pages := eks.NewDescribeClusterVersionsPaginator(eks.NewFromConfig(cfg), &eks.DescribeClusterVersionsInput{IncludeAll: aws.Bool(true)})
 	for pages.HasMorePages() {
 		page, err := pages.NextPage(ctx)
@@ -52,10 +59,27 @@ func TestLiveSupportCalendar(t *testing.T) {
 			} else if bstd, bext := w.StandardEnd.Format(time.DateOnly), w.ExtendedEnd.Format(time.DateOnly); std != bstd || ext != bext {
 				note = "the calendar has " + bstd + " / " + bext
 			}
+			if cv.VersionStatus == ekstypes.VersionStatusExtendedSupport {
+				extended++
+			}
 			t.Logf("%-5s %-18s standard %s, extended %s: %s", v, cv.VersionStatus, std, ext, note)
 			if note != "ok" && cv.VersionStatus != ekstypes.VersionStatusUnsupported {
 				t.Errorf("%s: the built-in calendar (as of %s) is stale: %s; EKS has %s / %s", v, fleetdata.CalendarAsOf, note, std, ext)
 			}
 		}
 	}
+	if extended == 0 {
+		t.Errorf("no version is in extended support: check whether the premium of $%.2f/hr still applies", fleetdata.ExtendedSupportPremiumUSDPerHour)
+	}
+	checked, err := time.Parse(time.DateOnly, fleetdata.PremiumAsOf)
+	if err != nil {
+		t.Fatalf("PremiumAsOf = %q: %v", fleetdata.PremiumAsOf, err)
+	}
+	if age := time.Since(checked); age > premiumMaxAge {
+		t.Errorf("the extended-support premium of $%.2f/hr was last checked on %s; check it by hand against https://aws.amazon.com/eks/pricing/ and move PremiumAsOf", fleetdata.ExtendedSupportPremiumUSDPerHour, fleetdata.PremiumAsOf)
+	}
 }
+
+// premiumMaxAge is how long the extended-support premium goes without a
+// check by hand before the live check fails.
+const premiumMaxAge = 180 * 24 * time.Hour

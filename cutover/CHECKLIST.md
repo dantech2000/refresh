@@ -76,6 +76,10 @@ These are not part of the commit. The cutover should wait for them.
 - [ ] `task test:live` passes against a real account with a `ReadOnlyAccess`
       identity, and a manual upgrade ran on a test cluster (`REWRITE.md`,
       phase 6). Today the new tree has one livecheck, `TestLiveRegions`.
+      `TestLiveSupportCalendar` does not read prices: check the
+      extended-support premium (`fleetdata.ExtendedSupportPremiumUSDPerHour`)
+      by hand against https://aws.amazon.com/eks/pricing/ and move
+      `fleetdata.PremiumAsOf`.
 - [ ] The reference in `docs-next` is fresh.
       Check: `task build:next && ./dist/refresh-next gen-docs --out docs-next/reference && git status --short docs-next/reference` prints nothing.
 
