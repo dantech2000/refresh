@@ -30,7 +30,7 @@ Each check has one outcome. There is no score.
 | [`DrainBlockers`](#drainblockers) | PodDisruptionBudgets, nodes, pods | Blocking, `--force` goes past it | Yes |
 | [`PDBCoverage`](#pdbcoverage) | Deployments and PodDisruptionBudgets | Advisory | Yes |
 | [`Utilization`](#utilization) | Node metrics from metrics-server | Advisory | Yes |
-| [`Quotas`](#quotas) | The EC2 vCPU quota, its usage, and the nodes that the change launches | Advisory | No |
+| [`Quotas`](#quotas) | The EC2 vCPU quota, its usage, and the nodes that the change launches | Blocking on a likely surge, `--force` goes past it; advisory on current use | No |
 | `Kubernetes` | Whether the Kubernetes API was reachable | Asks when it was not | |
 
 `cluster upgrade-check`, `cluster upgrade`, and `cluster rollback` also run
@@ -76,14 +76,14 @@ The worst result decides.
 | Any `Warn`; an advisory check is `Fail`; any other check is `Unreadable`; no Kubernetes access | Ask |
 | Everything is `Pass` or `Skipped` | Go |
 
-The flags change what an "ask" and a drain blocker do:
+The flags change what an "ask", a drain blocker, and a quota surge do:
 
 | Flag | Effect |
 |---|---|
 | none, on a terminal | The command asks. If you answer no, it exits `1` and changes nothing. |
 | `--yes` | An "ask" becomes "go". The result records what was accepted. |
 | `--require-healthy` | An "ask" becomes "block", exit `3`. It beats `--yes`. |
-| `--force` | A `DrainBlockers` result that is `Fail` or `Unreadable` becomes a warning. `--force` does nothing else. |
+| `--force` | A `DrainBlockers` result that is `Fail` or `Unreadable`, and a `Quotas` result that is `Fail` because of a likely surge, become warnings. `--force` does nothing else. |
 | `--skip-health-check` | No check runs. |
 
 A block exits `3`, or `4` when a check was `Unreadable`. Nothing changed.
@@ -284,7 +284,7 @@ desired size minus the current one.
 
 | Case | Outcome |
 |---|---|
-| Usage plus the likely surge is over the quota | `Fail` (advisory: the gate asks) |
+| Usage plus the likely surge is over the quota | `Fail` (blocking: exit `3`, nothing is sent; `--force` goes past it with a warning) |
 | Usage plus the documented maximum is over the quota | `Warn` |
 | Usage at 95 percent or more | `Fail` (advisory: the gate asks) |
 | Usage at 85 percent or more | `Warn` |
@@ -292,8 +292,10 @@ desired size minus the current one.
 | The usage metric has no data points, and the instance list cannot be read | `Skipped` |
 | The quota, the usage metric, or the vCPUs of an instance type cannot be read | `Unreadable` |
 
-The worse of the two rules decides. A failed roll names the nodegroup, the
-numbers, and the fix:
+The worse of the two rules decides. Only a surge blocks: a roll or a scale-up
+that does not fit the quota would stall on `VcpuLimitExceeded`. The rules of
+current use only ask. A failed roll names the nodegroup, the numbers, and the
+fix:
 
 ```text
 Quotas  ✗ Fail  rolling ng-a may launch 3 to 6 t3.medium nodes (6 to 12 vCPU) and 4 of 8 vCPU are in use: request a higher EC2 On-Demand vCPU quota, or set the update strategy to MINIMAL

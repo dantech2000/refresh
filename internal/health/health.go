@@ -33,8 +33,9 @@ type Check struct {
 	// FailClosed says that an Unreadable blocks too: the check reads what
 	// a roll can break. Without it an Unreadable asks.
 	FailClosed bool
-	// Forceable says that --force turns a Fail or an Unreadable of this
-	// check into a warning. Only the drain-blocker check sets it.
+	// Forceable says that --force turns a Fail of this check that blocks,
+	// or an Unreadable that fails closed, into a warning. The drain-blocker
+	// checks and the quota checks set it.
 	Forceable bool
 	Needs     Needs
 	Run       func(ctx context.Context, in *Input) Result
@@ -98,7 +99,7 @@ const (
 
 // Result is what one check found. The runner fills Name, Blocking,
 // FailClosed, and Forceable from the Check, so a check cannot contradict
-// its own declaration.
+// its own declaration. A check can only make one of its Fails advisory.
 type Result struct {
 	Name       string
 	Outcome    Outcome
@@ -116,6 +117,11 @@ type Result struct {
 	// Failures are the reads that failed. Non-empty for Unreadable, and
 	// for a Fail whose reads partly failed.
 	Failures []apidoc.Failure
+
+	// advisory says that this Fail does not block, though the check is
+	// Blocking: the quota check blocks on a surge, and only asks about the
+	// current use. The runner then clears Blocking.
+	advisory bool
 }
 
 // AccessCheck is the name of the result that the runner adds about the
@@ -150,7 +156,7 @@ func Run(ctx context.Context, checks []Check, in *Input) []Result {
 	}
 	wg.Wait()
 	for i, c := range checks {
-		results[i].Name, results[i].Blocking, results[i].FailClosed, results[i].Forceable = c.Name, c.Blocking, c.FailClosed, c.Forceable
+		results[i].Name, results[i].Blocking, results[i].FailClosed, results[i].Forceable = c.Name, c.Blocking && !results[i].advisory, c.FailClosed, c.Forceable
 		if results[i].Outcome == "" {
 			results[i] = unreadableCheck(ctx, results[i])
 		}

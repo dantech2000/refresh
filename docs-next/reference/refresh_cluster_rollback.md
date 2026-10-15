@@ -75,7 +75,7 @@ refresh cluster rollback [cluster] [flags]
 
 ```
   -d, --dry-run                     Print the plan and the verdict of the health gate, and change nothing
-      --force                       Proceed past drain blockers, with a warning
+      --force                       Proceed past drain blockers and a vCPU quota surge, with a warning
   -h, --help                        help for rollback
   -o, --output format               Output format: table, json, yaml, plain (default table)
       --poll-interval duration      Time between two status polls (default 15s)

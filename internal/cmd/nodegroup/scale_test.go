@@ -199,7 +199,10 @@ func scaleCases() []scaleCase {
 				w.SetFault(fleettest.EKSListUpdates, fleettest.Fault{Deny: true})
 			}},
 		{name: "dry-run", args: []string{"--desired", "3", "--dry-run"}},
-		{name: "quota-surge", args: []string{"--desired", "5", "--max", "6", "--dry-run"}, exit: cmdutil.ExitNeedsAttention, prepare: smallQuota},
+		{name: "quota-surge", args: []string{"--desired", "5", "--max", "6", "--dry-run"}, exit: cmdutil.ExitBlocked, prepare: smallQuota},
+		{name: "quota-surge-blocked", args: []string{"--desired", "5", "--max", "6", "--yes"}, exit: cmdutil.ExitBlocked, prepare: smallQuota},
+		{name: "quota-surge-forced", args: []string{"--desired", "5", "--max", "6", "--yes", "--force"}, prepare: smallQuota,
+			sent: map[string]any{"desiredSize": float64(5), "maxSize": float64(6)}},
 		{name: "dry-run-down", kube: true, args: []string{"--desired", "1", "--dry-run"}},
 		{name: "dry-run-no-kube", args: []string{"--desired", "1", "--dry-run", "--yes"}, exit: cmdutil.ExitNeedsAttention},
 		{name: "dry-run-blocked", kube: true, args: []string{"--desired", "1", "--dry-run"}, exit: cmdutil.ExitBlocked, seed: tightBudget},

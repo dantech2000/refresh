@@ -51,8 +51,12 @@ const (
 // the likely surge over the quota fail; current use and the documented
 // maximum over it warn. A nodegroup with the MINIMAL update strategy
 // launches no extra node. See rollLaunches for what counts.
+//
+// A likely surge over the quota blocks, and --force goes past it: the
+// roll would stall on VcpuLimitExceeded. The rules of current use only
+// ask.
 func Quotas() Check {
-	return Check{Name: "Quotas", Run: func(ctx context.Context, in *Input) Result {
+	return Check{Name: "Quotas", Blocking: true, Forceable: true, Run: func(ctx context.Context, in *Input) Result {
 		return runQuotas(ctx, in, rollLaunches(in))
 	}}
 }
@@ -61,7 +65,7 @@ func Quotas() Check {
 // nodes: the launch is known, and counts as both the likely and the most.
 // A scale that adds no node has the rule of Quotas with no targets.
 func ScaleUpQuotas(nodegroup string, add int32) Check {
-	return Check{Name: "Quotas", Run: func(ctx context.Context, in *Input) Result {
+	return Check{Name: "Quotas", Blocking: true, Forceable: true, Run: func(ctx context.Context, in *Input) Result {
 		return runQuotas(ctx, in, scaleLaunches(in, nodegroup, add))
 	}}
 }
@@ -439,7 +443,8 @@ func typeVCPUs(ctx context.Context, in *Input, types []string) (map[string]int32
 
 // evaluateQuota is the rule, apart from the reads: the thresholds of
 // current use, and then the launches. The worse of the two decides, and
-// the launch names the fix of a tie.
+// the launch names the fix of a tie. A Fail of current use alone is
+// advisory; a Fail of a launch blocks.
 func evaluateQuota(usage, limit float64, ls launches) Result {
 	pct := usage / limit * 100
 	r := Result{Details: []string{fmt.Sprintf("EC2 On-Demand Standard vCPUs: %.0f of %.0f in use (%.1f%%, %.0f free)", usage, limit, pct, limit-usage)}}
@@ -461,6 +466,7 @@ func evaluateQuota(usage, limit float64, ls launches) Result {
 	if outcome != Pass && severity(outcome) >= severity(r.Outcome) {
 		r.Outcome, r.Message = outcome, message
 	}
+	r.advisory = r.Outcome == Fail && outcome != Fail
 	return r
 }
 

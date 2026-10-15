@@ -1,7 +1,7 @@
-exit: 2
-error: dry run: a real run would ask about health warnings
+exit: 3
+error: dry run: a real run would be blocked
 --- stdout ---
-Plan   [!] Ask   ClusterUpgrade
+Plan   [X] Blocked   ClusterUpgrade
 
 PLAN
   operation       ClusterUpgrade
@@ -9,7 +9,7 @@ PLAN
   region          us-east-1
   version         1.32
   target version  1.33
-  decision        [!] Ask
+  decision        [X] Blocked
 
 STEPS  5
   NAME                KIND          ACTION  REASON         FROM                TO                  NOTE
@@ -20,7 +20,7 @@ STEPS  5
   kube-proxy@1.33     Addon         Submit  VersionBehind  v1.32.0-eksbuild.1  v1.33.0-eksbuild.1  -
 
 HEALTH GATE
-  decision  [!] Ask
+  decision  [X] Block
   reasons   Quotas: rolling api may launch 3 to 6 t3.medium nodes (6 to 12 vCPU) and 4 of 8 vCPU are in use: request a higher EC2 On-Demand vCPU quota, or set the update strategy to MINIMAL
 
 CHECKS  9

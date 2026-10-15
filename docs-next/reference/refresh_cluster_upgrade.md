@@ -82,7 +82,7 @@ refresh cluster upgrade [cluster] --to <version> [flags]
 
 ```
   -d, --dry-run                  Print the plan and the verdict of the health gate, and change nothing
-      --force                    Proceed past drain blockers, with a warning
+      --force                    Proceed past drain blockers and a vCPU quota surge, with a warning
   -h, --help                     help for upgrade
   -n, --nodegroup strings        Roll only these nodegroups, by exact name
       --only strings             Limit the run to these parts: control-plane, addons, nodegroups

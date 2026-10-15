@@ -284,7 +284,8 @@ func upgradeCases() []engineCase {
 		{name: "dry-run", args: []string{"--dry-run"}},
 		{name: "dry-run-ask", noKube: true, args: []string{"--dry-run"}, exit: cmdutil.ExitNeedsAttention},
 		{name: "dry-run-blocked", args: []string{"--dry-run"}, exit: cmdutil.ExitBlocked, seed: tight},
-		{name: "quota-surge", args: []string{"--dry-run"}, exit: cmdutil.ExitNeedsAttention, seed: smallQuota(8)},
+		{name: "quota-surge", args: []string{"--dry-run"}, exit: cmdutil.ExitBlocked, seed: smallQuota(8)},
+		{name: "quota-surge-forced", args: []string{"--yes", "--force"}, seed: smallQuota(8), sent: []string{refresh, cp33, cniTo33, api33 + " force", web33 + " force", proxyTo3}},
 		{name: "quota-surge-require-healthy", args: []string{"--yes", "--require-healthy"}, exit: cmdutil.ExitBlocked, seed: smallQuota(8), sent: []string{refresh}},
 		// The engine rolls one nodegroup after another: the 3 to 6 nodes of
 		// one roll count, not the 6 to 12 of two, so the likely surge fits a

@@ -73,7 +73,7 @@ refresh nodegroup scale <nodegroup> [flags]
   -c, --cluster string           EKS cluster name (env: REFRESH_CLUSTER; default: the active context; never the kubeconfig)
       --desired int32            Desired number of nodes
   -d, --dry-run                  Print the plan and the verdict of the health gate, and change nothing
-      --force                    Proceed past drain blockers, with a warning
+      --force                    Proceed past drain blockers and a vCPU quota surge, with a warning
   -h, --help                     help for scale
       --max int32                Maximum number of nodes
       --min int32                Minimum number of nodes

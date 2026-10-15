@@ -39,7 +39,7 @@ func AddChangeFlags(cmd *cobra.Command, f *ChangeFlags, waitDefault time.Duratio
 		fl.BoolVar(&f.NoWait, "no-wait", false, "Return once AWS accepted the change")
 	}
 	if force {
-		fl.BoolVar(&f.Force, "force", false, "Proceed past drain blockers, with a warning")
+		fl.BoolVar(&f.Force, "force", false, "Proceed past drain blockers and a vCPU quota surge, with a warning")
 	}
 }
 

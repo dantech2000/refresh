@@ -184,8 +184,9 @@ HEALTH GATE
 
 The command exits `3` and changes nothing. Fix the blocker and run the command
 again. `--force` goes past a drain blocker, with a warning, and tells EKS to
-force the drain. `--force` does nothing else: it does not roll a nodegroup that
-is on the latest AMI.
+force the drain. It also goes past a vCPU quota surge that does not fit, with
+a warning. `--force` does nothing else: it does not roll a nodegroup that is on
+the latest AMI.
 
 ### Every cluster: `--all-clusters`
 
@@ -295,7 +296,8 @@ HEALTH GATE
 - `--force` goes past that, with a warning.
 - Without Kubernetes access, the command asks before it goes on.
 - Any other scale checks the EC2 vCPU quota, with the vCPUs of the nodes that
-  it adds. A scale-up warns when an availability zone of the nodegroup does not
+  it adds. If they do not fit, the scale is blocked, exit `3`. `--force` goes
+  past that, with a warning. A scale-up warns when an availability zone of the nodegroup does not
   offer one of its instance types.
 
 ### What a run does

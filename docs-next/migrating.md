@@ -126,8 +126,9 @@ the gate off.
 
 ### `--force` and `--reroll`
 
-`--force` only goes past drain blockers. It no longer rolls a nodegroup that
-is already on the latest AMI. Use `--reroll` for that.
+`--force` only goes past drain blockers and a vCPU quota surge that does not
+fit. It no longer rolls a nodegroup that is already on the latest AMI. Use
+`--reroll` for that.
 
 ### Dry runs report the health gate
 

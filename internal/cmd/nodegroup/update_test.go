@@ -263,7 +263,9 @@ func updateCases() []updateCase {
 		{name: "dry-run", args: []string{"--dry-run"}},
 		{name: "dry-run-ask", noKube: true, args: []string{"--dry-run", "--yes"}, exit: cmdutil.ExitNeedsAttention},
 		{name: "dry-run-blocked", args: []string{"--dry-run"}, exit: cmdutil.ExitBlocked, seed: tightWeb},
-		{name: "quota-surge", args: []string{"web", "--dry-run"}, exit: cmdutil.ExitNeedsAttention, seed: smallQuota(8)},
+		{name: "quota-surge", args: []string{"web", "--dry-run"}, exit: cmdutil.ExitBlocked, seed: smallQuota(8)},
+		{name: "quota-surge-blocked", args: []string{"web", "--yes"}, exit: cmdutil.ExitBlocked, seed: smallQuota(8)},
+		{name: "quota-surge-forced", args: []string{"web", "--yes", "--force"}, rolls: []string{"web"}, force: true, seed: smallQuota(8)},
 		{name: "quota-surge-require-healthy", args: []string{"web", "--yes", "--require-healthy"}, exit: cmdutil.ExitBlocked, seed: smallQuota(8)},
 		// One roll of 3 to 6 nodes fits a quota of 16 with 4 in use; two
 		// at once may launch 12 to 24 vCPU.

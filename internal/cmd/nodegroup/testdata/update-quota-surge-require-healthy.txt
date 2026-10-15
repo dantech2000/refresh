@@ -1,5 +1,5 @@
 exit: 3
-error: health checks reported 1 warning and --require-healthy is set: Quotas: rolling web may launch 3 to 6 t3.medium nodes (6 to 12 vCPU) and 4 of 8 vCPU are in use: request a higher EC2 On-Demand vCPU quota, or set the update strategy to MINIMAL; nothing was started
+error: blocked by 1 health check: Quotas: rolling web may launch 3 to 6 t3.medium nodes (6 to 12 vCPU) and 4 of 8 vCPU are in use: request a higher EC2 On-Demand vCPU quota, or set the update strategy to MINIMAL; nothing was started
 --- stdout ---
 Plan   [X] Blocked   NodegroupUpdate
 

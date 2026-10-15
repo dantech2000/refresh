@@ -83,7 +83,7 @@ refresh nodegroup update [nodegroup...] [flags]
   -c, --cluster string           EKS cluster name (env: REFRESH_CLUSTER; default: the active context; never the kubeconfig)
   -d, --dry-run                  Print the plan and the verdict of the health gate, and change nothing
   -f, --filter stringArray       Select by key=value, where * matches any text; repeatable, and all must match. Keys: name, status, instanceType, amiStatus, version
-      --force                    Proceed past drain blockers, with a warning
+      --force                    Proceed past drain blockers and a vCPU quota surge, with a warning
   -h, --help                     help for update
       --live                     Show the nodes of the roll as they drain and join, also without a terminal
       --no-wait                  Return once AWS accepted the change

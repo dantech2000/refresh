@@ -1,21 +1,21 @@
-exit: 2
-error: dry run: a real run would ask about health warnings
+exit: 3
+error: dry run: a real run would be blocked
 --- stdout ---
-Plan   [!] Ask   NodegroupUpdate
+Plan   [X] Blocked   NodegroupUpdate
 
 PLAN
   operation  NodegroupUpdate
   cluster    prod
   region     us-east-1
   version    1.32
-  decision   [!] Ask
+  decision   [X] Blocked
 
 STEPS  1
   NAME  KIND       ACTION  REASON       FROM                                            TO                        NOTE
   web   Nodegroup  Submit  AMIOutdated  1.32 (release 1.32.0-20250101, AMI ami-old32x)  1.32 (AMI ami-latest132)  -
 
 HEALTH GATE
-  decision  [!] Ask
+  decision  [X] Block
   reasons   Quotas: rolling web may launch 3 to 6 t3.medium nodes (6 to 12 vCPU) and 4 of 8 vCPU are in use: request a higher EC2 On-Demand vCPU quota, or set the update strategy to MINIMAL
 
 CHECKS  9

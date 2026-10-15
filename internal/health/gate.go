@@ -25,8 +25,8 @@ type Policy struct {
 	Yes bool
 	// RequireHealthy: an Ask becomes Block. It wins over Yes.
 	RequireHealthy bool
-	// Force: a Fail or an Unreadable of a Forceable check becomes a
-	// warning, and its reason goes in Verdict.Forced.
+	// Force: a blocking Fail or a fail-closed Unreadable of a Forceable
+	// check becomes a warning, and its reason goes in Verdict.Forced.
 	Force bool
 	// Skip: no check ran. The verdict is Go with Skipped set.
 	Skip bool
@@ -97,7 +97,7 @@ func Gate(results []Result, p Policy) Verdict {
 	worst := rankPass
 	for _, r := range results {
 		v.Failures = append(v.Failures, r.Failures...)
-		forced := p.Force && r.Forceable && (r.Outcome == Fail || r.Outcome == Unreadable)
+		forced := p.Force && r.Forceable && (r.Outcome == Fail && r.Blocking || r.Outcome == Unreadable && r.FailClosed)
 		rank := rankOf(r, forced)
 		if rank == rankPass {
 			continue

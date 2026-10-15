@@ -75,7 +75,7 @@ clusters:
           findings: []
         - name: Quotas
           outcome: Pass
-          blocking: false
+          blocking: true
           message: 31% of the vCPU quota in use (40 of 128)
           details:
             - 'EC2 On-Demand Standard vCPUs: 40 of 128 in use (31.2%, 88 free)'

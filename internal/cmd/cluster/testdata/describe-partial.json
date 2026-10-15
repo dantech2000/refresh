@@ -149,7 +149,7 @@
         {
           "name": "Quotas",
           "outcome": "Skipped",
-          "blocking": false,
+          "blocking": true,
           "message": "the EC2 vCPU quota is not reported",
           "details": [],
           "findings": []

@@ -163,7 +163,7 @@ and `cluster rollback` share these flags.
 | `--poll-interval` | Time between two status polls. Default `15s`. |
 | `--skip-health-check` | Skip the health gate. |
 | `--require-healthy` | Stop on any health warning, and do not ask. |
-| `--force` | Go past drain blockers, with a warning. Not on `addon update`. |
+| `--force` | Go past drain blockers and a vCPU quota surge, with a warning. Not on `addon update`. |
 | `-q, --quiet` | Print no progress. Questions, warnings, and the result still show. |
 
 The exit code of a dry run comes from the findings alone, whatever `--yes`

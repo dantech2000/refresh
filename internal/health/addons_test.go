@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 
 	"github.com/dantech2000/refresh/internal/fleet"
 	"github.com/dantech2000/refresh/internal/health"
@@ -71,7 +72,7 @@ func TestAddons(t *testing.T) {
 				Name: "Addons", Blocking: true, FailClosed: true,
 				Outcome: tt.outcome, Message: tt.message, Findings: tt.findings,
 			}}
-			if diff := cmp.Diff(want, got); diff != "" {
+			if diff := cmp.Diff(want, got, cmpopts.IgnoreUnexported(health.Result{})); diff != "" {
 				t.Errorf("results (-want +got):\n%s", diff)
 			}
 		})
