@@ -1,0 +1,9 @@
+{#- Used only by the v1 build (tools/mkdocs/build_site.py): a banner that
+    sends readers of the 0.16 docs to the current docs. -#}
+{% extends "base.html" %}
+
+{% block announce %}
+These are the docs for refresh 0.16 and earlier. The current docs are for
+0.17 and later: <a href="/refresh/v2/">v2</a>. Moving from 0.16:
+<a href="/refresh/v2/migrating/">migration guide</a>.
+{% endblock %}

@@ -225,6 +225,11 @@ After the merge to `main`:
 - [ ] The Docs workflow published the site. Check:
       `curl -sf https://drod.dev/refresh/schema/v2/Plan.json | head -3` and
       `curl -sf https://drod.dev/refresh/migrating/ > /dev/null && echo ok`.
+      Since the cutover, `tools/mkdocs/build_site.py` builds the site in two
+      versions: `/refresh/v2/` and `/refresh/v1/` (the docs of 0.16). The old
+      flat paths, such as `/refresh/migrating/`, are redirect stubs to v2, so
+      also check
+      `curl -sf https://drod.dev/refresh/v2/migrating/ > /dev/null && echo ok`.
 - [ ] After the release: `brew upgrade --cask refresh && man refresh-status`
       opens the page, and `refresh version` prints the new version.
 - [ ] `go install github.com/dantech2000/refresh/cmd/refresh@latest` builds.
