@@ -44,6 +44,10 @@ V1_OVERRIDES = os.path.join(REPO, "tools", "mkdocs", "overrides-v1")
 # stub must never take one of them.
 RESERVED = {"v1", "v2", "schema", "versions.json", "sitemap.xml", "404.html"}
 
+# Old paths that exist only in v1 but have a v2 page with the same job. The
+# stub sends them to v2, which is the default.
+TO_CURRENT = {"reference/": "reference/refresh/"}
+
 
 def run(args, cwd):
     print("+ " + " ".join(args), file=sys.stderr, flush=True)
@@ -140,6 +144,11 @@ def write_redirects(site, base_url, pages):
             os.makedirs(os.path.dirname(out), exist_ok=True)
             with open(out, "w", encoding="utf-8") as f:
                 f.write(stub(f"{base_path}{version}/{path}", f"{base_url}{version}/{path}"))
+    for path, target in TO_CURRENT.items():
+        if target not in pages[CURRENT]:
+            sys.exit(f"build_site: {path} should go to {CURRENT}/{target}, which was not built")
+        with open(os.path.join(site, path, "index.html"), "w", encoding="utf-8") as f:
+            f.write(stub(f"{base_path}{CURRENT}/{target}", f"{base_url}{CURRENT}/{target}"))
     return len(pages["v1"] | pages[CURRENT])
 
 
