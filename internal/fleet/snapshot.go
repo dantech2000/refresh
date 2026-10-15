@@ -55,7 +55,11 @@ type Snapshot struct {
 	// Updates is the update history of the cluster itself, newest last as
 	// EKS lists it. It is valid when Have.Updates is Collected.
 	Updates []Update
-	Have    Have
+	// UpdatesErr is the error of the read of Updates when it failed. The
+	// read is advisory, so it adds no failure; a caller that needs the
+	// history reports this error.
+	UpdatesErr error
+	Have       Have
 	// Failures are the reads that failed, for this cluster.
 	Failures  []apidoc.Failure
 	FetchedAt time.Time

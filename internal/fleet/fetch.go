@@ -185,7 +185,7 @@ func (f *Fetcher) Fetch(ctx context.Context, c *awsx.Clients, cluster string, ne
 		calendar = f.startCalendar(ctx, c)
 	}
 	if need.Updates {
-		wg.Go(func() { snap.Updates, snap.Have.Updates = f.fetchUpdates(ctx, c, cluster) })
+		wg.Go(func() { snap.Updates, snap.Have.Updates, snap.UpdatesErr = f.fetchUpdates(ctx, c, cluster) })
 	}
 	out, err := c.EKS.DescribeCluster(ctx, &eks.DescribeClusterInput{Name: aws.String(cluster)})
 	if err == nil && out.Cluster == nil {

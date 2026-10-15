@@ -226,8 +226,6 @@ func TestUpgrade_ProviderFailsDuringAWait(t *testing.T) {
 // eks:ListUpdates and is AccessDenied. Today the failure is "Unknown: the
 // update history of the cluster was not read", with no action to grant.
 func TestRollback_DeniedHistoryNamesTheAction(t *testing.T) {
-	t.Skip("known defect: internal/change/rollbackeligibility.go:168 builds the failure of an unread update history " +
-		"with ReasonUnknown and no operation, so a denied eks:ListUpdates never names the action to grant")
 	for _, when := range []string{"before any change", "after the first roll"} {
 		t.Run(when, func(t *testing.T) {
 			e := cmdtest.NewFake(t, engineWorld("1.33", true, nil), east)
@@ -245,6 +243,9 @@ func TestRollback_DeniedHistoryNamesTheAction(t *testing.T) {
 			}
 			if !strings.Contains(e.Out.String(), `"operation": "eks:ListUpdates"`) || !strings.Contains(e.Out.String(), "AccessDenied") {
 				t.Errorf("no AccessDenied failure for eks:ListUpdates:\n%s", e.Out)
+			}
+			if !strings.Contains(e.Out.String(), "grant eks:ListUpdates") {
+				t.Errorf("the blocker does not name the action to grant:\n%s", e.Out)
 			}
 		})
 	}

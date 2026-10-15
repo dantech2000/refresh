@@ -90,7 +90,12 @@ func (p *rollbackPlanner) eligibility(h versionHistory, rollingBack bool) {
 	target := p.cp.To
 	switch {
 	case !h.read:
-		p.cp.Failures = appendFailure(p.cp.Failures, p.unreadHistory())
+		f := p.unreadHistory()
+		p.cp.Failures = appendFailure(p.cp.Failures, f)
+		if f.Reason == apidoc.ReasonAccessDenied && f.Operation != "" {
+			p.block(BlockerUnread, nil, "could not read the update history of %s, so nothing shows that it can roll back: grant %s, then rerun", p.cp.Cluster, f.Operation)
+			break
+		}
 		p.block(BlockerUnread, nil, "could not read the update history of %s, so nothing shows that it can roll back: rerun to retry", p.cp.Cluster)
 	case rollingBack && h.inFlight.Version != target:
 		p.block(BlockerBusy, nil, "a rollback to %s is in progress (update %s), not to %s: wait for it to finish, then rerun", h.inFlight.Version, h.inFlight.ID, target)
@@ -163,9 +168,16 @@ func RollbackStillEligible(snap *fleet.Snapshot, req RollbackRequest, in Rollbac
 
 // unreadHistory is the failure of an update history that the snapshot
 // did not read. The read is advisory in a snapshot and leaves no failure
-// there, and a rollback cannot be planned without it.
+// there, and a rollback cannot be planned without it. The failure is
+// classified from the error of the read, so a denied eks:ListUpdates is
+// AccessDenied and names the action to grant.
 func (p *rollbackPlanner) unreadHistory() apidoc.Failure {
-	f := apidoc.NewFailure(apidoc.FailureCluster, p.cp.Cluster, apidoc.ReasonUnknown, "the update history of the cluster was not read")
+	const what = "the update history of the cluster was not read"
+	f := apidoc.NewFailure(apidoc.FailureCluster, p.cp.Cluster, apidoc.ReasonUnknown, what)
+	if err := p.snap.UpdatesErr; err != nil {
+		f = fleet.FailureFromError(apidoc.FailureCluster, p.cp.Cluster, err)
+		f.Error = what + ": " + f.Error
+	}
 	f.Region = p.cp.Region
 	return f
 }

@@ -82,8 +82,9 @@ func RollbackWindowOf(snap *Snapshot, now time.Time) (Rollback, bool) {
 // every update in one wave. EKS promises no order, so every update is
 // described. The read is advisory: a failure sets the state and adds no
 // failure, because the rollback window is an extra that the output marks
-// as not read.
-func (f *Fetcher) fetchUpdates(ctx context.Context, c *awsx.Clients, cluster string) ([]Update, State) {
+// as not read. The error is the one of the read that failed, for a caller
+// that needs the history and reports its failure.
+func (f *Fetcher) fetchUpdates(ctx context.Context, c *awsx.Clients, cluster string) ([]Update, State, error) {
 	ids, err := awsx.ListAll(ctx,
 		func(ctx context.Context, token *string) (*eks.ListUpdatesOutput, error) {
 			return c.EKS.ListUpdates(ctx, &eks.ListUpdatesInput{Name: aws.String(cluster), NextToken: token})
@@ -91,7 +92,7 @@ func (f *Fetcher) fetchUpdates(ctx context.Context, c *awsx.Clients, cluster str
 		func(out *eks.ListUpdatesOutput) ([]string, *string) { return out.UpdateIds, out.NextToken },
 	)
 	if err != nil {
-		return nil, stateOf(err)
+		return nil, stateOf(err), err
 	}
 	type described struct {
 		ran    bool
@@ -117,14 +118,14 @@ func (f *Fetcher) fetchUpdates(ctx context.Context, c *awsx.Clients, cluster str
 	updates := make([]Update, 0, len(ids))
 	for _, r := range results {
 		if !r.ran {
-			return nil, NotAttempted
+			return nil, NotAttempted, nil
 		}
 		if r.err != nil {
-			return nil, stateOf(r.err)
+			return nil, stateOf(r.err), r.err
 		}
 		if r.update.ID != "" {
 			updates = append(updates, r.update)
 		}
 	}
-	return updates, Collected
+	return updates, Collected, nil
 }
