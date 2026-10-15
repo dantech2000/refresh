@@ -305,7 +305,7 @@ See [Plan and Run](concepts/output.md#plan-and-run) for every key.
 
 | `v1` key | `v2` |
 |---|---|
-| The top level of `ClusterDescription`, `NodegroupDescription`, `AddonDescription`, `InsightDescription` | Under `.cluster`, `.nodegroup`, `.addon`, or `.insight`, beside `cluster` and `region` of the target |
+| The top level of `ClusterDescription`, `NodegroupDescription`, `AddonDescription`, `InsightDescription` | Under `.cluster`, `.nodegroup`, `.addon`, or `.insight`. The last three also have `cluster` and `region`, the names of the target. |
 | `count` of `ClusterList`, `NodegroupList`, `AddonList` | Removed. Use the length of the list. |
 | `FleetStatus`: `nodegroupCount`, `staleAmi`, `addonsBehind`, `nodegroupsBehindControlPlane` | `.clusters[].nodegroups[]` (with `ami.status` and `versionBehind`) and `.clusters[].addons[]` (with `latest.behind`) |
 | `support.fallback` | `support.builtIn` |
