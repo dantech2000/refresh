@@ -98,7 +98,7 @@ func TestKubeconfigContextOfTheWrongEndpoint(t *testing.T) {
 	if got := cmdutil.ExitCode(err); got == cmdutil.ExitOK {
 		t.Errorf("exit code = 0: a dry run without the Kubernetes checks would not ask")
 	}
-	if n := len(wrong.Handler.Requests()); n != 0 {
+	if n := len(wrong.Requests()); n != 0 {
 		t.Errorf("%d requests reached the API server of another cluster", n)
 	}
 	if strings.Contains(e.Out.String(), "imposter-1") {
@@ -109,75 +109,83 @@ func TestKubeconfigContextOfTheWrongEndpoint(t *testing.T) {
 	}
 }
 
+// partition is the fleet of one partition: a cluster in each of its
+// regions, home is the region of the run, and sts is where a credential
+// check must go.
+type partition struct {
+	home    string
+	regions []string
+	sts     string
+}
+
+func (p partition) world() *fleettest.World {
+	world := fleettest.New()
+	world.Edit(func(s *fleettest.State) {
+		for _, r := range p.regions {
+			s.Clusters = append(s.Clusters, &fleettest.Cluster{Name: "prod-" + r, Region: r, Version: "1.33"})
+		}
+	})
+	return world
+}
+
 // In GovCloud and China a sweep covers the regions of that partition, and
 // the credential check after a sweep that no region answered goes to STS
 // in a region of that partition that every account has, not us-east-1.
 func TestPartitions(t *testing.T) {
-	tests := []struct {
-		home    string
-		regions []string
-		sts     string
-	}{
+	for _, p := range []partition{
 		{home: "us-gov-east-1", regions: []string{"us-gov-east-1", "us-gov-west-1"}, sts: "us-gov-west-1"},
 		{home: "cn-northwest-1", regions: []string{"cn-north-1", "cn-northwest-1"}, sts: "cn-north-1"},
+	} {
+		t.Run(p.home+"/sweep", func(t *testing.T) { testPartitionSweep(t, p) })
+		t.Run(p.home+"/credential check", func(t *testing.T) { testPartitionCredentialCheck(t, p) })
 	}
-	for _, tt := range tests {
-		t.Run(tt.home, func(t *testing.T) {
-			world := fleettest.New()
-			world.Edit(func(s *fleettest.State) {
-				for _, r := range tt.regions {
-					s.Clusters = append(s.Clusters, &fleettest.Cluster{Name: "prod-" + r, Region: r, Version: "1.33"})
-				}
-			})
-			t.Run("sweep", func(t *testing.T) {
-				e := cmdtest.NewFake(t, world, tt.home)
-				if err := e.Run(cmdutiltest.Context(t), "cluster", "list", "-A", "-o", "json"); err != nil {
-					t.Fatal(err)
-				}
-				var swept []string
-				for _, r := range e.Server.Requests() {
-					if r.Operation == fleettest.EKSListClusters && !slices.Contains(swept, r.Region) {
-						swept = append(swept, r.Region)
-					}
-				}
-				slices.Sort(swept)
-				if !slices.Equal(swept, tt.regions) {
-					t.Errorf("swept %v, want %v", swept, tt.regions)
-				}
-				for _, r := range tt.regions {
-					if !strings.Contains(e.Out.String(), `"prod-`+r+`"`) {
-						t.Errorf("no cluster of %s in the list:\n%s", r, e.Out)
-					}
-				}
-			})
-			t.Run("credential check", func(t *testing.T) {
-				e := cmdtest.NewFake(t, world, tt.home)
-				for _, r := range tt.regions {
-					world.SetScopedFault(fleettest.Scope{Region: r, Service: "eks"}, fleettest.Fault{Unauthenticated: true})
-				}
-				t.Cleanup(func() {
-					for _, r := range tt.regions {
-						world.SetScopedFault(fleettest.Scope{Region: r, Service: "eks"}, fleettest.Fault{})
-					}
-				})
-				err := e.Run(cmdutiltest.Context(t), append([]string{"cluster", "list", "-o", "json"}, regionFlags(tt.regions)...)...)
-				if got := cmdutil.ExitCode(err); got != cmdutil.ExitFailure {
-					t.Errorf("exit code = %d (%v), want 1", got, err)
-				}
-				var sts []string
-				for _, r := range e.Server.Requests() {
-					if r.Operation == fleettest.STSGetCallerIdentity {
-						sts = append(sts, r.Region)
-					}
-				}
-				if !slices.Equal(sts, []string{tt.sts}) {
-					t.Errorf("STS was asked in %v, want %s once", sts, tt.sts)
-				}
-				if err == nil || !strings.Contains(err.Error(), "STS in "+tt.sts) {
-					t.Errorf("error = %v, want one that names STS in %s", err, tt.sts)
-				}
-			})
-		})
+}
+
+func testPartitionSweep(t *testing.T, p partition) {
+	t.Helper()
+	e := cmdtest.NewFake(t, p.world(), p.home)
+	if err := e.Run(cmdutiltest.Context(t), "cluster", "list", "-A", "-o", "json"); err != nil {
+		t.Fatal(err)
+	}
+	var swept []string
+	for _, r := range e.Server.Requests() {
+		if r.Operation == fleettest.EKSListClusters && !slices.Contains(swept, r.Region) {
+			swept = append(swept, r.Region)
+		}
+	}
+	slices.Sort(swept)
+	if !slices.Equal(swept, p.regions) {
+		t.Errorf("swept %v, want %v", swept, p.regions)
+	}
+	for _, r := range p.regions {
+		if !strings.Contains(e.Out.String(), `"prod-`+r+`"`) {
+			t.Errorf("no cluster of %s in the list:\n%s", r, e.Out)
+		}
+	}
+}
+
+func testPartitionCredentialCheck(t *testing.T, p partition) {
+	t.Helper()
+	world := p.world()
+	for _, r := range p.regions {
+		world.SetScopedFault(fleettest.Scope{Region: r, Service: "eks"}, fleettest.Fault{Unauthenticated: true})
+	}
+	e := cmdtest.NewFake(t, world, p.home)
+	err := e.Run(cmdutiltest.Context(t), append([]string{"cluster", "list", "-o", "json"}, regionFlags(p.regions)...)...)
+	if got := cmdutil.ExitCode(err); got != cmdutil.ExitFailure {
+		t.Errorf("exit code = %d (%v), want 1", got, err)
+	}
+	var sts []string
+	for _, r := range e.Server.Requests() {
+		if r.Operation == fleettest.STSGetCallerIdentity {
+			sts = append(sts, r.Region)
+		}
+	}
+	if !slices.Equal(sts, []string{p.sts}) {
+		t.Errorf("STS was asked in %v, want %s once", sts, p.sts)
+	}
+	if err == nil || !strings.Contains(err.Error(), "STS in "+p.sts) {
+		t.Errorf("error = %v, want one that names STS in %s", err, p.sts)
 	}
 }
 
