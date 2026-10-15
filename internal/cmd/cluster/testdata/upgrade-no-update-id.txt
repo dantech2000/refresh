@@ -34,6 +34,9 @@ CHECKS  9
   Quotas         [OK] Pass  31% of the vCPU quota in use (40 of 128)
   Kubernetes     [OK] Pass  Kubernetes API reachable
 
+NOTICES
+  1  self-managed and hybrid nodes are not upgraded by EKS or refresh: move them to 1.33 yourself after the control plane upgrades. Fargate pods stay at 1.32: delete them after the upgrade, and they come back at 1.33
+
 FAILURES
 [?] cluster prod/ (us-east-1): NotMonitored: EKS accepted the update of the control plane of prod and returned no update ID; it cannot be followed, and it may still be running
 --- stderr ---
@@ -44,5 +47,6 @@ PLAN  ClusterUpgrade, prod in us-east-1
   api@1.33            update 1.32 to 1.33 (VersionBehind)
   web@1.33            update 1.32 to 1.33 (VersionBehind)
   kube-proxy@1.33     update v1.32.0-eksbuild.1 to v1.33.0-eksbuild.1 (VersionBehind)
+warning: self-managed and hybrid nodes are not upgraded by EKS or refresh: move them to 1.33 yourself after the control plane upgrades. Fargate pods stay at 1.32: delete them after the upgrade, and they come back at 1.33
 phase: control plane, 1.33
 [~] control-plane@1.33: InProgress: EKS accepted the update of the control plane of prod and returned no update ID; it cannot be followed, and it may still be running

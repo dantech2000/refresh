@@ -34,4 +34,7 @@ CHECKS  9
   Utilization    Skipped    no kubeconfig found, and no in-cluster config: unable to load in-cluster configuration, KUBERNETES_SERVICE_HOST and KUBERNETES_SERVICE_PORT must be defined
   Quotas         [OK] Pass  31% of the vCPU quota in use (40 of 128)
   Kubernetes     [!] Warn   no Kubernetes access: no kubeconfig found, and no in-cluster config: unable to load in-cluster configuration, KUBERNETES_SERVICE_HOST and KUBERNETES_SERVICE_PORT must be defined; the Kubernetes checks did not run
+
+NOTICES
+  1  self-managed and hybrid nodes are not upgraded by EKS or refresh: move them to 1.33 yourself after the control plane upgrades. Fargate pods stay at 1.32: delete them after the upgrade, and they come back at 1.33
 --- stderr ---

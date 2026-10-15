@@ -34,6 +34,9 @@ CHECKS  9
   Utilization    [OK] Pass  CPU 20%, memory 25% in use
   Quotas         [OK] Pass  31% of the vCPU quota in use (40 of 128)
   Kubernetes     [OK] Pass  Kubernetes API reachable
+
+NOTICES
+  1  self-managed and hybrid nodes are not upgraded by EKS or refresh: move them to 1.33 yourself after the control plane upgrades. Fargate pods stay at 1.32: delete them after the upgrade, and they come back at 1.33
 --- stderr ---
 refreshing the cluster insights of prod (waits up to 5m0s)
 PLAN  ClusterUpgrade, prod in us-east-1
@@ -42,6 +45,7 @@ PLAN  ClusterUpgrade, prod in us-east-1
   api@1.33            update 1.32 to 1.33 (VersionBehind)
   web@1.33            update 1.32 to 1.33 (VersionBehind)
   kube-proxy@1.33     update v1.32.0-eksbuild.1 to v1.33.0-eksbuild.1 (VersionBehind)
+warning: self-managed and hybrid nodes are not upgraded by EKS or refresh: move them to 1.33 yourself after the control plane upgrades. Fargate pods stay at 1.32: delete them after the upgrade, and they come back at 1.33
   [OK] Nodes          4/4 nodes ready
   [OK] Capacity       CPU mean 32%, peak 32%, 4 instances
        ControlPlane   control-plane metrics not emitted (EKS 1.28+ on a supported platform version)

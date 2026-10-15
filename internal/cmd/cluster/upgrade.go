@@ -99,6 +99,8 @@ func newCmdUpgrade(f *cmdutil.Factory) *cobra.Command {
 For each minor version the command moves the control plane, then updates
 the add-ons that the new control plane cannot run, then rolls every managed
 nodegroup, one after another, and then updates the other add-ons.
+Self-managed nodes, hybrid nodes, and Fargate pods are not upgraded by EKS
+or by refresh: move them yourself after the control plane.
 
 The plan comes from the live state of the cluster, and there is no state
 file. Run the same command again after a run that stopped: it goes on with

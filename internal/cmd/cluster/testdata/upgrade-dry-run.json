@@ -158,7 +158,9 @@ error:
         ]
       },
       "blockers": [],
-      "notices": []
+      "notices": [
+        "self-managed and hybrid nodes are not upgraded by EKS or refresh: move them to 1.33 yourself after the control plane upgrades. Fargate pods stay at 1.32: delete them after the upgrade, and they come back at 1.33"
+      ]
     }
   ],
   "failures": []

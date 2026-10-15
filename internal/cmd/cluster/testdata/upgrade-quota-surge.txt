@@ -36,6 +36,7 @@ CHECKS  9
   Kubernetes     [OK] Pass  Kubernetes API reachable
 
 NOTICES
-  1  EC2 does not offer every instance type of nodegroup api in each of its availability zones (t3.medium in us-east-1a); new nodes may fail to launch there. This checks the offering, and not the capacity that is free now
-  2  EC2 does not offer every instance type of nodegroup web in each of its availability zones (t3.medium in us-east-1a); new nodes may fail to launch there. This checks the offering, and not the capacity that is free now
+  1  self-managed and hybrid nodes are not upgraded by EKS or refresh: move them to 1.33 yourself after the control plane upgrades. Fargate pods stay at 1.32: delete them after the upgrade, and they come back at 1.33
+  2  EC2 does not offer every instance type of nodegroup api in each of its availability zones (t3.medium in us-east-1a); new nodes may fail to launch there. This checks the offering, and not the capacity that is free now
+  3  EC2 does not offer every instance type of nodegroup web in each of its availability zones (t3.medium in us-east-1a); new nodes may fail to launch there. This checks the offering, and not the capacity that is free now
 --- stderr ---

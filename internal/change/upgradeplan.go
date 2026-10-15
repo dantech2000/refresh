@@ -106,6 +106,7 @@ func PlanUpgrade(snap *fleet.Snapshot, req UpgradeRequest, in UpgradeInputs) (*P
 	}
 	p.applyScope()
 	p.blockOnLaggingAddons(lag)
+	p.otherComputeNotice()
 	return &Plan{Kind: ClusterUpgrade, Request: req, Clusters: []ClusterPlan{*p.cp}, At: in.Now}, nil
 }
 
@@ -124,6 +125,20 @@ type upgradePlanner struct {
 	// cluster will be, while a step is Skip from live state alone.
 	simNodegroups map[string]fleet.Version
 	simAddons     map[string]string
+}
+
+// otherComputeNotice says, when the plan moves the control plane, that
+// the compute outside the managed nodegroups stays at the old version, as
+// the notice of a rollback plan does for its direction.
+func (p *upgradePlanner) otherComputeNotice() {
+	moves := slices.ContainsFunc(p.cp.Steps(), func(s Step) bool {
+		return s.Ref.Kind == StepControlPlane && (s.Action == Submit || s.Action == Attach)
+	})
+	if !moves {
+		return
+	}
+	p.notice("self-managed and hybrid nodes are not upgraded by EKS or refresh: move them to %s yourself after the control plane upgrades. Fargate pods stay at %s: delete them after the upgrade, and they come back at %s",
+		p.req.To, p.live, p.req.To)
 }
 
 func (p *upgradePlanner) notice(format string, args ...any) {

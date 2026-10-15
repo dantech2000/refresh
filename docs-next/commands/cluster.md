@@ -179,6 +179,11 @@ version it runs four phases:
 3. It rolls every managed nodegroup, one after another.
 4. It updates the other add-ons.
 
+EKS and `refresh` do not upgrade self-managed nodes, hybrid nodes, or Fargate
+pods. Move self-managed and hybrid nodes yourself after the control plane.
+Delete the Fargate pods after the upgrade: they come back at the new version.
+The plan says this in a notice.
+
 A dry run prints the plan:
 
 ```bash
@@ -209,6 +214,9 @@ STEPS  8
 
 HEALTH GATE
   decision  ● Go
+
+NOTICES
+  1  self-managed and hybrid nodes are not upgraded by EKS or refresh: move them to 1.35 yourself after the control plane upgrades. Fargate pods stay at 1.34: delete them after the upgrade, and they come back at 1.35
 ```
 
 A real run prints its progress on stderr:

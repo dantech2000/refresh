@@ -122,7 +122,8 @@ clusters:
           details: []
           findings: []
     blockers: []
-    notices: []
+    notices:
+      - 'self-managed and hybrid nodes are not upgraded by EKS or refresh: move them to 1.33 yourself after the control plane upgrades. Fargate pods stay at 1.32: delete them after the upgrade, and they come back at 1.33'
     status: Failed
     results:
       - phase: ControlPlane
@@ -182,6 +183,7 @@ PLAN  ClusterUpgrade, prod in us-east-1
   api@1.33            update 1.32 to 1.33 (VersionBehind)
   web@1.33            update 1.32 to 1.33 (VersionBehind)
   kube-proxy@1.33     update v1.32.0-eksbuild.1 to v1.33.0-eksbuild.1 (VersionBehind)
+warning: self-managed and hybrid nodes are not upgraded by EKS or refresh: move them to 1.33 yourself after the control plane upgrades. Fargate pods stay at 1.32: delete them after the upgrade, and they come back at 1.33
 phase: control plane, 1.33
 [~] control-plane@1.33: Started (update 00000000-0000-4000-8000-000000000001)
 control-plane: InProgress

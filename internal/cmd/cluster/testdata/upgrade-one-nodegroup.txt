@@ -44,6 +44,7 @@ CHECKS  9
 
 NOTICES
   1  nodegroup(s) api stay on their version; roll them later: refresh cluster upgrade prod --to 1.33 --only nodegroups --skip-addon kube-proxy
+  2  self-managed and hybrid nodes are not upgraded by EKS or refresh: move them to 1.33 yourself after the control plane upgrades. Fargate pods stay at 1.32: delete them after the upgrade, and they come back at 1.33
 --- stderr ---
 refreshing the cluster insights of prod (waits up to 5m0s)
 PLAN  ClusterUpgrade, prod in us-east-1
@@ -53,6 +54,7 @@ PLAN  ClusterUpgrade, prod in us-east-1
   web@1.33            update 1.32 to 1.33 (VersionBehind)
   kube-proxy@1.33     left to you (SkippedByFlag)
 warning: nodegroup(s) api stay on their version; roll them later: refresh cluster upgrade prod --to 1.33 --only nodegroups --skip-addon kube-proxy
+warning: self-managed and hybrid nodes are not upgraded by EKS or refresh: move them to 1.33 yourself after the control plane upgrades. Fargate pods stay at 1.32: delete them after the upgrade, and they come back at 1.33
 phase: control plane, 1.33
 [~] control-plane@1.33: Started (update 00000000-0000-4000-8000-000000000001)
 control-plane: InProgress

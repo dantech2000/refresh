@@ -1817,3 +1817,4 @@ No behaviour changed in these, which only remove a second copy: `ClusterPlan.dec
 | # | Change | Test |
 |---|---|---|
 | 1 | A wait, the insights refresh, and an attach stop at the first poll whose credentials could not be resolved, in place of polling to `--wait-timeout`. The step is `InProgress` with `NotMonitored`, exit 4, as for any change that AWS accepted and that could not be followed; an upgrade or a rollback names the completed phases and the command that goes on. | `TestWait_CredentialsFail`, `TestInsightsRefresh_CredentialsFail`, `TestUpgrade_ProviderFailsDuringAWait` |
+| 2 | A plan of `cluster upgrade` that moves the control plane has a notice that self-managed nodes, hybrid nodes, and Fargate pods are not upgraded by EKS or refresh, as a rollback plan has for its direction. | `TestPlanUpgrade_OtherComputeNotice` |

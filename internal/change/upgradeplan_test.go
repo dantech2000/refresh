@@ -459,3 +459,27 @@ func TestPlanUpgrade_AddonVersionMustParse(t *testing.T) {
 		}
 	}
 }
+
+// Self-managed nodes, hybrid nodes, and Fargate pods stay at the old
+// version: EKS and refresh move only the control plane, the managed
+// nodegroups, and the add-ons. A plan that moves the control plane says
+// so, as a rollback plan does. A plan that leaves the control plane where
+// it is does not.
+func TestPlanUpgrade_OtherComputeNotice(t *testing.T) {
+	const words = "self-managed and hybrid nodes are not upgraded by EKS or refresh"
+	cp := twoHopWorld().upgrade(t, "1.33", UpgradeRequest{})
+	notices := strings.Join(cp.Notices, "\n")
+	for _, w := range []string{words, "move them to 1.33 yourself after the control plane", "Fargate pods", "come back at 1.33"} {
+		if !strings.Contains(notices, w) {
+			t.Errorf("notices = %q, want %q", cp.Notices, w)
+		}
+	}
+
+	w := newPlanWorld()
+	w.addons["vpc-cni"] = "v1.33.0-eksbuild.1"
+	w.catalogue = anyVersion(map[string][]string{"vpc-cni": {"v1.33.0-eksbuild.1"}})
+	same := w.upgrade(t, "1.31", UpgradeRequest{})
+	if strings.Contains(strings.Join(same.Notices, "\n"), words) {
+		t.Errorf("a plan that does not move the control plane has the notice: %q", same.Notices)
+	}
+}
