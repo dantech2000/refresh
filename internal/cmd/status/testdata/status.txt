@@ -9,3 +9,6 @@ CLUSTER            REGION     VERSION  SUPPORT          COMPUTE       STALE AMI 
 [!] prod-stale     us-east-1  1.33     standard (61d)   3 nodegroups  2/3 (153d), 1 behind CP  3 (coredns,kube-proxy +1)  1 issue
 
 [OK] 3 current   [!] 2 need attention   [X] 1 unsupported
+2 stale AMIs · 3 add-ons behind · 1 nodegroup behind the control plane · 2 clusters out of standard support
+
+[X] ancient is on a version that EKS no longer supports: refresh cluster upgrade-check ancient -r eu-west-1

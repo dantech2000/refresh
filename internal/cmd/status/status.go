@@ -509,8 +509,9 @@ func healthText(c apidoc.Cluster) string {
 	return "ok"
 }
 
-// notes returns the line under the table that counts the clusters by what
-// they need.
+// notes returns the lines under the table: the clusters counted by what
+// they need, the totals of what is out of date, and the command that
+// looks closer at the most urgent cluster.
 func notes(th view.Theme, clusters []apidoc.Cluster) []string {
 	if len(clusters) == 0 {
 		return nil
@@ -533,7 +534,80 @@ func notes(th view.Theme, clusters []apidoc.Cluster) []string {
 			parts = append(parts, th.Token(p.status, strconv.Itoa(n)+" "+p.label))
 		}
 	}
-	return []string{strings.Join(parts, "   ")}
+	lines := []string{strings.Join(parts, "   ")}
+	if t := totals(clusters); t != "" {
+		lines = append(lines, th.Dim(t))
+	}
+	if h := hint(th, clusters); h != "" {
+		lines = append(lines, "", h)
+	}
+	return lines
+}
+
+// totals counts what is out of date in the whole fleet: stale AMIs,
+// add-ons behind, nodegroups behind their control plane, and clusters out
+// of standard support. It is "" when nothing is.
+func totals(clusters []apidoc.Cluster) string {
+	var stale, addons, behind, support int
+	for _, c := range clusters {
+		f := findingsOf(c)
+		stale += f.staleAMIs
+		addons += len(f.behindAddons)
+		behind += f.behindNodegroups
+		if supportRisk(c) {
+			support++
+		}
+	}
+	var parts []string
+	for _, p := range []struct {
+		n    int
+		text string
+	}{
+		{stale, plural(stale, "stale AMI")},
+		{addons, plural(addons, "add-on") + " behind"},
+		{behind, plural(behind, "nodegroup") + " behind the control plane"},
+		{support, plural(support, "cluster") + " out of standard support"},
+	} {
+		if p.n > 0 {
+			parts = append(parts, p.text)
+		}
+	}
+	return strings.Join(parts, " · ")
+}
+
+// hint names the most urgent cluster, in table order, with the command
+// that checks whether it is ready to upgrade: an unsupported cluster
+// first, else the first one that needs attention. The command names the
+// region of the cluster, which a sweep of several regions may not have
+// as its default.
+func hint(th view.Theme, clusters []apidoc.Cluster) string {
+	i := slices.IndexFunc(clusters, func(c apidoc.Cluster) bool { return overall(c) == view.Fail })
+	if i < 0 {
+		i = slices.IndexFunc(clusters, func(c apidoc.Cluster) bool { return overall(c) == view.Warn })
+	}
+	if i < 0 {
+		return ""
+	}
+	c := clusters[i]
+	f := findingsOf(c)
+	reason := "needs attention"
+	switch {
+	case overall(c) == view.Fail:
+		reason = "is on a version that EKS no longer supports"
+	case f.issues > 0:
+		reason = "has " + plural(f.issues, "health issue")
+	case f.behindNodegroups > 0:
+		reason = "has " + plural(f.behindNodegroups, "nodegroup") + " behind the control plane"
+	case supportRisk(c):
+		reason = "is out of standard support"
+	case f.total() > 0:
+		reason = "has stale AMIs or add-ons"
+	}
+	command := "refresh cluster upgrade-check " + c.Name
+	if c.Region != "" {
+		command += " -r " + c.Region
+	}
+	return th.Token(overall(c), c.Name) + " " + reason + ": " + th.Strong(command)
 }
 
 // plural returns n and noun, with an "s" unless n is 1.

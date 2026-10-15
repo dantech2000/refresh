@@ -30,7 +30,15 @@ CLUSTER                REGION     VERSION  SUPPORT           COMPUTE       STALE
 ▲ staging-data-40      us-east-1  1.32     extended (160d)*  1 nodegroup   0                        0                           ok
 
 ● 0 current   ▲ 8 need attention
+5 stale AMIs · 5 add-ons behind · 1 nodegroup behind the control plane · 4 clusters out of standard support
+
+▲ dev-orders-32 has stale AMIs or add-ons: refresh cluster upgrade-check dev-orders-32 -r us-east-1
 ```
+
+Under the table, the first line counts the clusters by what they need, and
+the second line adds up what is out of date. The last line names the most
+urgent cluster, an unsupported one first, with the command that checks
+whether it is ready to upgrade.
 
 ## Columns
 

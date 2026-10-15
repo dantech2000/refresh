@@ -9,6 +9,9 @@ CLUSTER           REGION     VERSION  SUPPORT          COMPUTE       STALE AMI  
 [!] prod-stale    us-east-1  1.33     standard (61d)   3 nodegroups  unknown    unknown  1 issue
 
 [OK] 2 current   [!] 2 need attention   [X] 1 unsupported   [?] 3 incomplete
+1 nodegroup behind the control plane · 2 clusters out of standard support
+
+[X] ancient is on a version that EKS no longer supports: refresh cluster upgrade-check ancient -r eu-west-1
 
 INCOMPLETE DATA
 [?] addon prod-current/vpc-cni (us-east-1): Throttled (eks:DescribeAddonVersions): ThrottlingException: Rate exceeded
