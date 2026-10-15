@@ -515,10 +515,18 @@ func eksListUpdates(c *call) (any, error) {
 }
 
 // eksDescribeUpdate finds an update only under the resource it belongs to:
-// EKS needs nodegroupName or addonName for an update of one.
+// EKS needs nodegroupName or addonName for an update of one. The resource
+// must still exist: the updates of a nodegroup or an add-on that was
+// deleted are gone with it, as in EKS.
 func eksDescribeUpdate(c *call) (any, error) {
 	return c.inCluster(func(_ *fleettest.State, cl *fleettest.Cluster) (any, error) {
 		id := c.in.str("updateId")
+		if name := c.in.str("nodegroupName"); name != "" && cl.Nodegroup(name) == nil {
+			return nil, eksNotFound("No node group found for name: " + name + ".")
+		}
+		if name := c.in.str("addonName"); name != "" && cl.Addon(name) == nil {
+			return nil, eksNotFound("No addon: " + name + " found in cluster: " + cl.Name)
+		}
 		u := cl.Update(id)
 		if u == nil || u.Nodegroup != c.in.str("nodegroupName") || u.Addon != c.in.str("addonName") {
 			return nil, eksNotFound("No update found for ID: " + id)
