@@ -1,5 +1,48 @@
 # Changelog
 
+## [0.17.0](https://github.com/dantech2000/refresh/compare/v0.16.0...v0.17.0) (2026-10-15)
+
+
+### ⚠ BREAKING CHANGES
+
+* the command line, several exit codes, and the JSON and YAML documents changed. Every change is listed in the [migration guide](https://drod.dev/refresh/migrating/). The docs of 0.16 and earlier stay at <https://drod.dev/refresh/v1/>.
+
+### Features
+
+* replace the CLI with the rewrite ([#527](https://github.com/dantech2000/refresh/issues/527)) ([cb3096a](https://github.com/dantech2000/refresh/commit/cb3096a4c627fabfd2b0bbf8205ffcbc22b7c981))
+
+
+### Bug Fixes
+
+* **deps:** bump charm.land/bubbletea/v2 from 2.0.10 to 2.1.0 ([#521](https://github.com/dantech2000/refresh/issues/521)) ([dd9479c](https://github.com/dantech2000/refresh/commit/dd9479c2e336314e2d7142a1a91b0dd70e07016e))
+* **deps:** bump github.com/aws/aws-sdk-go-v2 from 1.47.1 to 1.47.2 ([#506](https://github.com/dantech2000/refresh/issues/506)) ([d8f37ef](https://github.com/dantech2000/refresh/commit/d8f37eff7edb30b6e3c222692c8e06e5de36c5d0))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/config ([#518](https://github.com/dantech2000/refresh/issues/518)) ([e6b87b0](https://github.com/dantech2000/refresh/commit/e6b87b0345a230cd17975703408d07f5312807ed))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/cloudwatch ([#511](https://github.com/dantech2000/refresh/issues/511)) ([c3df53d](https://github.com/dantech2000/refresh/commit/c3df53d0d1b6ed6261e3b5d660adb3ca4e7c04ba))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/ec2 ([#495](https://github.com/dantech2000/refresh/issues/495)) ([493caf0](https://github.com/dantech2000/refresh/commit/493caf0bc8ff64317b29f3cffa63903698607587))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/ec2 ([#507](https://github.com/dantech2000/refresh/issues/507)) ([1263899](https://github.com/dantech2000/refresh/commit/126389962de2e9f6101034c754e4a23a7cb7ff6d))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/eks ([#492](https://github.com/dantech2000/refresh/issues/492)) ([909894d](https://github.com/dantech2000/refresh/commit/909894d07106d814c2b4c39770acc4944a6c0de0))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/eks ([#510](https://github.com/dantech2000/refresh/issues/510)) ([341bfd3](https://github.com/dantech2000/refresh/commit/341bfd395730ee65360009054355ea1bde6707fe))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/ssm ([#494](https://github.com/dantech2000/refresh/issues/494)) ([5a795d2](https://github.com/dantech2000/refresh/commit/5a795d2a49f773878124eb904a6302e0ae151681))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/ssm ([#508](https://github.com/dantech2000/refresh/issues/508)) ([2a15ad5](https://github.com/dantech2000/refresh/commit/2a15ad5986359b85f8bace97c291d4450eb7124b))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/ssooidc ([#519](https://github.com/dantech2000/refresh/issues/519)) ([bc5b57f](https://github.com/dantech2000/refresh/commit/bc5b57f243131b644f0a0fbd2d463fc4246008c6))
+* **deps:** bump github.com/aws/smithy-go from 1.28.1 to 1.28.2 ([#488](https://github.com/dantech2000/refresh/issues/488)) ([f8f4c56](https://github.com/dantech2000/refresh/commit/f8f4c566e83a87c1fb9078ad74556c6b701f8d77))
+* **deps:** bump github.com/buger/jsonparser from 1.1.2 to 1.6.1 ([#493](https://github.com/dantech2000/refresh/issues/493)) ([af5507e](https://github.com/dantech2000/refresh/commit/af5507e674ee04d1dbbfc6c07e5b203b6c0e2f67))
+* **deps:** bump github.com/emicklei/go-restful/v3 from 3.13.0 to 3.14.0 ([#503](https://github.com/dantech2000/refresh/issues/503)) ([f0def84](https://github.com/dantech2000/refresh/commit/f0def8497ea1d8a65d05a38c4488ec15d9a18cef))
+* **deps:** bump github.com/fxamacker/cbor/v2 from 2.9.4 to 2.9.6 ([#501](https://github.com/dantech2000/refresh/issues/501)) ([b04c9c7](https://github.com/dantech2000/refresh/commit/b04c9c77881c80d837a1627e335da004900769b0))
+* **deps:** bump github.com/go-openapi/jsonpointer from 1.0.1 to 1.0.2 ([#489](https://github.com/dantech2000/refresh/issues/489)) ([5f7640e](https://github.com/dantech2000/refresh/commit/5f7640e2b64c7c990e8b31b529a5433eb4cc98dc))
+* **deps:** bump github.com/go-openapi/jsonreference from 1.0.2 to 1.0.3 ([#496](https://github.com/dantech2000/refresh/issues/496)) ([9c055ab](https://github.com/dantech2000/refresh/commit/9c055ab2a94ad2748da8149614c037d607cb7c20))
+* **deps:** bump github.com/mattn/go-colorable from 0.1.15 to 0.1.16 ([#517](https://github.com/dantech2000/refresh/issues/517)) ([ceee02b](https://github.com/dantech2000/refresh/commit/ceee02b650e9c37d17f1f89ddf5cd1bcb2ade777))
+* **deps:** bump github.com/pb33f/ordered-map/v2 from 2.3.1 to 2.3.2 ([#490](https://github.com/dantech2000/refresh/issues/490)) ([0a8fd8e](https://github.com/dantech2000/refresh/commit/0a8fd8ea45f8500412bb6413dd66aea3ef3d5a5d))
+* **deps:** bump github.com/urfave/cli/v3 from 3.13.0 to 3.14.0 ([#498](https://github.com/dantech2000/refresh/issues/498)) ([0523b18](https://github.com/dantech2000/refresh/commit/0523b18099cb7afd748945c493cd3a58e7bc7752))
+* **deps:** bump golang.org/x/net from 0.60.0 to 0.61.0 ([#514](https://github.com/dantech2000/refresh/issues/514)) ([29a08c8](https://github.com/dantech2000/refresh/commit/29a08c8b46162f6f3dd3f30ac8b547f2378ea640))
+* **deps:** bump golang.org/x/sync from 0.23.0 to 0.24.0 ([#509](https://github.com/dantech2000/refresh/issues/509)) ([662a8bd](https://github.com/dantech2000/refresh/commit/662a8bdcacd22d07bc642d729607d47817b1356e))
+* **deps:** bump golang.org/x/term from 0.46.0 to 0.47.0 ([#512](https://github.com/dantech2000/refresh/issues/512)) ([1fdb633](https://github.com/dantech2000/refresh/commit/1fdb6332e52fde143a2992ef2720411ad611d8c1))
+* **health:** report an unreadable critical-pod list as unread data ([#522](https://github.com/dantech2000/refresh/issues/522)) ([7a41900](https://github.com/dantech2000/refresh/commit/7a419002c2dbcab3ffd27924a8413f4361f9d109))
+* **nodegroup:** make the fleet exit-code precedence an explicit table ([#525](https://github.com/dantech2000/refresh/issues/525)) ([0651d37](https://github.com/dantech2000/refresh/commit/0651d377e54addf5ef1ecd51cdb712f49c366a3e))
+* **ui:** send the health-warning prompt to stderr as [y/N] ([#523](https://github.com/dantech2000/refresh/issues/523)) ([5ea44c7](https://github.com/dantech2000/refresh/commit/5ea44c7bd17936c091ad40d3da390ad2900cfbba))
+* **upgrade:** let --force roll past PDBs that could not be read ([#524](https://github.com/dantech2000/refresh/issues/524)) ([094e4b7](https://github.com/dantech2000/refresh/commit/094e4b7ccf74a205f7b5854b5e21cb403c8b112c))
+* **upgrade:** verify each nodegroup after its roll ([#526](https://github.com/dantech2000/refresh/issues/526)) ([682934c](https://github.com/dantech2000/refresh/commit/682934ced20e71eeacaa7639e15763d2b23d5506))
+
 ## [0.16.0](https://github.com/dantech2000/refresh/compare/v0.15.0...v0.16.0) (2026-10-02)
 
 
