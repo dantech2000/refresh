@@ -152,7 +152,7 @@ tasks:
 
   # Documentation site (Material for MkDocs via a uv-managed, hash-locked venv)
   docs:serve:
-    desc: Serve the documentation site locally with live reload
+    desc: Serve the current docs (v2 only) locally with live reload
     cmds:
       - uv run --frozen mkdocs serve
 
@@ -177,7 +177,13 @@ tasks:
         echo "docs/reference and api/schema are up to date."
 
   docs:build:
-    desc: Build the documentation site (strict — fails on broken links/nav)
+    desc: Build the published site into site/ (v2, v1 from the 0.16 commit, schemas, redirects)
+    deps: [docs:gen]
+    cmds:
+      - uv run --frozen python tools/mkdocs/build_site.py
+
+  docs:build:current:
+    desc: Build the current docs only (strict — fails on broken links/nav)
     deps: [docs:gen]
     cmds:
       - uv run --frozen mkdocs build --strict
