@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.1](https://github.com/dantech2000/refresh/compare/v0.17.0...v0.17.1) (2026-10-15)
+
+
+### Bug Fixes
+
+* **version:** report the module version and commit of a go install build ([#530](https://github.com/dantech2000/refresh/issues/530)) ([ac236ed](https://github.com/dantech2000/refresh/commit/ac236edb944340d802851592be40e5d74851aafc))
+
 ## [0.17.0](https://github.com/dantech2000/refresh/compare/v0.16.0...v0.17.0) (2026-10-15)
 
 
