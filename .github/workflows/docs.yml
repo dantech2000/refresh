@@ -2,6 +2,11 @@ name: Docs
 
 # Build the Material for MkDocs site and deploy it to GitHub Pages.
 #
+# The site has two versions (tools/mkdocs/build_site.py): /refresh/v2/ from
+# docs/, and /refresh/v1/ from the pinned 0.16 commit, which the script
+# fetches over github.com. The root holds the schemas, versions.json, and
+# redirect stubs to v2.
+#
 # Supply-chain posture (REF-107):
 #   - The BUILD job runs third-party code (Python deps from the hash-locked
 #     uv.lock) with `contents: read` only — NO id-token, NO pages, NO secrets.
@@ -82,8 +87,8 @@ jobs:
           enable-cache: true
           cache-dependency-glob: uv.lock
 
-      - name: Build (strict) from the hash-locked lockfile
-        run: uv run --frozen mkdocs build --strict
+      - name: Build both versions (strict) from the hash-locked lockfile
+        run: uv run --frozen python tools/mkdocs/build_site.py
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
