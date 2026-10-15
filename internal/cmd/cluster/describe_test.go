@@ -3,6 +3,7 @@ package cluster_test
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -182,19 +183,28 @@ func TestDescribe_NotFoundAndTarget(t *testing.T) {
 }
 
 // A deadline while the nodegroups are read is a partial result, exit 4.
+// It passes when the nodegroups are at the server and the cluster is read.
+// The VPC call says that the cluster is read: the command sends it only
+// after the answer of the cluster call. The nodegroup calls wait for it.
 func TestDescribe_Deadline(t *testing.T) {
 	e := newDescribeFake(t)
 	ctx, expire := awsxtest.Deadline(cmdutiltest.Context(t))
+	vpcSent := make(chan struct{})
+	var once sync.Once
 	e.Server.OnRequest = func(hctx context.Context, r awsxtest.Request) {
-		if r.Operation == fleettest.EKSDescribeNodegroup {
-			expire()
+		switch r.Operation {
+		case fleettest.EC2DescribeVpcs:
+			once.Do(func() { close(vpcSent) })
+		case fleettest.EKSDescribeNodegroup:
+			select {
+			case <-vpcSent:
+				expire()
+			case <-hctx.Done():
+			}
 			<-hctx.Done()
 		}
 	}
-	// One request slot: the calls go out one at a time, in the order that
-	// they asked for the slot. The cluster asked before any call of the
-	// second wave, so it is answered before the run is cut short.
-	err := e.Run(ctx, "cluster", "describe", "prod", "-o", "json", "--max-concurrency", "1")
+	err := e.Run(ctx, "cluster", "describe", "prod", "-o", "json")
 	if got := cmdutil.ExitCode(err); got != cmdutil.ExitIncomplete {
 		t.Fatalf("exit code = %d (%v), want %d", got, err, cmdutil.ExitIncomplete)
 	}
