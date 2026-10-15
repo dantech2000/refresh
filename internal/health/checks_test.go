@@ -696,13 +696,9 @@ func TestWorkloads(t *testing.T) {
 	})
 	t.Run("a failed read keeps a fail", func(t *testing.T) {
 		h := newHarness(t, addPods(&fleettest.Pod{Namespace: "kube-system", Name: "stuck", Phase: "Pending"}))
-		h.kube.OnRequest = func(_ context.Context, r kubetest.Request) {
-			if r.Namespace == "kube-public" {
-				h.world.SetScopedFault(fleettest.Scope{Operation: fleettest.KubeListPods}, fleettest.Fault{Deny: true})
-			} else {
-				h.world.SetScopedFault(fleettest.Scope{Operation: fleettest.KubeListPods}, fleettest.Fault{})
-			}
-		}
+		// The namespaces are read in parallel, so the fault names its
+		// namespace rather than following the order of the requests.
+		h.world.SetScopedFault(fleettest.Scope{Operation: fleettest.KubeListPods, Namespace: "kube-public"}, fleettest.Fault{Deny: true})
 		check(t, h.run(testContext(t), health.Workloads()), want{outcome: health.Fail, message: "not read: kube-public", findings: []string{"kube-system/stuck"}, failures: 1})
 	})
 }

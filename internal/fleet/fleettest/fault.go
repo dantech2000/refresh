@@ -29,6 +29,8 @@ type Scope struct {
 	Cluster   string
 	Nodegroup string
 	Addon     string
+	// Namespace matches the namespace a Kubernetes request reads.
+	Namespace string
 }
 
 // Call describes one request, for World.Enter.
@@ -40,6 +42,8 @@ type Call struct {
 	Cluster   string
 	Nodegroup string
 	Addon     string
+	// Namespace is the namespace a Kubernetes request reads, or "".
+	Namespace string
 }
 
 func (s Scope) matches(c Call) bool {
@@ -48,13 +52,14 @@ func (s Scope) matches(c Call) bool {
 		(s.Region == "" || s.Region == c.Region) &&
 		(s.Cluster == "" || s.Cluster == c.Cluster) &&
 		(s.Nodegroup == "" || s.Nodegroup == c.Nodegroup) &&
-		(s.Addon == "" || s.Addon == c.Addon)
+		(s.Addon == "" || s.Addon == c.Addon) &&
+		(s.Namespace == "" || s.Namespace == c.Namespace)
 }
 
 // rank orders scopes from general to specific. See World.SetScopedFault.
 func (s Scope) rank() int {
 	rank := 0
-	for i, set := range []bool{s.Region != "", s.Service != "", s.Operation != "", s.Cluster != "", s.Nodegroup != "" || s.Addon != ""} {
+	for i, set := range []bool{s.Region != "", s.Service != "", s.Operation != "", s.Cluster != "", s.Nodegroup != "" || s.Addon != "" || s.Namespace != ""} {
 		if set {
 			rank |= 1 << i
 		}

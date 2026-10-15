@@ -135,7 +135,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		fail(&status{http.StatusMethodNotAllowed, metav1.StatusReasonMethodNotAllowed, "kubetest does not watch " + res.kind})
 		return
 	}
-	_, err := h.world.Enter(ctx, fleettest.Call{Operation: req.Operation, Region: h.region, Cluster: h.cluster})
+	_, err := h.world.Enter(ctx, fleettest.Call{Operation: req.Operation, Region: h.region, Cluster: h.cluster, Namespace: namespace})
 	var fault *fleettest.FaultError
 	switch {
 	case errors.As(err, &fault) && fault.Kind != fleettest.ConnectionReset:
