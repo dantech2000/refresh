@@ -1,12 +1,15 @@
 package change
 
 import (
+	"context"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/dantech2000/refresh/internal/apidoc"
+	"github.com/dantech2000/refresh/internal/awsx/awsxtest"
 	"github.com/dantech2000/refresh/internal/exitcode"
 	"github.com/dantech2000/refresh/internal/fleet/fleettest"
 	"github.com/dantech2000/refresh/internal/health"
@@ -97,15 +100,19 @@ func TestRoll_NodegroupDeletedDuringTheWait(t *testing.T) {
 		s.DefaultNodegroupUpdate = &fleettest.UpdateScript{After: 5 * time.Minute}
 	}))
 	e.withKube(t)
-	e.onRequest(fleettest.EKSDescribeUpdate, func(n int) {
-		if n == 2 {
+	// The second poll of ng-a's own update is the handshake: the wait has
+	// seen the update once, so a not-found answer is final. Before that,
+	// EKS can answer not-found for a fresh update, and the wait polls on.
+	var polls atomic.Int32
+	e.srv.OnRequest = func(_ context.Context, r awsxtest.Request) {
+		if r.Operation == fleettest.EKSDescribeUpdate && r.Input["nodegroupName"] == "ng-a" && polls.Add(1) == 2 {
 			e.world.Edit(func(s *fleettest.State) {
 				c := s.Cluster(east, "prod")
 				c.Nodegroups = slices.DeleteFunc(c.Nodegroups, func(n *fleettest.Nodegroup) bool { return n.Name == "ng-a" })
 				c.Nodes = slices.DeleteFunc(c.Nodes, func(n *fleettest.Node) bool { return n.Nodegroup == "ng-a" })
 			})
 		}
-	})
+	}
 	res := mustRun(t, e, rollOf("ng-a", "ng-b"), Hooks{})
 	if res.ExitCode() != exitcode.Incomplete {
 		t.Errorf("exit = %d, want 4 (%v)", res.ExitCode(), res.Err)
