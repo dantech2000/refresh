@@ -110,7 +110,8 @@ func TestOnlyTheRootHasAPersistentPreRun(t *testing.T) {
 // TestFlagShorthands compares flags by name: a shorthand letter belongs to
 // the one long flag name in the table, and a flag with that name carries the
 // letter. It cannot see what a flag does, so a flag with the right name and
-// another purpose passes.
+// another purpose passes. Every letter in the table is used by a flag: a
+// letter that no flag has is not reserved.
 func TestFlagShorthands(t *testing.T) {
 	// shorthands gives each flag letter its one meaning, from "Global flags" in
 	// CONTRACT.md. A flag with one of these names carries the letter, and no
@@ -118,7 +119,6 @@ func TestFlagShorthands(t *testing.T) {
 	shorthands := map[string]string{
 		"c": "cluster",
 		"n": "nodegroup",
-		"a": "addon",
 		"o": "output",
 		"r": "region",
 		"t": "timeout",
@@ -130,10 +130,12 @@ func TestFlagShorthands(t *testing.T) {
 		"A": "all-regions",
 		"h": "help",
 	}
+	used := map[string]bool{}
 	walk(newTree(), func(cmd *cobra.Command) {
 		check := func(fl *pflag.Flag) {
 			path := cmd.CommandPath()
 			if fl.Shorthand != "" {
+				used[fl.Shorthand] = true
 				want, ok := shorthands[fl.Shorthand]
 				switch {
 				case !ok:
@@ -153,6 +155,11 @@ func TestFlagShorthands(t *testing.T) {
 		cmd.LocalFlags().VisitAll(check)
 		cmd.InheritedFlags().VisitAll(check)
 	})
+	for letter, name := range shorthands {
+		if !used[letter] {
+			t.Errorf("-%s is reserved for --%s, and no flag uses it", letter, name)
+		}
+	}
 }
 
 // A flag of a command with the name or the letter of a global flag hides

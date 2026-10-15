@@ -78,7 +78,7 @@ fails with a usage error. It does not do something different in silence.
 | `--format` | `--output` |
 | `-o tree`, `--tree`, `-T` | `refresh status` |
 | `-H`, `-R`, `-I`, `-W`, `-T`, `-C` | The long flags. `-A` is the only capital letter that stays. |
-| `-n` on `nodegroup describe`, `scale`, `update`; `-a` on `addon describe`, `update` | The positional |
+| `-n` on `nodegroup describe`, `scale`, `update`; `-a` on `addon describe`, `update` | The positional. No flag has the letter `-a` now. |
 | `--wait` on `nodegroup scale` and `addon update` | Nothing: a change waits. `--no-wait` turns the wait off. |
 | `--health-check` on `nodegroup scale` and `addon update`; `--check-pdbs` | Nothing: the gate is on. `--skip-health-check` turns it off. |
 | `--health-only` | `--dry-run` |

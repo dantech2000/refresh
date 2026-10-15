@@ -40,6 +40,7 @@ Say no to any row and it reverts to today's behaviour.
 | 26 | `cluster upgrade-check --status` filters what is shown, not what is judged | `--status PASSING` must not report "ready" while an ERROR insight exists |
 | 27 | `cluster upgrade-check -o plain` prints every section as `FIELD`/`VALUE` rows | The old form printed the insight rows and put the rest on stderr |
 | 28 | A blocked `cluster upgrade-check` with an unread item exits 4 | The highest code wins, as for `status` |
+| 29 | `-a` is not a reserved flag letter | No command has an add-on flag: the add-on is the positional. A letter that no flag uses is not reserved. |
 
 ## Commands
 
@@ -119,7 +120,7 @@ A number flag or variable that is not a whole number, or that is out of range, i
 
 `context add` checks what it saves: a name of 1 to 63 letters, digits, `-`, `_`, and `.` (not `-` alone), a cluster name by the EKS rules, and a region of the right shape. Replacing a context is allowed; the command then prints `Updated context "<name>"`.
 
-Flag letters keep one meaning everywhere: `-c` cluster, `-n` nodegroup, `-a` add-on, `-o` output, `-r` region, `-t` timeout, `-d` dry-run, `-y` yes, `-q` quiet, `-w` watch, `-f` filter, `-A` all regions.
+Flag letters keep one meaning everywhere: `-c` cluster, `-n` nodegroup, `-o` output, `-r` region, `-t` timeout, `-d` dry-run, `-y` yes, `-q` quiet, `-w` watch, `-f` filter, `-A` all regions.
 
 ## Flags shared by every changing command
 

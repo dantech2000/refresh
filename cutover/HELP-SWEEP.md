@@ -30,7 +30,7 @@ commands. `docs-next/reference/` has the full help text.
 | 12 | `-t, --timeout` | Help: "Budget for the API calls of a read command". The flag is on every command. In a changing command it bounds the reads before the first change, and with `--watch` each refresh. The help says neither. The contract has the same short text. | Fixed in `fb41208`, in the help. The contract cell has the same text now. |
 | 13 | `--profile` | The help names no env var. The contract's table gives `AWS_PROFILE`, and the other global flags name theirs. | Fixed in `fb41208`. |
 | 14 | `-r, --region` | The help does not name `REFRESH_EKS_REGIONS`, which the contract gives as its env var for sweeps. `-A` names it. | Fixed in `fb41208`. |
-| 15 | `-a` | The contract reserves `-a` for add-on. No command has a flag with that letter. | Open. A contract decision: keep `-a` reserved, or remove it from the list. |
+| 15 | `-a` | The contract reserves `-a` for add-on. No command has a flag with that letter. | Decided: `-a` is not reserved (`CONTRACT.md` change 29). `TestFlagShorthands` fails on a reserved letter that no flag uses. |
 | 16 | `ui --allow-changes`, `ui --wait-timeout` | Both are accepted and do nothing ("no effect yet"). The contract lists them as working flags. | No longer applies: both flags work since `c59d34b`. |
 | 17 | `-o` on `context list` and `context current` | Neither has `-o`. The contract's "Output" rules do not say which commands print no document. | Open. A contract decision. |
 | 18 | `context add -r`, `--profile` | They shadow the global `--region` and `--profile`. On purpose, and no test stops a second command from doing the same. | Fixed in `43a4f27`: `TestNoCommandFlagShadowsGlobalFlag`. |

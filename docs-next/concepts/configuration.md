@@ -132,7 +132,8 @@ the formats that the command supports. Put it after the command name.
 
 ### Flag letters
 
-A letter has one meaning in every command.
+A letter has one meaning in every command. A letter that is not in the table
+is not reserved; `-a` is free, because an add-on is a positional.
 
 | Letter | Flag |
 |---|---|
