@@ -97,7 +97,14 @@ func pacedRig(t *testing.T, world *fleettest.World, withKube bool, p *pacer, edi
 			t.Fatal(err)
 		}
 		t.Setenv("KUBECONFIG", path)
-		client, err := kubernetes.NewForConfig(srv.Config())
+		cfg := srv.Config()
+		if p != nil {
+			// The paced observer lists on each snapshot, as fast as
+			// the server answers: the default client-side limit of
+			// client-go would wait on the real clock.
+			cfg.QPS = -1
+		}
+		client, err := kubernetes.NewForConfig(cfg)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -128,6 +135,24 @@ func pacedRig(t *testing.T, world *fleettest.World, withKube bool, p *pacer, edi
 		}
 		if p != nil {
 			o.Deps.After, o.Deps.Tick = p.After, p.Tick
+			// A snapshot from the caches of the watches can be behind
+			// the world: the watch delivers on its own goroutine, and a
+			// roll can end before the cache shows its last stage. So the
+			// paced observer lists. The Warning events may not be read,
+			// so their watch never fills, and the wait for the watches
+			// ends at once. Every other timer is held, as above. The
+			// read budget gets a length of its own, so the timer of the
+			// wait for the watches is the only one of SyncLimit.
+			o.ReadTimeout = 2 * noderoll.SyncLimit
+			world.SetFault(fleettest.KubeListEvents, fleettest.Fault{Deny: true})
+			world.SetFault(fleettest.KubeWatchEvents, fleettest.Fault{Deny: true})
+			o.Deps.AfterFunc = func(d time.Duration, f func()) func() bool {
+				if d == noderoll.SyncLimit {
+					f()
+					return func() bool { return false }
+				}
+				return func() bool { return true }
+			}
 		}
 		for _, edit := range edits {
 			edit(o)
@@ -136,12 +161,12 @@ func pacedRig(t *testing.T, world *fleettest.World, withKube bool, p *pacer, edi
 }
 
 // pacer is the clock of a test that reads the nodes of a roll. The node
-// observer runs beside the wait of the roll, and reads the cluster
-// through informers that take real time to start, while the wait moves
-// the world's clock without waiting for anything; the observer would
-// miss the roll. The pacer parks each pause of the engine until the
-// observer has taken a snapshot of the world as it is, so every stage of
-// the roll is seen, with no timer and no sleep.
+// observer runs beside the wait of the roll, while the wait moves the
+// world's clock without waiting for anything; the observer would miss
+// the roll. The pacer parks each pause of the engine until the observer
+// has taken a snapshot of the world as it is, so every stage of the roll
+// is seen, with no timer and no sleep. A paced rig makes the observer
+// list on each snapshot, so that a snapshot is the world as it is.
 type pacer struct {
 	world *fleettest.World
 	stop  chan struct{}
@@ -536,6 +561,9 @@ func TestRollShowsTheNodes(t *testing.T) {
 	nodes := c.Progress[step.Ref].Nodes
 	if nodes == nil || nodes.Snapshot.ReadyTarget != 2 {
 		t.Fatalf("node view = %+v; log %s", nodes, logText(c))
+	}
+	if nodes.Watching {
+		t.Fatal("the observer watches; a paced rig needs it to list")
 	}
 	// The new nodes join at the start of the roll, in the baseline of the
 	// observer; what follows is seen stage by stage.
