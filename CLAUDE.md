@@ -36,7 +36,8 @@ task vuln           # govulncheck ./...
 task deadcode       # fail on code that nothing reaches, tests included
 task tidy:check     # go mod tidy -diff
 task docs:check     # regenerate docs/reference and api/schema, fail if either changed
-task docs:build     # mkdocs build --strict
+task docs:build     # the published site: v2, v1, schemas, redirects (tools/mkdocs/build_site.py)
+task docs:build:current  # mkdocs build --strict, current docs only
 task fuzz           # every FuzzXxx target for FUZZTIME (default 30s)
 task test:parity    # the parity suite
 task test:live      # read-only checks against a real account (AWS_PROFILE): AMI paths, calendar, add-on versions, regions, offerings, schemas
@@ -99,7 +100,7 @@ api/schema/v2/          the generated JSON Schemas; the docs site publishes them
 test/parity/            the parity suite
 tools/genschema/        writes api/schema/v2 from the Go types
 tools/fakefleet/        the fake fleet server
-tools/mkdocs/           the MkDocs hook that publishes api/schema
+tools/mkdocs/           the versioned site build, the v1 banner, the schema hook
 docs/                   user documentation (Material for MkDocs); docs/reference is generated
 ```
 
@@ -270,6 +271,12 @@ difference has an entry with a reason in `testdata/allowlist.json`.
   exec plugin cannot write over the screen.
 - **Docs.** `uv run --frozen mkdocs build --strict` must pass. The site
   publishes to <https://drod.dev/refresh/> on a merge to `main`.
+- **The site has two versions.** `tools/mkdocs/build_site.py` builds `docs/`
+  into `/refresh/v2/` and the 0.16 docs (pinned commit `V1_REF`) into
+  `/refresh/v1/`. It copies `api/schema` to `/refresh/schema/`, and writes
+  `versions.json` and a redirect stub at the root for every page path. Do not
+  edit the v1 docs in history; fix a v1 build problem in the override config
+  of the script.
 
 ## Where work is tracked
 
