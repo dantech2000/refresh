@@ -9,8 +9,17 @@ Every command that prints data takes `-o/--output`:
 | `yaml` | The same document as YAML. |
 | `plain` | Tab-separated values. For `cut`, `awk`, and spreadsheets. |
 
-`refresh version` has `table`, `json`, and `yaml`. The `context` commands print
-text only.
+`refresh version` has `table`, `json`, and `yaml`.
+
+These commands have no `-o` and print no document:
+
+- `context list` and `context current` print for people. A script that needs
+  the active context reads the first field of `refresh context current`, which
+  is the name.
+- `context add`, `context remove`, and `context use` print one line that says
+  what changed.
+- `ui` is a terminal app.
+- `completion` prints a shell script, and `help` prints help.
 
 ## stdout and stderr
 

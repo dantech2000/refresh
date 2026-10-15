@@ -1,6 +1,8 @@
 package root_test
 
 import (
+	"os"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
@@ -263,5 +265,50 @@ func TestEveryCommandIsInAHelpGroup(t *testing.T) {
 		if !cmd.Hidden && cmd.GroupID == "" {
 			t.Errorf("%s: no help group; it would be listed under \"Additional Commands\"", cmd.CommandPath())
 		}
+	}
+}
+
+// TestCommandsWithoutOutputAreInTheContract compares the commands that have
+// no -o with the list under "Commands that print no document" in
+// CONTRACT.md. A command that loses or gains -o must change the contract.
+func TestCommandsWithoutOutputAreInTheContract(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "..", "CONTRACT.md"))
+	if err != nil {
+		t.Fatalf("reading the contract: %v", err)
+	}
+	const heading = "### Commands that print no document\n"
+	_, section, ok := strings.Cut(string(data), heading)
+	if !ok {
+		t.Fatalf("CONTRACT.md has no %q section", strings.TrimSpace(heading))
+	}
+	section, _, _ = strings.Cut(section, "\n#")
+	var want []string
+	for line := range strings.SplitSeq(section, "\n") {
+		names, _, ok := strings.Cut(strings.TrimPrefix(line, "- "), ":")
+		if !strings.HasPrefix(line, "- ") || !ok {
+			continue
+		}
+		for name := range strings.SplitSeq(names, ",") {
+			want = append(want, strings.Trim(strings.TrimSpace(name), "`"))
+		}
+	}
+	var got []string
+	walk(newTree(), func(cmd *cobra.Command) {
+		if cmd.HasSubCommands() || cmd.Hidden || cmd.Flags().Lookup("output") != nil {
+			return
+		}
+		path := strings.TrimPrefix(cmd.CommandPath(), "refresh ")
+		// The contract names the completion command once, not each shell.
+		if strings.HasPrefix(path, "completion ") {
+			path = "completion"
+		}
+		if !slices.Contains(got, path) {
+			got = append(got, path)
+		}
+	})
+	sort.Strings(want)
+	sort.Strings(got)
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("commands without -o (-contract +tree):\n%s", diff)
 	}
 }

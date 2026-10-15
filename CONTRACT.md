@@ -41,6 +41,7 @@ Say no to any row and it reverts to today's behaviour.
 | 27 | `cluster upgrade-check -o plain` prints every section as `FIELD`/`VALUE` rows | The old form printed the insight rows and put the rest on stderr |
 | 28 | A blocked `cluster upgrade-check` with an unread item exits 4 | The highest code wins, as for `status` |
 | 29 | `-a` is not a reserved flag letter | No command has an add-on flag: the add-on is the positional. A letter that no flag uses is not reserved. |
+| 30 | `context list` and `context current` print no document, and the contract lists every command without `-o` | They print for people. A script reads the name, the first field of `refresh context current`. |
 
 ## Commands
 
@@ -174,6 +175,16 @@ Unchanged rules:
 - `-o plain` is TSV: one header row, then one row per item, `-` for an empty cell.
 - A run with `-o json|yaml` never prompts.
 - refresh's own enum values are PascalCase. AWS values pass through unchanged.
+
+### Commands that print no document
+
+These commands have no `-o`. Every other command has it.
+
+- `context list`, `context current`: they print for people. A script that needs the active context reads the first field of `refresh context current`, which is the name.
+- `context add`, `context remove`, `context use`: they print one line that says what changed.
+- `ui`: it is a terminal app.
+- `completion`: it prints a shell script.
+- `help`: it prints help.
 
 ### Documents
 

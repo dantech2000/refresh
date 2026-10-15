@@ -86,6 +86,13 @@ refresh context current
 prod  cluster=prod-payments-00  region=us-east-1  profile=prod
 ```
 
+The `context` commands have no `-o`: they print text for people. A script
+reads the first field of the line, which is the name of the active context:
+
+```bash
+refresh context current | cut -d' ' -f1
+```
+
 When no context is active, the command prints a hint on stderr and nothing on
 stdout, and exits `0`. If `REFRESH_CONTEXT` names a context that is not saved,
 the command fails with exit `1`.
