@@ -30,12 +30,19 @@ const (
 	quotaWarnPercent = 85.0
 	quotaFailPercent = 95.0
 	quotaUsageWindow = 10 * time.Minute
+	// quotaStaleAfter is the age of the newest AWS/Usage data point after
+	// which the check counts the instance list too: the metric lags, and
+	// right after a roll it still counts the surge nodes that have ended.
+	quotaStaleAfter = 2 * time.Minute
 )
 
 // Quotas checks the headroom of the EC2 On-Demand vCPU quota: the limit
 // from Service Quotas, and the use of the newest minute from the AWS/Usage
 // metric. When the metric has no data points, as on a new account, the use
-// is the sum of the vCPUs of the instance list. It is advisory.
+// is the sum of the vCPUs of the instance list. When its newest data point
+// is older than quotaStaleAfter, the check sums the instance list too, and
+// the smaller of the two is the use: the metric lags, and never counts
+// fewer vCPUs than the instances that run. It is advisory.
 //
 // With targets it also counts the nodes that their roll launches, by the
 // rule of an EKS managed node update: the scale-up phase raises the Auto
@@ -198,11 +205,12 @@ func runQuotas(ctx context.Context, in *Input, ls launches) Result {
 		wg                        sync.WaitGroup
 		limit, usage              float64
 		haveLimit, used           bool
+		newest                    time.Time
 		vcpus                     map[string]int32
 		limitErr, useErr, typeErr error
 	)
 	wg.Go(func() { limit, haveLimit, limitErr = quotaLimit(ctx, in) })
-	wg.Go(func() { usage, used, useErr = quotaUsage(ctx, in) })
+	wg.Go(func() { usage, newest, used, useErr = quotaUsage(ctx, in) })
 	if len(types) > 0 {
 		wg.Go(func() { vcpus, typeErr = typeVCPUs(ctx, in, types) })
 	}
@@ -222,6 +230,9 @@ func runQuotas(ctx context.Context, in *Input, ls launches) Result {
 		return Result{Outcome: Skipped, Message: "the EC2 vCPU quota is not reported"}
 	}
 	var source string
+	if age := in.Now.Sub(newest).Round(time.Second); used && age > quotaStaleAfter {
+		usage, vcpus, source = staleUsage(ctx, in, usage, age, vcpus)
+	}
 	if !used {
 		var complete bool
 		usage, complete, vcpus, useErr = instanceUsage(ctx, in, limit, vcpus)
@@ -270,9 +281,10 @@ func quotaLimit(ctx context.Context, in *Input) (float64, bool, error) {
 	return *out.Quota.Value, true, nil
 }
 
-// quotaUsage reads the vCPUs in use in the newest minute of the window.
-// The maximum over the window counted a surge that had already ended.
-func quotaUsage(ctx context.Context, in *Input) (float64, bool, error) {
+// quotaUsage reads the vCPUs in use in the newest minute of the window,
+// and the time of that data point. The maximum over the window counted a
+// surge that had already ended.
+func quotaUsage(ctx context.Context, in *Input) (float64, time.Time, bool, error) {
 	end := in.Now
 	results, err := metricData(ctx, in.Clients.CloudWatch, &cloudwatch.GetMetricDataInput{
 		StartTime: aws.Time(end.Add(-quotaUsageWindow)), EndTime: aws.Time(end),
@@ -296,24 +308,54 @@ func quotaUsage(ctx context.Context, in *Input) (float64, bool, error) {
 		}},
 	})
 	if err != nil {
-		return 0, false, err
+		return 0, time.Time{}, false, err
 	}
 	for _, r := range results {
 		if aws.ToString(r.Id) == "vcpu" && len(r.Values) > 0 {
-			return r.Values[0], true, nil
+			var at time.Time
+			if len(r.Timestamps) > 0 {
+				at = r.Timestamps[0]
+			}
+			return r.Values[0], at, true, nil
 		}
 	}
-	return 0, false, nil
+	return 0, time.Time{}, false, nil
 }
 
-// instanceUsage is the use when the AWS/Usage metric has no data points,
-// as for a while on a new account or in a region where the account has run
-// few instances: the sum of the vCPUs of the pending and running instances
-// that the quota counts, On-Demand of the Standard families. vcpus holds
-// the types already read, and the types of each page that it lacks are
-// read with that page; the map with them is returned. The list stops once
-// the sum passes limit, since the answer is then Fail, and complete says
-// whether it was read to the end.
+// staleUsage is the use when the newest data point of the AWS/Usage
+// metric, metric vCPUs, is age old: the smaller of the metric and the sum
+// of the instance list. The list stops once its sum passes the metric,
+// which then decides. It returns the use, the vCPU counts of the types
+// read, and a detail line that names the source that decided. When the
+// list cannot be read, the metric decides.
+func staleUsage(ctx context.Context, in *Input, metric float64, age time.Duration, vcpus map[string]int32) (float64, map[string]int32, string) {
+	counted, complete, known, err := instanceUsage(ctx, in, metric, vcpus)
+	if err != nil {
+		f := fleet.FailureFromError(apidoc.FailureCluster, in.Snapshot.Cluster.Name, err)
+		return metric, vcpus, fmt.Sprintf("the newest data point of the AWS/Usage metric is %s old, and the instance list could not be read: %s%s; the metric decides",
+			age, f.Error, failureAction(f))
+	}
+	if counted < metric {
+		return counted, known, fmt.Sprintf("the vCPUs in use come from the instance list (%.0f), not from the AWS/Usage metric (%.0f): "+
+			"the newest data point of the metric is %s old, and may still count instances that have stopped", counted, metric, age)
+	}
+	listed := fmt.Sprintf("counts %.0f", counted)
+	if !complete {
+		listed = fmt.Sprintf("counts at least %.0f", counted)
+	}
+	return metric, known, fmt.Sprintf("the vCPUs in use come from the AWS/Usage metric (%.0f): its newest data point is %s old, and the instance list %s",
+		metric, age, listed)
+}
+
+// instanceUsage sums the vCPUs of the pending and running instances that
+// the quota counts, On-Demand of the Standard families. It is the use when
+// the AWS/Usage metric has no data points, as for a while on a new account
+// or in a region where the account has run few instances, and a second
+// count when the metric is stale. vcpus holds the types already read, and
+// the types of each page that it lacks are read with that page; the map
+// with them is returned. The list stops once the sum passes limit, since
+// the sum then no longer decides, and complete says whether it was read to
+// the end.
 func instanceUsage(ctx context.Context, in *Input, limit float64, vcpus map[string]int32) (usage float64, complete bool, known map[string]int32, err error) {
 	known = maps.Clone(vcpus)
 	if known == nil {

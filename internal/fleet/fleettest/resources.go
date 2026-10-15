@@ -120,6 +120,10 @@ type Metric struct {
 	// whatever its time range: the product asks with the real clock, and
 	// the world's clock is virtual.
 	Values []float64
+	// Lag is how long before the EndTime of a query the newest datapoint
+	// is, as for a metric that CloudWatch publishes late. Zero puts it at
+	// the EndTime.
+	Lag time.Duration
 }
 
 // Quota is a Service Quotas quota value.

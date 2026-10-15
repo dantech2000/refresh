@@ -249,6 +249,15 @@ The details say that the usage came from the instance list. The list stops
 when the sum passes the quota, because the result is then `Fail`. The details
 then give the sum as "at least".
 
+CloudWatch publishes the metric late. Right after a roll, its newest data
+point can still count a surge node that has stopped. So when the newest data
+point is more than two minutes old, the check also sums the instance list, in
+the same way, and uses the smaller of the two numbers. The metric only lags:
+it never counts fewer vCPUs than the instances that run. The list stops when
+its sum passes the metric, because the metric then decides. The details name
+the source that decided. If the instance list cannot be read, the metric
+decides, and the details say so.
+
 For a roll, EKS raises the Auto Scaling group of each nodegroup by the larger
 of two numbers: the number of its Availability Zones, and `maxUnavailable`. It
 documents a maximum of twice the number of zones, or `maxUnavailable` when that

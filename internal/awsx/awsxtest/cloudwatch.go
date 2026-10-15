@@ -16,8 +16,9 @@ var cloudWatchOperations = map[string]operation{
 
 // cloudWatchGetMetricData answers one result per query, with no values for
 // a query that matches no metric, as CloudWatch does. Datapoints are one
-// period apart and end at the request's EndTime. Pages hold whole results:
-// a forced page size of 1 answers one query per page.
+// period apart and end at the request's EndTime, or the Lag of the metric
+// before it. Pages hold whole results: a forced page size of 1 answers one
+// query per page.
 func cloudWatchGetMetricData(c *call) (any, error) {
 	end, _ := c.in["EndTime"].(time.Time)
 	ascending := c.in.str("ScanBy") == "TimestampAscending"
@@ -35,14 +36,15 @@ func cloudWatchGetMetricData(c *call) (any, error) {
 			period := time.Duration(seconds) * time.Second
 
 			var values []float64
+			var lag time.Duration
 			for _, m := range s.Metrics {
 				if c.sees(m.Region) && m.Namespace == metric.str("Namespace") && m.Name == metric.str("MetricName") && maps.Equal(m.Dimensions, dimensions) {
-					values = m.Values
+					values, lag = m.Values, m.Lag
 				}
 			}
 			var timestamps, points cbor.List
 			for i, v := range values {
-				age := time.Duration(len(values)-1-i) * period
+				age := time.Duration(len(values)-1-i)*period + lag
 				timestamps = append(timestamps, cborTime(end.Add(-age)))
 				points = append(points, cbor.Float64(v))
 			}
