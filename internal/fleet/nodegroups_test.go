@@ -68,14 +68,23 @@ func amiRows(snap *fleet.Snapshot) []amiRow {
 	return rows
 }
 
+// count returns the calls of op that the server got. A call that the SDK
+// retried, because a connection broke under load after the server had read
+// the request, is one call: its attempts share an invocation ID.
 func count(srv *awsxtest.Server, op fleettest.Operation) int {
+	calls := map[string]bool{}
 	n := 0
 	for _, r := range srv.Requests() {
-		if r.Operation == op {
-			n++
+		if r.Operation != op {
+			continue
 		}
+		if r.Invocation == "" {
+			n++
+			continue
+		}
+		calls[r.Invocation] = true
 	}
-	return n
+	return n + len(calls)
 }
 
 func TestFetch_NodegroupsAndAMIs(t *testing.T) {
