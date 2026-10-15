@@ -12,6 +12,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/dantech2000/refresh/internal/apidoc"
+	"github.com/dantech2000/refresh/internal/awsx/awsxtest"
 	"github.com/dantech2000/refresh/internal/exitcode"
 	"github.com/dantech2000/refresh/internal/fleet/fleettest"
 	"github.com/dantech2000/refresh/internal/kube/kubetest"
@@ -216,6 +217,37 @@ func TestRoll_ScalingFailureIsReportedOnce(t *testing.T) {
 			fleettest.ScalingActivity{ID: "act-1", Group: "eks-prod-ng-a", Status: "Failed", Message: "no capacity", Start: now})
 	})
 	e := newEnv(t, world)
+	// The watch reads the scaling activities once for each tick of the wait
+	// for the update, and a tick it is too busy to take is dropped. Poll n
+	// of the update is held until the watch has read n-1 times, so on a
+	// loaded machine the update cannot end before the watch has seen the
+	// failure twice. The first poll is never held.
+	var (
+		paceMu sync.Mutex
+		paced  = sync.NewCond(&paceMu)
+		reads  int
+		polls  int
+	)
+	e.srv.OnRequest = func(ctx context.Context, r awsxtest.Request) {
+		paceMu.Lock()
+		defer paceMu.Unlock()
+		switch r.Operation {
+		case fleettest.AutoScalingDescribeScalingActivities:
+			reads++
+			paced.Broadcast()
+		case fleettest.EKSDescribeUpdate:
+			polls++
+			stop := context.AfterFunc(ctx, func() {
+				paceMu.Lock()
+				defer paceMu.Unlock()
+				paced.Broadcast()
+			})
+			defer stop()
+			for reads < polls-1 && ctx.Err() == nil {
+				paced.Wait()
+			}
+		}
+	}
 	req := rollOf("ng-a")
 	req.Policy.Skip = true
 	var (
