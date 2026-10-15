@@ -102,6 +102,9 @@ consent is given.
   changes still running, with their update IDs. The commands can watch them:
   `refresh nodegroup update` and `refresh cluster upgrade` attach to an
   update in flight.
+- The UI keeps no record on disk: when it quits, the log of a change is gone.
+  For a record of a change, run the command that its dry run names with
+  `-o json` and keep the document.
 
 ## Terminal
 

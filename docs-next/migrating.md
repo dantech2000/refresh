@@ -34,10 +34,13 @@ fails with a usage error. It does not do something different in silence.
 | `refresh install-man` | Removed. The Homebrew cask and the release archives carry the man pages. |
 | `refresh status --format json` | `refresh status --output json` (`-o json` works in both) |
 | `refresh status --sort cluster` | `refresh status --sort name` |
+| `refresh status prod` (substring) | `refresh status -f name=*prod*` |
+| `refresh cluster list prod` (substring) | `refresh cluster list -f name=*prod*` |
 | `refresh cluster list -f name=prod` (substring) | `refresh cluster list -f name=*prod*` |
 | `refresh cluster list -H` | `refresh cluster list --show-health` |
 | `refresh cluster list --tree`, `-o tree` | Removed. Use `refresh status -A`. |
 | `refresh cluster describe -c prod` | `refresh cluster describe prod` |
+| `refresh cluster get prod`, `refresh nodegroup get ...`, `refresh addon get ...` | `refresh cluster describe prod`, `refresh nodegroup describe ...`, `refresh addon describe ...` |
 | `refresh cluster describe prod --detailed --show-security` | `refresh cluster describe prod` (every section always shows) |
 | `refresh cluster describe prod -R` | `refresh cluster describe prod --check-readiness` |
 | `refresh cluster upgrade-check -c prod` | `refresh cluster upgrade-check prod` |
@@ -49,11 +52,14 @@ fails with a usage error. It does not do something different in silence.
 | `refresh nodegroup list prod` | `refresh nodegroup list -c prod` |
 | `refresh nodegroup describe prod web`, `-n web` | `refresh nodegroup describe web -c prod` |
 | `refresh nodegroup describe ... -I -W` | `refresh nodegroup describe ... --show-instances --show-workloads` |
+| `refresh nodegroup list prod --sort instance` | `refresh nodegroup list -c prod --sort instanceType` |
+| `refresh nodegroup update-ami -c prod` | `refresh nodegroup update -c prod` |
 | `refresh nodegroup update -c prod -n web` | `refresh nodegroup update web -c prod` |
 | `refresh nodegroup update -c prod -n web-` (pattern) | `refresh nodegroup update -c prod -f name=web-*` |
 | `refresh nodegroup update -c prod --health-only` | `refresh nodegroup update -c prod --dry-run` |
 | `refresh nodegroup update -c prod --force` (to re-roll) | `refresh nodegroup update -c prod --reroll` |
 | `refresh nodegroup update -c prod --timeout 1h` | `refresh nodegroup update -c prod --wait-timeout 1h` |
+| `refresh nodegroup update --simulate` | Removed. `task run:sim -- nodegroup update ...` runs the real command on the fake fleet of `tools/fakefleet`. |
 | `EKS_CLUSTER_NAME=prod refresh nodegroup update` | `REFRESH_CLUSTER=prod refresh nodegroup update` |
 | `refresh nodegroup scale prod web --desired 4 --wait` | `refresh nodegroup scale web -c prod --desired 4` |
 | `refresh nodegroup scale ... --desired 2 --check-pdbs --health-check` | `refresh nodegroup scale ... --desired 2` |
@@ -65,6 +71,7 @@ fails with a usage error. It does not do something different in silence.
 | `refresh addon update -c prod --all --dependency-order --wait` | `refresh addon update --all -c prod` |
 | `refresh addon update -c prod --all --skip coredns` | `refresh addon update --all -c prod --skip-addon coredns` |
 | `refresh addon update -c prod --all --parallel` | Removed. `--all` always uses dependency order. |
+| `refresh addon update-all prod` | `refresh addon update --all -c prod` |
 | `refresh --region us-east-1 status -A` | An error. `-A` with `-r` is a usage error. |
 | `refresh cluster list -w -o json` | An error. `--watch` needs `-o table` and a terminal. |
 
@@ -73,7 +80,11 @@ fails with a usage error. It does not do something different in silence.
 | Removed | Use |
 |---|---|
 | `refresh use`, `refresh current` | `refresh context use`, `refresh context current` |
-| `refresh install-man` | The man pages of the cask or of the release archive |
+| `refresh install-man`, `refresh install-manpage` | The man pages of the cask or of the release archive |
+| The aliases `get` (of `describe`) and `update-ami` (of `nodegroup update`), and the hidden `addon update-all` | `describe`, `nodegroup update`, `addon update --all`. The aliases `ng`, `ctx`, `rm`, `delete`, and `ls` stay. |
+| The `[name-pattern]` positional of `status` and `cluster list` | `-f name=*pattern*` |
+| `--sort instance` on `nodegroup list` | `--sort instanceType` |
+| `--simulate` on `nodegroup update`, and `REFRESH_DEV_SIMULATE`, `REFRESH_DEV_SIM_SPEED`, `REFRESH_DEV_SIM_SEED` | `tools/fakefleet` (`task run:sim`, `task run:tui:sim`) |
 | `-v` | `--version` |
 | `--format` | `--output` |
 | `-o tree`, `--tree`, `-T` | `refresh status` |
@@ -290,11 +301,57 @@ See [Plan and Run](concepts/output.md#plan-and-run) for every key.
 - The schemas are at `https://drod.dev/refresh/schema/v2/<Kind>.json`. The
   `v1` schemas stay published.
 
+### Renamed and removed keys
+
+| `v1` key | `v2` |
+|---|---|
+| `count` of `ClusterList`, `NodegroupList`, `AddonList` | Removed. Use the length of the list. |
+| `FleetStatus`: `nodegroupCount`, `staleAmi`, `addonsBehind`, `nodegroupsBehindControlPlane` | `.clusters[].nodegroups[]` (with `ami.status` and `versionBehind`) and `.clusters[].addons[]` (with `latest.behind`) |
+| `support.fallback` | `support.builtIn` |
+| `support.extraCostUsdPerHour` | Removed. The extended-support premium is a price, and pricing is out of scope. |
+| `ClusterDescription`: `networking` | `network` |
+| `ClusterDescription`: `security.serviceRoleArn`, `security.loggingEnabled`, `security.encryptionEnabled` | `security.roleArn`, `security.logTypes`, `security.kmsKeyArn` (left out when secrets have no KMS key) |
+| `ClusterDescription`: `nodegroups[].readyNodes`, `readyKnown` | Removed. The `Nodes` health check counts the ready nodes. |
+| `NodegroupDescription`: `currentAmi`, `latestAmi`, `amiStatus` | `nodegroup.ami.current`, `ami.latest`, `ami.status` |
+| `NodegroupDescription`: `workloads.totalPods`, `criticalPods` | `nodegroup.workloads.pods`, `systemPods` |
+| `NodegroupDescription`: `workloads.podDisruption`, `scaling.autoScaling` | Removed. The `DrainBlockers` and `PDBCoverage` checks read the PodDisruptionBudgets. |
+| `UpgradeCheck`: `controlPlane` | `checks[]`, the entry named `ControlPlane` |
+| `UpgradeCheck`: `skew.nodegroups[].blocking`, `skew.addons[].installed`, `skew.findings` | `skew.nodegroups[].atSkewLimit`, `skew.addons[].version`, `reasons` |
+| `health.results[]`, `overallScore`, `decision` | `health.checks[]` with `outcome`, and `health.summary` |
+
+### Health check names
+
+| 0.16 | Now |
+|---|---|
+| Node Health | `Nodes` |
+| Cluster Capacity | `Capacity` |
+| Control Plane | `ControlPlane` |
+| Service Quotas | `Quotas` |
+| Critical Workloads | `Workloads` |
+| Pod Disruption Budgets | `DrainBlockers` (the drain) and `PDBCoverage` (workloads with no budget) |
+| Node Utilization | `Utilization` |
+| Resource Balance | Removed. Its spread is a detail of `Capacity`. |
+| | `Kubernetes`: new, whether the Kubernetes API answered |
+
 ## Other changes
 
 - `go install` uses a new path:
   `go install github.com/dantech2000/refresh/cmd/refresh@latest`.
 - The shell completion scripts are new. Install them again. PowerShell is
   supported now.
-- The help has a new layout.
-- `refresh ui` is read-only in this release. It does not start changes yet.
+- The help and the tables have a new layout. `status` still ends with the
+  totals of what is out of date and the command for the most urgent cluster.
+
+### `refresh ui`
+
+The UI can start changes with `--allow-changes`, as before. These parts of the
+0.16 UI are gone:
+
+| 0.16 | Now |
+|---|---|
+| `ctrl+u` allows changes in a running UI | Start the UI with `--allow-changes`. |
+| `e` exports a session log to `$XDG_STATE_HOME/refresh/sessions/` | Removed. A change from the UI leaves no record on disk. For a record, run the command that the dry run names (`c` sends it to the clipboard) with `-o json`. |
+| The AWS API log, and `tab` to switch the log of a pane | Each change has one log. `--log-level debug` on a command logs its AWS calls. |
+| The cursor starts on the cluster of the kubectl context, and its region joins the sweep | The UI sweeps the configured region, `-r`, or `-A`. |
+| Four screens: Fleet, Cluster, Rolls, Upgrade | Three: Fleet, Cluster, Change. `[` and `]` move between the changes. |
+| `REFRESH_DEV_SIMULATE=1 refresh ui` | `task run:tui:sim` |
