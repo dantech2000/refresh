@@ -22,7 +22,7 @@ refresh completion <bash|zsh|fish|powershell>
 | [addon](addon.md) | `list`, `describe`, `update` |
 | [context](contexts.md) | `list`, `add`, `remove`, `use`, `current` |
 | [ui](ui.md) | The terminal UI (experimental) |
-| [version and completion](utility.md) | `version`, `completion` |
+| [version, completion, and help](utility.md) | `version`, `completion`, `help` |
 
 These pages explain what each command does. The [reference](../reference/refresh.md)
 is generated from the binary and lists every flag.

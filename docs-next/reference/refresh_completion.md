@@ -1,15 +1,27 @@
 ## refresh completion
 
-Generate the autocompletion script for the specified shell
+Print a shell completion script
 
 ### Synopsis
 
-Generate the autocompletion script for refresh for the specified shell.
-See each sub-command's help for details on how to use the generated script.
+Print the completion script of refresh for bash, zsh, fish, or PowerShell.
+The script completes commands, flags, and the names of clusters,
+nodegroups, and add-ons from your account.
 
+Run "refresh completion <shell> --help" for the steps for one shell.
 
 ```
 refresh completion [flags]
+```
+
+### Examples
+
+```
+  # Load the script into this zsh session
+  source <(refresh completion zsh)
+
+  # Install it for every new fish session
+  refresh completion fish > ~/.config/fish/completions/refresh.fish
 ```
 
 ### Options
@@ -35,8 +47,8 @@ refresh completion [flags]
 ### SEE ALSO
 
 * [refresh](refresh.md)	 - EKS upgrade companion: status, readiness, patch, upgrade
-* [refresh completion bash](refresh_completion_bash.md)	 - Generate the autocompletion script for bash
-* [refresh completion fish](refresh_completion_fish.md)	 - Generate the autocompletion script for fish
-* [refresh completion powershell](refresh_completion_powershell.md)	 - Generate the autocompletion script for powershell
-* [refresh completion zsh](refresh_completion_zsh.md)	 - Generate the autocompletion script for zsh
+* [refresh completion bash](refresh_completion_bash.md)	 - Print the completion script for bash
+* [refresh completion fish](refresh_completion_fish.md)	 - Print the completion script for fish
+* [refresh completion powershell](refresh_completion_powershell.md)	 - Print the completion script for PowerShell
+* [refresh completion zsh](refresh_completion_zsh.md)	 - Print the completion script for zsh
 

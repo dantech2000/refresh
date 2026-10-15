@@ -1,42 +1,38 @@
 ## refresh completion zsh
 
-Generate the autocompletion script for zsh
+Print the completion script for zsh
 
 ### Synopsis
 
-Generate the autocompletion script for the zsh shell.
+Print the completion script for zsh.
 
-If shell completion is not already enabled in your environment you will need
-to enable it.  You can execute the following once:
+Completion must be on in zsh. If it is not, add this line to ~/.zshrc:
+"autoload -U compinit; compinit".
+Start a new shell after you install the script.
 
-	echo "autoload -U compinit; compinit" >> ~/.zshrc
-
-To load completions in your current shell session:
-
-	source <(refresh completion zsh)
-
-To load completions for every new session, execute once:
-
-#### Linux:
-
-	refresh completion zsh > "${fpath[1]}/_refresh"
-
-#### macOS:
-
-	refresh completion zsh > $(brew --prefix)/share/zsh/site-functions/_refresh
-
-You will need to start a new shell for this setup to take effect.
-
+Exit codes:
+  0  Done.
+  1  An error.
 
 ```
 refresh completion zsh [flags]
+```
+
+### Examples
+
+```
+  # Load the script into this session
+  source <(refresh completion zsh)
+
+  # Install it for every new session
+  refresh completion zsh > "${fpath[1]}/_refresh"
 ```
 
 ### Options
 
 ```
   -h, --help              help for zsh
-      --no-descriptions   disable completion descriptions
+      --no-descriptions   Leave the description of each command and flag out of the completions
 ```
 
 ### Options inherited from parent commands
@@ -55,5 +51,5 @@ refresh completion zsh [flags]
 
 ### SEE ALSO
 
-* [refresh completion](refresh_completion.md)	 - Generate the autocompletion script for the specified shell
+* [refresh completion](refresh_completion.md)	 - Print a shell completion script
 

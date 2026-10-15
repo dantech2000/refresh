@@ -111,7 +111,7 @@ nav:
       - addon: commands/addon.md
       - context: commands/contexts.md
       - ui (experimental): commands/ui.md
-      - version and completion: commands/utility.md
+      - version, completion, and help: commands/utility.md
   - Reference:
       - refresh: reference/refresh.md
       - status: reference/refresh_status.md

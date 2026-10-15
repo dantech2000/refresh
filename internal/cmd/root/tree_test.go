@@ -30,11 +30,10 @@ func newTree() *cobra.Command {
 	return root.NewCmdRoot(f)
 }
 
-// fromCobra reports whether cobra made cmd: the help command, and the
-// completion command with its shells.
+// fromCobra reports whether cmd keeps the help text of cobra: the help
+// command. The completion command is cobra's too, and has refresh's text.
 func fromCobra(cmd *cobra.Command) bool {
-	path := cmd.CommandPath()
-	return path == "refresh help" || strings.HasPrefix(path, "refresh completion")
+	return cmd.CommandPath() == "refresh help"
 }
 
 func TestCommandsHaveHelpText(t *testing.T) {

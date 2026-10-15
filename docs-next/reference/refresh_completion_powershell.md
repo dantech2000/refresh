@@ -1,28 +1,35 @@
 ## refresh completion powershell
 
-Generate the autocompletion script for powershell
+Print the completion script for PowerShell
 
 ### Synopsis
 
-Generate the autocompletion script for powershell.
+Print the completion script for PowerShell.
 
-To load completions in your current shell session:
+To load the script in every new session, add the line of the example
+to your PowerShell profile.
+Start a new shell after you install the script.
 
-	refresh completion powershell | Out-String | Invoke-Expression
-
-To load completions for every new session, add the output of the above command
-to your powershell profile.
-
+Exit codes:
+  0  Done.
+  1  An error.
 
 ```
 refresh completion powershell [flags]
+```
+
+### Examples
+
+```
+  # Load the script into this session
+  refresh completion powershell | Out-String | Invoke-Expression
 ```
 
 ### Options
 
 ```
   -h, --help              help for powershell
-      --no-descriptions   disable completion descriptions
+      --no-descriptions   Leave the description of each command and flag out of the completions
 ```
 
 ### Options inherited from parent commands
@@ -41,5 +48,5 @@ refresh completion powershell [flags]
 
 ### SEE ALSO
 
-* [refresh completion](refresh_completion.md)	 - Generate the autocompletion script for the specified shell
+* [refresh completion](refresh_completion.md)	 - Print a shell completion script
 

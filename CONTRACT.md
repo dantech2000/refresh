@@ -42,6 +42,7 @@ Say no to any row and it reverts to today's behaviour.
 | 28 | A blocked `cluster upgrade-check` with an unread item exits 4 | The highest code wins, as for `status` |
 | 29 | `-a` is not a reserved flag letter | No command has an add-on flag: the add-on is the positional. A letter that no flag uses is not reserved. |
 | 30 | `context list` and `context current` print no document, and the contract lists every command without `-o` | They print for people. A script reads the name, the first field of `refresh context current`. |
+| 31 | `completion` has help text in the voice of the other commands, with an `Exit codes:` block, and the command list names `help` | Cobra's stock text read like another tool |
 
 ## Commands
 
@@ -54,9 +55,10 @@ refresh context   list | add | remove | use | current
 refresh ui
 refresh version
 refresh completion <bash|zsh|fish|powershell>
+refresh help [command]
 ```
 
-Every command is `refresh <noun> <verb>`, except the four that have no noun: `status` (the fleet overview), `ui`, `version`, and `completion`.
+Every command is `refresh <noun> <verb>`, except the five that have no noun: `status` (the fleet overview), `ui`, `version`, `completion`, and `help`. `completion` and `help` come from cobra. `help` keeps cobra's text; `completion` has help text in the voice of the other commands.
 
 ## Targets
 

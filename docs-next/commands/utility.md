@@ -1,4 +1,4 @@
-# version and completion
+# version, completion, and help
 
 ## refresh version
 
@@ -39,7 +39,17 @@ commands, flags, and the names of clusters, nodegroups, and add-ons. See
 [Shell completion](../getting-started/installation.md#shell-completion) for
 where to install it.
 
-`refresh completion zsh --help` shows the steps for each shell.
+`refresh completion zsh --help` shows the steps for one shell. The command
+exits `0`, or `1` on an error.
+
+## refresh help
+
+```bash
+refresh help [command]
+```
+
+The command prints the help of a command, the same as `refresh <command>
+--help`.
 
 ## Man pages
 

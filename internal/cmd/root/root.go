@@ -131,8 +131,85 @@ skip the confirmation prompts.`,
 	if completion, _, err := cmd.Find([]string{"completion"}); err == nil && completion != cmd {
 		completion.Args = cobra.NoArgs
 		completion.RunE = func(c *cobra.Command, _ []string) error { return c.Help() }
+		describeCompletion(completion)
 	}
 	return cmd
+}
+
+// completionHelp is the help of each shell's completion command: the
+// paragraph of its Long about the shell, and its Example.
+var completionHelp = map[string]struct{ about, example string }{
+	"bash": {
+		about: "The script needs the bash-completion package.",
+		example: `  # Load the script into this session
+  source <(refresh completion bash)
+
+  # Install it for every new session, on Linux
+  refresh completion bash > /etc/bash_completion.d/refresh
+
+  # Install it for every new session, on macOS with Homebrew
+  refresh completion bash > $(brew --prefix)/etc/bash_completion.d/refresh`,
+	},
+	"zsh": {
+		about: `Completion must be on in zsh. If it is not, add this line to ~/.zshrc:
+"autoload -U compinit; compinit".`,
+		example: `  # Load the script into this session
+  source <(refresh completion zsh)
+
+  # Install it for every new session
+  refresh completion zsh > "${fpath[1]}/_refresh"`,
+	},
+	"fish": {
+		about: "fish loads the script from its completions directory.",
+		example: `  # Load the script into this session
+  refresh completion fish | source
+
+  # Install it for every new session
+  refresh completion fish > ~/.config/fish/completions/refresh.fish`,
+	},
+	"powershell": {
+		about: `To load the script in every new session, add the line of the example
+to your PowerShell profile.`,
+		example: `  # Load the script into this session
+  refresh completion powershell | Out-String | Invoke-Expression`,
+	},
+}
+
+// describeCompletion replaces the help text of cobra's completion command
+// and of its shells with text in the voice of the other commands.
+func describeCompletion(completion *cobra.Command) {
+	completion.Short = "Print a shell completion script"
+	completion.Long = `Print the completion script of refresh for bash, zsh, fish, or PowerShell.
+The script completes commands, flags, and the names of clusters,
+nodegroups, and add-ons from your account.
+
+Run "refresh completion <shell> --help" for the steps for one shell.`
+	completion.Example = `  # Load the script into this zsh session
+  source <(refresh completion zsh)
+
+  # Install it for every new fish session
+  refresh completion fish > ~/.config/fish/completions/refresh.fish`
+	for _, shell := range completion.Commands() {
+		help, ok := completionHelp[shell.Name()]
+		if !ok {
+			continue
+		}
+		name := shell.Name()
+		if name == "powershell" {
+			name = "PowerShell"
+		}
+		shell.Short = "Print the completion script for " + name
+		shell.Long = "Print the completion script for " + name + ".\n\n" + help.about + `
+Start a new shell after you install the script.
+
+Exit codes:
+  0  Done.
+  1  An error.`
+		shell.Example = help.example
+		if fl := shell.Flags().Lookup("no-descriptions"); fl != nil {
+			fl.Usage = "Leave the description of each command and flag out of the completions"
+		}
+	}
 }
 
 // The groups of the root help.

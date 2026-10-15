@@ -49,7 +49,7 @@ refresh [flags]
 
 * [refresh addon](refresh_addon.md)	 - Work with EKS add-ons
 * [refresh cluster](refresh_cluster.md)	 - Work with EKS clusters
-* [refresh completion](refresh_completion.md)	 - Generate the autocompletion script for the specified shell
+* [refresh completion](refresh_completion.md)	 - Print a shell completion script
 * [refresh context](refresh_context.md)	 - Manage saved contexts
 * [refresh nodegroup](refresh_nodegroup.md)	 - Work with EKS managed nodegroups
 * [refresh status](refresh_status.md)	 - Show what is out of date in the fleet

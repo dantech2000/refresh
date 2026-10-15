@@ -1,40 +1,40 @@
 ## refresh completion bash
 
-Generate the autocompletion script for bash
+Print the completion script for bash
 
 ### Synopsis
 
-Generate the autocompletion script for the bash shell.
+Print the completion script for bash.
 
-This script depends on the 'bash-completion' package.
-If it is not installed already, you can install it via your OS's package manager.
+The script needs the bash-completion package.
+Start a new shell after you install the script.
 
-To load completions in your current shell session:
-
-	source <(refresh completion bash)
-
-To load completions for every new session, execute once:
-
-#### Linux:
-
-	refresh completion bash > /etc/bash_completion.d/refresh
-
-#### macOS:
-
-	refresh completion bash > $(brew --prefix)/etc/bash_completion.d/refresh
-
-You will need to start a new shell for this setup to take effect.
-
+Exit codes:
+  0  Done.
+  1  An error.
 
 ```
 refresh completion bash
+```
+
+### Examples
+
+```
+  # Load the script into this session
+  source <(refresh completion bash)
+
+  # Install it for every new session, on Linux
+  refresh completion bash > /etc/bash_completion.d/refresh
+
+  # Install it for every new session, on macOS with Homebrew
+  refresh completion bash > $(brew --prefix)/etc/bash_completion.d/refresh
 ```
 
 ### Options
 
 ```
   -h, --help              help for bash
-      --no-descriptions   disable completion descriptions
+      --no-descriptions   Leave the description of each command and flag out of the completions
 ```
 
 ### Options inherited from parent commands
@@ -53,5 +53,5 @@ refresh completion bash
 
 ### SEE ALSO
 
-* [refresh completion](refresh_completion.md)	 - Generate the autocompletion script for the specified shell
+* [refresh completion](refresh_completion.md)	 - Print a shell completion script
 
