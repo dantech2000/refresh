@@ -16,8 +16,9 @@ import (
 // NewCmdNodegroup returns the nodegroup command with its subcommands.
 func NewCmdNodegroup(f *cmdutil.Factory) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "nodegroup",
-		Short: "Work with EKS managed nodegroups",
+		Use:     "nodegroup",
+		Aliases: []string{"ng"},
+		Short:   "Work with EKS managed nodegroups",
 		Long: `Work with the managed nodegroups of one cluster.
 
 The cluster comes from -c/--cluster, then REFRESH_CLUSTER, then the active

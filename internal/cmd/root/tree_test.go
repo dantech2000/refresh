@@ -311,3 +311,27 @@ func TestCommandsWithoutOutputAreInTheContract(t *testing.T) {
 		t.Errorf("commands without -o (-contract +tree):\n%s", diff)
 	}
 }
+
+// The aliases of the tree. The old CLI had ng, ctx, ls (of context list),
+// rm, and delete; the rewrite keeps them and adds ls to every list. Its
+// get, update-ami, and install-manpage are gone, as migrating.md says.
+func TestAliases(t *testing.T) {
+	want := map[string][]string{
+		"refresh context":        {"ctx"},
+		"refresh context list":   {"ls"},
+		"refresh context remove": {"rm", "delete"},
+		"refresh cluster list":   {"ls"},
+		"refresh nodegroup":      {"ng"},
+		"refresh nodegroup list": {"ls"},
+		"refresh addon list":     {"ls"},
+	}
+	got := map[string][]string{}
+	walk(newTree(), func(cmd *cobra.Command) {
+		if len(cmd.Aliases) > 0 {
+			got[cmd.CommandPath()] = cmd.Aliases
+		}
+	})
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("aliases (-want +got):\n%s", diff)
+	}
+}

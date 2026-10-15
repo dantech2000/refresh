@@ -11,6 +11,8 @@ The cluster comes from `-c/--cluster`, then `REFRESH_CLUSTER`, then the active
 context. `list` and `describe` also take the cluster of the current kubeconfig
 context. `update` and `scale` never do.
 
+`refresh ng` is short for `refresh nodegroup`.
+
 ## list
 
 ```bash
