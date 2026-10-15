@@ -374,15 +374,18 @@ func TestUpdateCachePath(t *testing.T) {
 	}
 }
 
-// TestKubeLogs checks where a line goes that client-go logs through klog
-// while a command runs: nowhere by default, and to stderr at the debug
-// level. The update check of "refresh version" stands in for client-go.
+// TestLogs checks where a line goes that client-go logs through klog, or
+// that refresh logs through slog, while a command runs: nowhere by
+// default, and to stderr at the debug level. The update check of
+// "refresh version" stands in for client-go and for refresh.
 //
-// klog has one logger for the process. The test does not run in parallel,
-// and execute puts the default logger back, so no other test sees the
-// routing of this one.
-func TestKubeLogs(t *testing.T) {
+// klog and slog have one logger each for the process. The test does not
+// run in parallel, and execute puts the default loggers back, so no other
+// test sees the routing of this one.
+func TestLogs(t *testing.T) {
 	const line = "watch of *v1.Node ended"
+	// refreshLine is a debug line of refresh itself, through slog.
+	const refreshLine = "AWS call attempt failed"
 	tests := []struct {
 		name string
 		args []string
@@ -402,7 +405,7 @@ func TestKubeLogs(t *testing.T) {
 			t.Setenv("REFRESH_LOG_LEVEL", tt.env)
 			f, _, _, errOut := cmdutiltest.NewFactory()
 			f.IOStreams.OutTTY = true
-			f.RouteKubeLogs = routeKubeLogs(f.IOStreams.ErrOut)
+			f.RouteLogs = routeLogs(f.IOStreams.ErrOut)
 			// Unrouted, klog writes to the stderr of the process. This
 			// logger stands for that: a line in it was not routed.
 			var unrouted bytes.Buffer
@@ -412,6 +415,7 @@ func TestKubeLogs(t *testing.T) {
 			f.LatestRelease = func(context.Context) (string, error) {
 				klog.Info(line)
 				klog.ErrorS(errors.New("connection refused"), line)
+				slog.Debug(refreshLine)
 				logged = true
 				return "", errors.New("no network in a test")
 			}
@@ -426,6 +430,12 @@ func TestKubeLogs(t *testing.T) {
 			}
 			if got := strings.Count(errOut.String(), line); (got == 2) != tt.want || (got != 0 && !tt.want) {
 				t.Errorf("stderr has the klog line %d time(s), want shown = %t:\n%s", got, tt.want, errOut.String())
+			}
+			if got := strings.Contains(errOut.String(), refreshLine); got != tt.want {
+				t.Errorf("stderr has the debug line of refresh: %t, want %t:\n%s", got, tt.want, errOut.String())
+			}
+			if slog.Default().Enabled(context.Background(), slog.LevelDebug) {
+				t.Error("the run left its logger as the default of the process")
 			}
 		})
 	}

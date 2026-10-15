@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"log/slog"
 	"net/http"
 	"os"
@@ -43,20 +44,25 @@ func run(ctx context.Context, args []string, streams *cmdutil.IOStreams) int {
 	}
 	f.AWS = cmdutil.NewAWS(f)
 	f.Kube = cmdutil.NewKube(f)
-	f.RouteKubeLogs = routeKubeLogs(streams.ErrOut)
+	f.RouteLogs = routeLogs(streams.ErrOut)
 	return execute(ctx, args, f)
 }
 
-// routeKubeLogs returns the function that routes klog for the process.
-// client-go and its informers log a failed list or watch through klog,
-// which writes to stderr by default: over the roll panel, and into the
-// stderr of a run with a machine format. So the lines are discarded, and
-// shown on errOut only at the debug level (--log-level debug, --verbose).
+// routeLogs returns the function that routes the logs of the process,
+// once the log level is known. The default slog logger writes the lines
+// of refresh at that level or above to errOut, so --log-level debug shows
+// each AWS call attempt and the reads that fell back. client-go and its
+// informers log a failed list or watch through klog, which writes to
+// stderr by default: over the roll panel, and into the stderr of a run
+// with a machine format. So their lines are discarded, and shown on errOut
+// only at the debug level (--log-level debug, --verbose).
 //
-// klog has one logger for the process. This is the only place that sets
-// it, and execute puts the default back when the command has ended.
-func routeKubeLogs(errOut io.Writer) func(slog.Level) {
+// slog and klog have one logger each for the process. This is the only
+// place that sets them, and execute puts the defaults back when the
+// command has ended.
+func routeLogs(errOut io.Writer) func(slog.Level) {
 	return func(level slog.Level) {
+		slog.SetDefault(slog.New(slog.NewTextHandler(errOut, &slog.HandlerOptions{Level: level})))
 		logger := logr.Discard()
 		if level <= slog.LevelDebug {
 			logger = logr.FromSlogHandler(slog.NewTextHandler(errOut, &slog.HandlerOptions{Level: slog.LevelDebug}))
@@ -70,9 +76,17 @@ func routeKubeLogs(errOut io.Writer) func(slog.Level) {
 func execute(ctx context.Context, args []string, f *cmdutil.Factory) int {
 	cmd := root.NewCmdRoot(f)
 	cmd.SetArgs(args)
-	if f.RouteKubeLogs != nil {
+	if f.RouteLogs != nil {
 		// The command has ended, and so has everything that logs.
 		defer klog.ClearLogger()
+		// A slog default with a handler of its own also takes over the
+		// output of the log package, so both are put back.
+		logger, out, flags := slog.Default(), log.Writer(), log.Flags()
+		defer func() {
+			slog.SetDefault(logger)
+			log.SetOutput(out)
+			log.SetFlags(flags)
+		}()
 	}
 	return exitCode(ctx, f.IOStreams.ErrOut, cmd.ExecuteContext(ctx))
 }

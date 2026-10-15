@@ -130,6 +130,12 @@ These flags work on every command.
 `-o/--output` is not global. Each command that prints a document has it, with
 the formats that the command supports. Put it after the command name.
 
+Logs go to stderr, never to stdout, so they do not mix with a document.
+`--log-level debug` prints one line for each attempt of each AWS call, with
+its service, operation, region, and duration, and the class of its error, so
+a retried call shows each retry. It also prints what client-go logs about a
+Kubernetes list or watch that failed.
+
 ### Flag letters
 
 A letter has one meaning in every command. A letter that is not in the table

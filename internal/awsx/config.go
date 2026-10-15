@@ -122,7 +122,7 @@ func load(ctx context.Context, opts Options, client *awshttp.BuildableClient, ba
 	// only the first API call rejects them. That error then says that the
 	// keys were used in place of AWS_PROFILE, as an error of Load does.
 	shadow := sync.OnceValue(func() bool { return keysShadowProfile(context.WithoutCancel(ctx), cfg.Credentials) })
-	cfg.APIOptions = append(cfg.APIOptions, addCredentialHints(login, shadow))
+	cfg.APIOptions = append(cfg.APIOptions, addCredentialHints(login, shadow), logAttempts)
 	// resolveCredentials formats its error, with a headline of its own: a
 	// prefix here would put two headlines on the first line.
 	if err := opts.resolveCredentials(ctx, cfg, login); err != nil {

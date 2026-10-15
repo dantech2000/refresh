@@ -297,8 +297,8 @@ func (o *options) complete(flags *pflag.FlagSet, f *cmdutil.Factory) error {
 		}
 	}
 
-	if f.RouteKubeLogs != nil {
-		f.RouteKubeLogs(level)
+	if f.RouteLogs != nil {
+		f.RouteLogs(level)
 	}
 
 	f.Global = cmdutil.GlobalOptions{

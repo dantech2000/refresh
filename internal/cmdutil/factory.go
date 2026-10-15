@@ -65,13 +65,13 @@ type Factory struct {
 	// client for a server of its own, so no test reaches the network.
 	HTTPClient *http.Client
 
-	// RouteKubeLogs routes what client-go and its informers log, once the
-	// log level is known. They log through klog, which is one logger for
-	// the whole process, so the process sets it and no package does: the
-	// root command calls this once, after the global flags. Nil leaves
-	// klog alone, so a test of a command does not change the logger of its
-	// test binary.
-	RouteKubeLogs func(level slog.Level)
+	// RouteLogs routes what refresh logs through slog, and what client-go
+	// and its informers log through klog, once the log level is known.
+	// Each is one logger for the whole process, so the process sets them
+	// and no package does: the root command calls this once, after the
+	// global flags. Nil leaves both alone, so a test of a command does not
+	// change the loggers of its test binary.
+	RouteLogs func(level slog.Level)
 
 	// Global holds the values of the global flags. The root command fills it
 	// before a command runs.
