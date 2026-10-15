@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -350,26 +351,73 @@ func TestInvalidInput(t *testing.T) {
 }
 
 // A deadline while the add-ons are read is a partial result with exit 4.
-// It passes at the moment one add-on is at the server.
+// It passes when the cluster is read and two add-ons are at the server.
+//
+// Two request slots make the order certain. The add-on list waits at the
+// server until the cluster call is there too, so the cluster holds the
+// other slot. The first add-on call then waits at the server for the
+// second one, and the second one gets a slot only when the cluster call
+// has given its slot back: with its answer read.
 func TestList_Deadline(t *testing.T) {
 	e := newFake(t)
 	ctx, expire := awsxtest.Deadline(cmdutiltest.Context(t))
+	clusterSent := make(chan struct{})
+	secondAddon := make(chan struct{})
+	addons := 0
+	var mu sync.Mutex
 	e.Server.OnRequest = func(hctx context.Context, r awsxtest.Request) {
-		if r.Operation == fleettest.EKSDescribeAddon {
-			expire()
+		switch r.Operation {
+		case fleettest.EKSDescribeCluster:
+			close(clusterSent)
+		case fleettest.EKSListAddons:
+			select {
+			case <-clusterSent:
+			case <-hctx.Done():
+			}
+		case fleettest.EKSDescribeAddon:
+			mu.Lock()
+			if addons++; addons == 2 {
+				close(secondAddon)
+			}
+			mu.Unlock()
+			select {
+			case <-secondAddon:
+				expire()
+			case <-hctx.Done():
+			}
 			<-hctx.Done()
 		}
 	}
-	// One request slot: the calls go out one at a time, in the order that
-	// they asked for the slot. The cluster asked before any call of the
-	// second wave, so it is answered before the run is cut short.
-	err := e.Run(ctx, "addon", "list", "-c", "prod", "-o", "json", "--max-concurrency", "1")
+	err := e.Run(ctx, "addon", "list", "-c", "prod", "-o", "json", "--max-concurrency", "2")
 	if got := cmdutil.ExitCode(err); got != cmdutil.ExitIncomplete {
 		t.Fatalf("exit code = %d (%v), want %d", got, err, cmdutil.ExitIncomplete)
 	}
 	cmdutiltest.ValidateJSON(t, apidoc.KindAddonList, e.Out.Bytes())
 	if n := strings.Count(e.Out.String(), `"incomplete": true`); n != 4 {
 		t.Errorf("incomplete add-ons = %d, want 4:\n%s", n, e.Out.String())
+	}
+}
+
+// A deadline while the cluster is read is an error, exit 1, as any other
+// failure to read the cluster is: the list has no cluster to belong to.
+func TestList_DeadlineAtTheCluster(t *testing.T) {
+	e := newFake(t)
+	ctx, expire := awsxtest.Deadline(cmdutiltest.Context(t))
+	e.Server.OnRequest = func(hctx context.Context, r awsxtest.Request) {
+		if r.Operation == fleettest.EKSDescribeCluster {
+			expire()
+			<-hctx.Done()
+		}
+	}
+	err := e.Run(ctx, "addon", "list", "-c", "prod", "-o", "json")
+	if got := cmdutil.ExitCode(err); got != cmdutil.ExitFailure {
+		t.Fatalf("exit code = %d (%v), want %d", got, err, cmdutil.ExitFailure)
+	}
+	if !strings.Contains(err.Error(), "timed out while describing cluster prod") {
+		t.Errorf("error = %v, want one that names the cluster read", err)
+	}
+	if e.Out.Len() != 0 {
+		t.Errorf("stdout = %q, want nothing", e.Out.String())
 	}
 }
 
