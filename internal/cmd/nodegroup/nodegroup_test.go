@@ -6,6 +6,7 @@ import (
 	"flag"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -307,19 +308,44 @@ func TestInvalidInput(t *testing.T) {
 // A deadline while the AMIs are read is a partial result with exit 4: the
 // nodegroups are there, and their AMIs are failures. The deadline passes
 // at the moment the group call is at the server.
+//
+// Two request slots make the cluster read end first. The nodegroup list
+// waits at the server until the cluster call is there too, so the cluster
+// holds the other slot. The first nodegroup call then waits at the server
+// for a second one, and the second one gets a slot only when the cluster
+// call has given its slot back: with its answer read.
 func TestList_Deadline(t *testing.T) {
 	e := newFake(t)
 	ctx, expire := awsxtest.Deadline(cmdutiltest.Context(t))
+	clusterSent := make(chan struct{})
+	secondNodegroup := make(chan struct{})
+	nodegroups := 0
+	var mu sync.Mutex
 	e.Server.OnRequest = func(hctx context.Context, r awsxtest.Request) {
-		if r.Operation == fleettest.AutoScalingDescribeAutoScalingGroups {
+		switch r.Operation {
+		case fleettest.EKSDescribeCluster:
+			close(clusterSent)
+		case fleettest.EKSListNodegroups:
+			select {
+			case <-clusterSent:
+			case <-hctx.Done():
+			}
+		case fleettest.EKSDescribeNodegroup:
+			mu.Lock()
+			if nodegroups++; nodegroups == 2 {
+				close(secondNodegroup)
+			}
+			mu.Unlock()
+			select {
+			case <-secondNodegroup:
+			case <-hctx.Done():
+			}
+		case fleettest.AutoScalingDescribeAutoScalingGroups:
 			expire()
 			<-hctx.Done()
 		}
 	}
-	// One request slot: the calls go out one at a time, in the order that
-	// they asked for the slot. The cluster asked before any call of the
-	// second wave, so it is answered before the run is cut short.
-	err := e.Run(ctx, "nodegroup", "list", "-c", "prod", "-o", "json", "--max-concurrency", "1")
+	err := e.Run(ctx, "nodegroup", "list", "-c", "prod", "-o", "json", "--max-concurrency", "2")
 	if got := cmdutil.ExitCode(err); got != cmdutil.ExitIncomplete {
 		t.Fatalf("exit code = %d (%v), want %d", got, err, cmdutil.ExitIncomplete)
 	}
