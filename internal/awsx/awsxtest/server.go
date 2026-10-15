@@ -57,6 +57,10 @@ type Request struct {
 	// Numbers from JSON and CBOR are float64; path, query, and form values
 	// are strings.
 	Input map[string]any
+	// Invocation is the SDK's amz-sdk-invocation-id header. Every attempt
+	// of one call carries the same value, so a test that counts calls
+	// counts distinct invocations: a retry is not a second call.
+	Invocation string
 }
 
 // Answer is how a request ended.
@@ -266,7 +270,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	name := fleettest.Operation(svc.name + ":" + action)
 	// The log, each hook, and the operation get their own copy of the
 	// input, so none can change what another reads.
-	req := Request{Operation: name, Service: svc.name, Region: region, Mutates: op.mutates, Input: in}
+	req := Request{Operation: name, Service: svc.name, Region: region, Mutates: op.mutates, Input: in, Invocation: r.Header.Get("Amz-Sdk-Invocation-Id")}
 	req.ID = h.record(req.clone())
 
 	ctx, cancel := context.WithCancel(r.Context())
