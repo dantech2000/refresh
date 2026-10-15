@@ -1,0 +1,59 @@
+exit: 3
+error: nodegroup web is UPDATING (VersionUpdate); it was not changed. Run the command again once that finishes
+--- stdout ---
+apiVersion: refresh.drod.dev/v2
+kind: Run
+operation: NodegroupScale
+status: Blocked
+clusters:
+  - cluster: prod
+    region: us-east-1
+    version: "1.33"
+    decision: NothingToDo
+    steps:
+      - phase: Scale
+        kind: Scale
+        name: web
+        action: Skip
+        reason: InFlight
+        sizes:
+          before:
+            desired: 2
+            min: 1
+            max: 3
+          after:
+            desired: 2
+            min: 1
+            max: 3
+        inFlight: VersionUpdate
+    blockers: []
+    notices: []
+    status: Blocked
+    results:
+      - phase: Scale
+        kind: Scale
+        name: web
+        status: Busy
+        inFlight: VersionUpdate
+        failure:
+          kind: Nodegroup
+          name: web
+          cluster: prod
+          region: us-east-1
+          reason: Busy
+          retryable: true
+          error: nodegroup web is UPDATING (VersionUpdate); it was not changed. Run the command again once that finishes
+    verification: []
+failures:
+  - kind: Nodegroup
+    name: web
+    cluster: prod
+    region: us-east-1
+    reason: Busy
+    retryable: true
+    error: nodegroup web is UPDATING (VersionUpdate); it was not changed. Run the command again once that finishes
+--- stderr ---
+PLAN  NodegroupScale, prod in us-east-1
+  web  skip, at desired 2, min 1, max 3 (InFlight: VersionUpdate)
+[!] web: Busy: nodegroup web is UPDATING (VersionUpdate); it was not changed. Run the command again once that finishes
+warning: nodegroup prod/web (us-east-1): Busy: nodegroup web is UPDATING (VersionUpdate); it was not changed. Run the command again once that finishes

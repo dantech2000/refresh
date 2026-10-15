@@ -1,0 +1,15 @@
+vpc-cni   [OK] ACTIVE   prod in us-east-1
+
+OVERVIEW
+  version               v1.19.0-eksbuild.1
+  status                [OK] ACTIVE
+  health                [OK] Healthy
+  arn                   arn:aws:eks:us-east-1:123456789012:addon/prod/vpc-cni/fake
+  service account role  arn:aws:iam::123456789012:role/vpc-cni
+  created               2026-01-01 00:00 UTC
+  modified              2026-01-01 00:00 UTC
+
+CONFIGURATION
+  values  env:
+            ENABLE_PREFIX_DELEGATION: "true"
+            WARM_PREFIX_TARGET: "1"

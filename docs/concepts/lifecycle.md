@@ -1,83 +1,79 @@
 # The upgrade lifecycle
 
-`refresh` is organized around a four-stage loop. Each stage has a command (or a
-small group), and each builds on the previous one.
+`refresh` follows the work of keeping a cluster current: find what is out of
+date, check readiness, patch, and upgrade. Each step is one command.
 
+## 1. Status: what is out of date?
+
+`refresh status` lists every cluster with its Kubernetes version, its EKS
+support window, the nodegroups that do not run the latest AMI, and the add-ons
+that have a newer version.
+
+```bash
+refresh status -A
 ```
-   status  ─►  upgrade-check  ─►  nodegroup/addon update  ─►  cluster upgrade
- (what's       (am I ready?)      (patch safely)              (orchestrate)
-  stale?)
+
+The exit code tells a script what the command found: `2` when something is out
+of date, `3` when a cluster left standard support. See
+[`refresh status`](../commands/status.md).
+
+## 2. Readiness: is the cluster ready to upgrade?
+
+`refresh cluster upgrade-check` reads the EKS upgrade insights, the version
+skew of the nodegroups and add-ons, the control-plane metrics, and the support
+window. It changes nothing. Its exit code is the verdict, so it works as a CI
+gate.
+
+```bash
+refresh cluster upgrade-check prod
 ```
 
-## 1. Status — what's stale?
+## 3. Patch: roll nodegroups and update add-ons
 
-[`refresh status`](../commands/status.md) is the front door. It fans out across
-clusters and regions and summarizes patch posture: Kubernetes version, the EKS
-support window (standard vs. extended support, with the extended-support cost
-exposure), stale AMIs, and add-ons behind their latest compatible version.
+`refresh nodegroup update` rolls managed nodegroups onto the latest recommended
+AMI of their own Kubernetes version. `refresh addon update` moves add-ons to
+the latest version that the cluster can run.
 
-It's designed to run in CI: a non-zero exit means "something needs attention."
-A row whose data could not be read is marked incomplete and never counts as
-current (exit `4`).
+Every changing command works the same way:
 
-## 2. Readiness — am I safe to upgrade?
+1. It reads the whole cluster and builds a plan.
+2. It refuses if the cluster or anything in it is already changing.
+3. It runs the [health gate](health-checks.md).
+4. It asks once. `--yes` skips the question.
+5. It sends the change and waits for it. `--no-wait` returns once AWS accepts
+   the change.
+6. After a roll, it verifies that the nodegroups are `ACTIVE`, that the new
+   nodes are `Ready`, and that no pod is newly `Pending`.
 
-[`refresh cluster upgrade-check`](../commands/cluster.md#upgrade-check) answers
-"can I bump the control plane?" It combines **EKS Cluster Insights** (the
-upstream-deprecation / config checks AWS surfaces in the console) with a local
-**version-skew** analysis. It is strictly read-only, and it works as a CI
-gate: it exits `0` when ready, `2` for warnings, and `3` when something blocks
-the upgrade (`--exit-zero` turns the gate off).
+`--dry-run` stops after step 3 and prints the plan with the verdict of the
+health gate.
 
-## 3. Patch — roll it, safely
+## 4. Upgrade: move the cluster to a new version
 
-This is the heart of the tool:
+`refresh cluster upgrade` runs the whole upgrade, one minor version at a time.
+For each minor version it runs these phases in order:
 
-- [`refresh nodegroup update`](../commands/nodegroup.md#update) rolls managed
-  nodegroups to the latest recommended AMI.
-- [`refresh addon update`](../commands/addon.md#update) updates EKS add-ons.
+1. The control plane.
+2. The add-ons that the new control plane cannot run at their current version.
+3. Each managed nodegroup, one after another.
+4. The other add-ons.
 
-Both support **dry-run** previews and follow the EKS update to its end.
-Nodegroup rolls also run [**pre-flight health gates**](health-checks.md)
-first (capacity, node readiness, PodDisruptionBudgets that would block the
-drain, critical workloads), show the AMI changelog in a dry-run, stream
-**live progress**, and run **post-roll verification** that nodes returned
-Ready with no newly-stuck pods. `addon update --health-check` checks the
-add-on before the update.
+The plan comes from the live state of the cluster. There is no state file. If
+a run stops, run the same command again, and it goes on with what is left.
 
-The patch stage is also where the **safety story** lives:
+## Undo: roll an upgrade back
 
-- **Health gates** block a roll when the cluster isn't healthy enough.
-- **`--dry-run`** shows exactly what would change.
-- **Idempotency** — mutating calls carry a client request token, so an SDK
-  retry of the same request can't trigger a second disruptive rollout. A
-  nodegroup that is already `UPDATING` is skipped.
-- **Custom-AMI awareness** — nodegroups whose AMI is managed via a launch
-  template are detected and skipped with guidance, not rolled blindly.
+`refresh cluster rollback` returns a cluster to the version before its last
+upgrade, within 7 days of that upgrade. It rolls the nodegroups back first,
+then downgrades the add-ons that the older version cannot run, then rolls the
+control plane back.
 
-## 4. Upgrade — orchestrate the whole thing
+## The other commands
 
-[`refresh cluster upgrade`](../commands/cluster.md#upgrade) sequences a full
-cluster upgrade: **control plane → nodegroups → add-ons**, with a health gate
-after each phase. Add-ons the new control plane cannot run update before the
-rolls. Before each control-plane step it asks EKS to re-evaluate
-Cluster Insights and blocks on problems, and before each nodegroup roll it
-runs the pre-flight health checks. It's resumable by re-deriving the plan
-from live cluster state (no state files to corrupt).
-
-## Undo — roll an upgrade back
-
-For about 7 days after an in-place upgrade, EKS can roll the control plane
-back one minor version.
-[`refresh cluster rollback`](../commands/cluster.md#rollback) does it in the
-order AWS documents: **nodegroups → add-ons → control plane**. It checks the
-window, the upgrade policy, and the rollback-readiness insights first, and it
-is resumable in the same way as `cluster upgrade`. `cluster upgrade-check`
-shows when a rollback is available.
-
-## Supporting surface
-
-Around the loop sit the everyday read commands — `cluster list/describe`,
-`nodegroup list/describe`, `addon list/describe` — plus `nodegroup scale` and
-kubectx-style [contexts](contexts.md). These don't mutate the upgrade path; they
-help you see and operate the fleet.
+| Command | Use |
+|---|---|
+| `refresh cluster list`, `describe` | Read clusters. |
+| `refresh nodegroup list`, `describe`, `scale` | Read nodegroups, and change their sizes. |
+| `refresh addon list`, `describe` | Read add-ons. |
+| `refresh context ...` | Save a cluster, region, and profile under a name. |
+| `refresh ui` | A full-screen view of the fleet (experimental). |

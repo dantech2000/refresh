@@ -1,0 +1,7 @@
+exit: 1
+error: nodegroup "wbe" not found in cluster prod
+Did you mean:
+  web
+List the nodegroups with: refresh nodegroup list -c prod
+--- stdout ---
+--- stderr ---

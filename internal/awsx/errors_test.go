@@ -1,0 +1,464 @@
+package awsx
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"io/fs"
+	"net"
+	"net/http"
+	"net/url"
+	"os"
+	"strings"
+	"syscall"
+	"testing"
+	"time"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
+	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
+	"github.com/aws/aws-sdk-go-v2/credentials/ssocreds"
+	"github.com/aws/smithy-go"
+	smithyhttp "github.com/aws/smithy-go/transport/http"
+)
+
+// sdkOpErr wraps err the way the SDK surfaces every client call failure.
+func sdkOpErr(err error) error {
+	return &smithy.OperationError{ServiceID: "EKS", OperationName: "ListClusters", Err: err}
+}
+
+func apiErr(code, msg string) error {
+	return sdkOpErr(&smithy.GenericAPIError{Code: code, Message: msg})
+}
+
+// dialErr is what net/http returns when nothing listens on the endpoint.
+func dialErr(sysErr error) error {
+	return sdkOpErr(&url.Error{Op: "Post", URL: "https://eks.us-west-2.amazonaws.com/clusters", Err: &net.OpError{
+		Op: "dial", Net: "tcp", Err: os.NewSyscallError("connect", sysErr),
+	}})
+}
+
+func dnsErr(host string) error {
+	return sdkOpErr(&url.Error{Op: "Post", URL: "https://" + host, Err: &net.OpError{
+		Op: "dial", Net: "tcp", Err: &net.DNSError{Err: "no such host", Name: host, IsNotFound: true},
+	}})
+}
+
+func http403() error {
+	return sdkOpErr(&awshttp.ResponseError{ResponseError: &smithyhttp.ResponseError{
+		Response: &smithyhttp.Response{Response: &http.Response{StatusCode: http.StatusForbidden}},
+		Err:      errors.New("forbidden"),
+	}})
+}
+
+type timeoutError struct{}
+
+func (timeoutError) Error() string { return "i/o timeout" }
+func (timeoutError) Timeout() bool { return true }
+
+func TestClassification(t *testing.T) {
+	type want struct{ cred, region, network, perm bool }
+	cases := []struct {
+		name string
+		err  error
+		want want
+	}{
+		{"nil", nil, want{}},
+		{"plain unrelated", errors.New("cluster not found"), want{}},
+		// Substrings the old matcher caught must no longer misclassify.
+		{"text mentioning timeout", errors.New("waiting for timeout budget"), want{}},
+		{"text mentioning dial", errors.New("dial plan invalid"), want{}},
+		{"text mentioning forbidden", errors.New("403 Forbidden"), want{}},
+		{"text mentioning region", errors.New("not authorized in region us-east-1"), want{}},
+
+		{"access denied code", apiErr("AccessDeniedException", "not authorized in region us-east-1"), want{perm: true}},
+		{"unauthorized operation code", apiErr("UnauthorizedOperation", "no"), want{perm: true}},
+		{"http 403", http403(), want{perm: true}},
+		{"expired token code", apiErr("ExpiredTokenException", "expired"), want{cred: true}},
+		{"unrecognized client code", apiErr("UnrecognizedClientException", "bad"), want{cred: true}},
+		{"not found code", apiErr("ResourceNotFoundException", "no cluster"), want{}},
+
+		{"signing error", sdkOpErr(&v4.SigningError{Err: errors.New("no creds")}), want{cred: true}},
+		{"sso token expired", sdkOpErr(&ssocreds.InvalidTokenError{}), want{cred: true}},
+		{"identity chain fallback", sdkOpErr(errors.New("get identity: get credentials: failed to refresh cached credentials, no EC2 IMDS role found")), want{cred: true}},
+
+		{"missing region", sdkOpErr(&aws.MissingRegionError{}), want{region: true}},
+		{"endpoint resolver region fallback", sdkOpErr(errors.New("resolve endpoint: invalid input region us-bogus")), want{region: true}},
+		{"aws host nxdomain", dnsErr("eks.us-bogus-1.amazonaws.com"), want{region: true, network: true}},
+		{"non-aws host nxdomain", dnsErr("proxy.corp.example"), want{network: true}},
+
+		{"connection refused", dialErr(syscall.ECONNREFUSED), want{network: true}},
+		{"connection reset", sdkOpErr(os.NewSyscallError("read", syscall.ECONNRESET)), want{network: true}},
+		{"network unreachable", sdkOpErr(os.NewSyscallError("connect", syscall.ENETUNREACH)), want{network: true}},
+		{"timeout interface", sdkOpErr(timeoutError{}), want{network: true}},
+		{"response timeout", sdkOpErr(&awshttp.ResponseTimeoutError{TimeoutDur: 1}), want{network: true}},
+		{"unexpected eof", sdkOpErr(fmt.Errorf("read body: %w", io.ErrUnexpectedEOF)), want{network: true}},
+		{"context deadline is not network", sdkOpErr(&url.Error{Op: "Post", URL: "x", Err: context.DeadlineExceeded}), want{}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := want{
+				cred:    IsCredentialError(tc.err),
+				region:  IsRegionError(tc.err),
+				network: IsNetworkError(tc.err),
+				perm:    IsPermissionError(tc.err),
+			}
+			if got != tc.want {
+				t.Errorf("classification = %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
+// Every FormatAWSError branch must keep the original error reachable through
+// errors.Is / errors.As.
+func TestFormatAWSError_WrapsEveryBranch(t *testing.T) {
+	cases := []struct {
+		name     string
+		err      error
+		contains string
+		check    func(error) bool
+	}{
+		{"cancelled", sdkOpErr(context.Canceled), "operation cancelled while listing clusters",
+			func(e error) bool { return errors.Is(e, context.Canceled) }},
+		{"deadline", sdkOpErr(context.DeadlineExceeded), "timed out while listing clusters (increase --timeout to allow more time)",
+			func(e error) bool { return errors.Is(e, context.DeadlineExceeded) }},
+		{"permission", apiErr("AccessDeniedException", "denied in region us-east-1"), "insufficient AWS permissions",
+			func(e error) bool { var ae smithy.APIError; return errors.As(e, &ae) }},
+		{"credential code", apiErr("ExpiredTokenException", "expired"), "AWS credentials not configured",
+			func(e error) bool { var ae smithy.APIError; return errors.As(e, &ae) }},
+		{"generic api", apiErr("ResourceNotFoundException", "No cluster found"), "AWS API error while listing clusters: No cluster found (ResourceNotFoundException)",
+			func(e error) bool {
+				var ae smithy.APIError
+				return errors.As(e, &ae) && ae.ErrorCode() == "ResourceNotFoundException"
+			}},
+		{"credential chain", sdkOpErr(&v4.SigningError{Err: errors.New("x")}), "AWS credentials not configured",
+			func(e error) bool { var se *v4.SigningError; return errors.As(e, &se) }},
+		{"region", sdkOpErr(&aws.MissingRegionError{}), "AWS region configuration issue",
+			func(e error) bool { var me *aws.MissingRegionError; return errors.As(e, &me) }},
+		{"network", dialErr(syscall.ECONNREFUSED), "network connectivity issue",
+			func(e error) bool { return errors.Is(e, syscall.ECONNREFUSED) }},
+		{"http 403", http403(), "insufficient AWS permissions",
+			func(e error) bool { var re *awshttp.ResponseError; return errors.As(e, &re) }},
+		{"generic", errBoom, "error while listing clusters: boom",
+			func(e error) bool { return errors.Is(e, errBoom) }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := FormatAWSError(tc.err, "listing clusters")
+			if got == nil {
+				t.Fatal("FormatAWSError returned nil")
+			}
+			if !strings.Contains(got.Error(), tc.contains) {
+				t.Errorf("message %q does not contain %q", got.Error(), tc.contains)
+			}
+			if !tc.check(got) {
+				t.Errorf("wrap chain lost through FormatAWSError: %v", got)
+			}
+		})
+	}
+}
+
+var errBoom = errors.New("boom")
+
+// The cancel, deadline, and generic-API branches keep their exact text: the
+// wrapped cause must not leak into the message.
+func TestFormatAWSError_MessagesUnchanged(t *testing.T) {
+	cases := map[string]error{
+		"operation cancelled while listing clusters":                                         sdkOpErr(context.Canceled),
+		"timed out while listing clusters (increase --timeout to allow more time)":           sdkOpErr(context.DeadlineExceeded),
+		"AWS API error while listing clusters: No cluster found (ResourceNotFoundException)": apiErr("ResourceNotFoundException", "No cluster found"),
+	}
+	for want, in := range cases {
+		if got := FormatAWSError(in, "listing clusters").Error(); got != want {
+			t.Errorf("message = %q, want %q", got, want)
+		}
+	}
+}
+
+func TestFormatAWSError_NilReturnsNil(t *testing.T) {
+	if FormatAWSError(nil, "test op") != nil {
+		t.Error("nil error should return nil")
+	}
+}
+
+// Formatting an already formatted error returns it unchanged, so a caller
+// that wraps a ListAllPages error again does not print the IAM help twice.
+func TestFormatAWSError_AlreadyFormattedIsUnchanged(t *testing.T) {
+	for name, cause := range map[string]error{
+		"permission": apiErr("AccessDeniedException", "not authorized"),
+		"credential": apiErr("ExpiredToken", "expired"),
+		"network":    dialErr(syscall.ECONNREFUSED),
+		"other":      errors.New("boom"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			once := FormatAWSError(cause, "listing clusters")
+			twice := FormatAWSError(fmt.Errorf("resolving: %w", once), "listing EKS clusters")
+			if strings.Count(twice.Error(), "listing") != strings.Count(once.Error(), "listing") {
+				t.Errorf("second format changed the message:\nonce:  %s\ntwice: %s", once, twice)
+			}
+			if n := strings.Count(twice.Error(), "Permissions refresh uses"); n > 1 {
+				t.Errorf("IAM help printed %d times", n)
+			}
+			if !errors.Is(twice, cause) {
+				t.Error("formatted error no longer wraps the cause")
+			}
+		})
+	}
+}
+
+func TestFormatAWSError_TypedAccessDeniedIsNotRegion(t *testing.T) {
+	err := FormatAWSError(apiErr("AccessDeniedException", "not authorized to perform eks:ListClusters in region us-east-1"), "listing clusters")
+	if strings.Contains(err.Error(), "AWS_REGION=") {
+		t.Errorf("typed AccessDenied must not get region guidance, got: %s", err.Error())
+	}
+}
+
+func TestFormatAWSError_CancelGetsNoNetworkHelp(t *testing.T) {
+	err := FormatAWSError(sdkOpErr(&url.Error{Op: "Post", URL: "x", Err: context.Canceled}), "listing clusters")
+	if strings.Contains(err.Error(), "internet connection") {
+		t.Errorf("cancellation must not get network remediation help, got: %s", err.Error())
+	}
+}
+
+func TestIsRegionInaccessible(t *testing.T) {
+	for _, code := range []string{"AccessDenied", "AccessDeniedException", "UnrecognizedClientException", "InvalidClientTokenId", "AuthFailure", "OptInRequired", "RegionDisabledException"} {
+		if !IsRegionInaccessible(apiErr(code, "x")) {
+			t.Errorf("%s: want inaccessible", code)
+		}
+		// Still classified after FormatAWSError and a caller's %w wrap.
+		if !IsRegionInaccessible(fmt.Errorf("region x: %w", FormatAWSError(apiErr(code, "x"), "listing clusters"))) {
+			t.Errorf("%s: want inaccessible through FormatAWSError", code)
+		}
+	}
+	for _, err := range []error{
+		nil,
+		apiErr("ThrottlingException", "x"),
+		apiErr("ServerException", "x"),
+		context.DeadlineExceeded,
+		errors.New("AccessDeniedException: plain string, not an API error"),
+	} {
+		if IsRegionInaccessible(err) {
+			t.Errorf("%v: want not inaccessible", err)
+		}
+	}
+}
+
+func TestSummary(t *testing.T) {
+	cases := map[string]error{
+		"":                                    nil,
+		"AccessDeniedException: no eks:ListX": FormatAWSError(apiErr("AccessDeniedException", "no eks:ListX"), "listing"),
+		"network connectivity issue while listing": FormatAWSError(dialErr(syscall.ECONNREFUSED), "listing"),
+		"plain": errors.New("plain"),
+		"dial tcp 127.0.0.1:9: connect: connection refused": fmt.Errorf("operation error EKS: ListClusters, exceeded maximum number of attempts, 3: %w",
+			&net.OpError{Op: "dial", Net: "tcp", Addr: &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 9}, Err: &os.SyscallError{Syscall: "connect", Err: syscall.ECONNREFUSED}}),
+	}
+	for want, in := range cases {
+		if got := Summary(in); got != want {
+			t.Errorf("Summary(%v) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestFormatPermissionError_ListsPermissions(t *testing.T) {
+	err := formatPermissionError(errors.New("denied"), "listing clusters")
+	if !strings.Contains(err.Error(), "listing clusters") || !strings.Contains(err.Error(), "eks:ListClusters") {
+		t.Errorf("expected operation and permissions in message, got: %s", err.Error())
+	}
+	for _, action := range []string{"eks:StartInsightsRefresh", "eks:DescribeInsightsRefresh"} {
+		if !strings.Contains(err.Error(), action) {
+			t.Errorf("expected %s (cluster upgrade readiness) in the permission list, got: %s", action, err.Error())
+		}
+	}
+}
+
+// AWS's own message, which names the denied action and an explicit deny,
+// is the second line: before the long permission list, not after it.
+func TestFormatPermissionError_AWSMessageFirst(t *testing.T) {
+	cause := apiErr("AccessDeniedException", "User: arn:aws:iam::1:user/x is not authorized to perform: eks:ListClusters with an explicit deny")
+	lines := strings.Split(FormatAWSError(cause, "listing clusters").Error(), "\n")
+	if lines[0] != "insufficient AWS permissions while listing clusters" ||
+		lines[1] != "AWS: AccessDeniedException: User: arn:aws:iam::1:user/x is not authorized to perform: eks:ListClusters with an explicit deny" {
+		t.Errorf("first lines = %q", lines[:2])
+	}
+}
+
+// A connect timeout reports itself as context.DeadlineExceeded, which
+// read as "timed out … (increase --timeout)". It is a network failure: the
+// endpoint could not be reached.
+func TestFormatAWSError_DialTimeoutIsANetworkFailure(t *testing.T) {
+	var dialErr error
+	d := net.Dialer{Timeout: time.Millisecond}
+	if _, err := d.Dial("tcp", "10.255.255.1:443"); err != nil {
+		dialErr = &url.Error{Op: "Post", URL: "https://eks.me-south-1.amazonaws.com", Err: err}
+	} else {
+		t.Skip("the test address answered")
+	}
+	msg := FormatAWSError(dialErr, "listing clusters in me-south-1").Error()
+	if !strings.Contains(msg, "network connectivity issue while listing clusters in me-south-1") || strings.Contains(msg, "increase --timeout") {
+		t.Errorf("dial timeout formatted as:\n%s", msg)
+	}
+}
+
+// From review: the early dial branch hid the region help of an invalid
+// region, whose endpoint does not resolve. A DNS failure keeps its path.
+func TestFormatAWSError_DNSFailureKeepsTheRegionPath(t *testing.T) {
+	dns := &url.Error{Op: "Post", URL: "https://eks.us-bogus-1.amazonaws.com", Err: &net.OpError{Op: "dial", Net: "tcp", Err: &net.DNSError{Err: "no such host", Name: "eks.us-bogus-1.amazonaws.com", IsNotFound: true}}}
+	got := FormatAWSError(dns, "listing clusters").Error()
+	if IsRegionError(dns) && strings.HasPrefix(got, "network connectivity issue") {
+		t.Errorf("an invalid region's DNS failure lost its region help:\n%s", got)
+	}
+	want := "Cause: not a region where EKS answers: eks.us-bogus-1.amazonaws.com does not resolve; check the region name"
+	if !strings.Contains(got, want) {
+		t.Errorf("message:\n%s\nwant the line %q", got, want)
+	}
+}
+
+// A credential chain that ended at IMDS is "no credentials", with the
+// profile help, not a timeout or a network error.
+func TestFormatAWSErrorNoCredentials(t *testing.T) {
+	for _, cause := range []error{context.DeadlineExceeded, &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connect: host is down")}} {
+		err := fmt.Errorf("failed to refresh cached credentials, no EC2 IMDS role found, %w",
+			&smithy.OperationError{ServiceID: "ec2imds", OperationName: "GetMetadata", Err: cause})
+		if !IsNoCredentials(err) {
+			t.Fatalf("%v: not classified as no credentials", cause)
+		}
+		msg := FormatAWSError(err, "loading AWS credentials").Error()
+		if !strings.HasPrefix(msg, "no AWS credentials found") || !strings.Contains(msg, "--profile <name>") || strings.Contains(msg, "--timeout") {
+			t.Fatalf("%v: message = %q", cause, msg)
+		}
+		if !errors.Is(FormatAWSError(err, "x"), cause) {
+			t.Fatalf("%v: the cause is not wrapped", cause)
+		}
+	}
+	// An IMDS failure inside an AssumeRole call (credential_source =
+	// Ec2InstanceMetadata) is the same.
+	nested := &smithy.OperationError{ServiceID: "STS", OperationName: "AssumeRole",
+		Err: fmt.Errorf("failed to retrieve credentials: %w", &smithy.OperationError{ServiceID: "ec2imds", OperationName: "GetMetadata", Err: context.DeadlineExceeded})}
+	if !IsNoCredentials(nested) || strings.Contains(FormatAWSError(nested, "x").Error(), "--timeout") {
+		t.Fatal("a nested IMDS failure is not classified as no credentials")
+	}
+	other := &smithy.OperationError{ServiceID: "STS", OperationName: "GetCallerIdentity", Err: context.DeadlineExceeded}
+	if IsNoCredentials(other) {
+		t.Fatal("an STS timeout classified as no credentials")
+	}
+	msg := FormatNoCredentials(errors.New("x"), []string{"prod-admin", "dev"}).Error()
+	if !strings.Contains(msg, "SSO profiles in your AWS config:\n  prod-admin\n  dev") {
+		t.Fatalf("profiles not listed: %q", msg)
+	}
+}
+
+// The messages name what to fix: the role for a denied AssumeRole, the
+// region for a profile with none, the keys or permissions for an
+// unreadable 403, and AWS_ACCESS_KEY_ID when it hides AWS_PROFILE.
+func TestFormatAWSErrorLoginCases(t *testing.T) {
+	assume := &smithy.OperationError{ServiceID: "STS", OperationName: "AssumeRole",
+		Err: &smithy.GenericAPIError{Code: "AccessDenied", Message: "User: u is not authorized to perform: sts:AssumeRole"}}
+	if msg := FormatAWSError(fmt.Errorf("failed to refresh cached credentials, %w", assume), "loading AWS credentials").Error(); !strings.HasPrefix(msg, "cannot assume the role") || !strings.Contains(msg, "trust policy") {
+		t.Errorf("assume role denied: %q", msg)
+	}
+	other := &smithy.OperationError{ServiceID: "EKS", OperationName: "ListClusters", Err: &smithy.GenericAPIError{Code: "AccessDeniedException", Message: "no"}}
+	if msg := FormatAWSError(other, "listing clusters").Error(); !strings.HasPrefix(msg, "insufficient AWS permissions") {
+		t.Errorf("EKS denial: %q", msg)
+	}
+
+	noRegion := errors.New("failed to refresh cached credentials, operation error STS: AssumeRole, failed to resolve service endpoint, endpoint rule error, Invalid Configuration: Missing Region")
+	if msg := FormatAWSError(noRegion, "loading AWS credentials").Error(); !strings.HasPrefix(msg, "AWS region configuration issue") {
+		t.Errorf("AssumeRole without a region: %q", msg)
+	}
+
+	unreadable := &smithy.OperationError{ServiceID: "EKS", OperationName: "ListClusters", Err: &smithyhttp.ResponseError{
+		Response: &smithyhttp.Response{Response: &http.Response{StatusCode: http.StatusForbidden}},
+		Err:      &smithy.DeserializationError{Err: errors.New("invalid character")},
+	}}
+	if msg := FormatAWSError(unreadable, "listing clusters").Error(); !strings.HasPrefix(msg, "AWS refused the request (HTTP 403)") || !strings.Contains(msg, "secret access key") {
+		t.Errorf("unreadable 403: %q", msg)
+	}
+}
+
+// The SSO login cases: no saved login, a login that cannot be renewed (both
+// profile styles), and a role the user has no access to.
+func TestFormatAWSErrorSSOCases(t *testing.T) {
+	missing := fmt.Errorf("failed to refresh cached credentials, failed to read cached SSO token file, %w",
+		&fs.PathError{Op: "open", Path: "/home/u/.aws/sso/cache/abc.json", Err: fs.ErrNotExist})
+	legacy := fmt.Errorf("failed to refresh cached credentials, %w", &ssocreds.InvalidTokenError{Err: errors.New("expired")})
+	expired := errors.New("failed to refresh cached credentials, refresh cached SSO token failed, cached SSO token is expired, or not present, and cannot be refreshed")
+	for name, err := range map[string]error{"missing": missing, "legacy": legacy, "expired": expired} {
+		if !IsSSONotLoggedIn(err) {
+			t.Errorf("%s: not classified as not logged in", name)
+		}
+		msg := FormatSSONotLoggedIn(err, "work").Error()
+		if !strings.Contains(msg, "aws sso login --profile work") {
+			t.Errorf("%s: %q", name, msg)
+		}
+	}
+	if !strings.Contains(FormatSSONotLoggedIn(missing, "").Error(), "no SSO login is saved") {
+		t.Error("a missing login reads as expired")
+	}
+	other := &fs.PathError{Op: "open", Path: "/etc/x", Err: fs.ErrNotExist}
+	if IsSSONotLoggedIn(other) {
+		t.Error("an unrelated missing file reads as an SSO login")
+	}
+
+	role := &smithy.OperationError{ServiceID: "SSO", OperationName: "GetRoleCredentials", Err: &smithy.GenericAPIError{Code: "ForbiddenException", Message: "No access"}}
+	if msg := FormatAWSError(role, "loading AWS credentials").Error(); !strings.HasPrefix(msg, "IAM Identity Center gives this user no access") || !strings.Contains(msg, "sso_role_name") {
+		t.Errorf("SSO role forbidden: %q", msg)
+	}
+}
+
+// The SSO cases a formatted error must still be recognized in: an expired
+// session (InvalidGrantException from the SSO OIDC refresh), and a role
+// lookup with a revoked token. A role or SSO call nested in an EKS call
+// keeps its own help.
+func TestFormatAWSErrorNestedLoginCases(t *testing.T) {
+	grant := fmt.Errorf("refresh cached SSO token failed, unable to refresh SSO token, %w", &smithy.OperationError{
+		ServiceID: "SSO OIDC", OperationName: "CreateToken", Err: &smithy.GenericAPIError{Code: "InvalidGrantException", Message: "Invalid grant provided"}})
+	formatted := FormatAWSError(grant, "loading AWS credentials")
+	if !IsSSONotLoggedIn(formatted) || !strings.Contains(formatted.Error(), "aws sso login --profile") {
+		t.Errorf("expired session: %q", formatted)
+	}
+	revoked := &smithy.OperationError{ServiceID: "SSO", OperationName: "GetRoleCredentials", Err: &smithy.GenericAPIError{Code: "UnauthorizedException", Message: "Session token not found or invalid"}}
+	if msg := FormatAWSError(revoked, "x").Error(); !strings.HasPrefix(msg, "not logged in to IAM Identity Center") {
+		t.Errorf("revoked token: %q", msg)
+	}
+	inEKS := &smithy.OperationError{ServiceID: "EKS", OperationName: "ListClusters", Err: fmt.Errorf("get identity: %w", &smithy.OperationError{
+		ServiceID: "STS", OperationName: "AssumeRole", Err: &smithy.GenericAPIError{Code: "AccessDenied", Message: "not authorized to perform: sts:AssumeRole"}})}
+	if msg := FormatAWSError(inEKS, "listing clusters").Error(); !strings.HasPrefix(msg, "cannot assume the role") {
+		t.Errorf("AssumeRole inside EKS: %q", msg)
+	}
+	ssoDNS := fmt.Errorf("operation error SSO: GetRoleCredentials, %w", &net.DNSError{Name: "portal.sso.us-esat-1.amazonaws.com", Err: "no such host", IsNotFound: true})
+	if msg := FormatAWSError(ssoDNS, "x").Error(); !strings.HasPrefix(msg, "the IAM Identity Center endpoint does not resolve") || !strings.Contains(msg, "sso_region") {
+		t.Errorf("bad sso_region: %q", msg)
+	}
+	eksDNS := &net.DNSError{Name: "eks.us-esat-1.amazonaws.com", Err: "no such host", IsNotFound: true}
+	if msg := FormatAWSError(eksDNS, "x").Error(); !strings.HasPrefix(msg, "AWS region configuration issue") {
+		t.Errorf("bad region: %q", msg)
+	}
+}
+
+// A token refresh that never got an answer (DNS, timeout) or that IAM
+// Identity Center failed on its side is not an expired login; a wrong
+// sso_region gets its own help even when the token expired first.
+func TestSSORefreshFailuresAreNotExpiredLogins(t *testing.T) {
+	refresh := func(inner error) error {
+		return fmt.Errorf("refresh cached SSO token failed, unable to refresh SSO token, %w",
+			&smithy.OperationError{ServiceID: "SSO OIDC", OperationName: "CreateToken", Err: inner})
+	}
+	dns := &net.DNSError{Name: "oidc.us-esat-1.amazonaws.com", Err: "no such host", IsNotFound: true}
+	for name, err := range map[string]error{
+		"bad sso_region": refresh(dns),
+		"timeout":        refresh(context.DeadlineExceeded),
+		"server error":   refresh(&smithy.GenericAPIError{Code: "InternalServerException", Message: "boom"}),
+	} {
+		if IsSSONotLoggedIn(err) {
+			t.Errorf("%s: classified as an expired login", name)
+		}
+	}
+	if msg := FormatAWSError(refresh(dns), "x").Error(); !strings.Contains(msg, "sso_region") {
+		t.Errorf("bad sso_region: %q", msg)
+	}
+	if !IsSSONotLoggedIn(refresh(&smithy.GenericAPIError{Code: "InvalidGrantException", Message: "Invalid grant provided"})) {
+		t.Error("a rejected refresh is not an expired login")
+	}
+}

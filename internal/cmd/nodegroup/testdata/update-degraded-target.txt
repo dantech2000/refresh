@@ -1,0 +1,22 @@
+exit: 3
+error: nodegroup web is DEGRADED, not ACTIVE; it was not rolled
+--- stdout ---
+Plan   [X] Blocked   NodegroupUpdate
+
+PLAN
+  operation  NodegroupUpdate
+  cluster    prod
+  region     us-east-1
+  version    1.32
+  decision   [X] Blocked
+
+STEPS  1
+  NAME  KIND       ACTION   REASON  FROM  TO    NOTE
+  web   Nodegroup  Blocked  -       1.32  1.32  -
+
+BLOCKERS  1
+  NAME  KIND          STEP  MESSAGE
+  prod  [X] NotReady  web   nodegroup web is DEGRADED, not ACTIVE; it was not rolled
+--- stderr ---
+PLAN  NodegroupUpdate, prod in us-east-1
+  [X] web  blocked

@@ -1,0 +1,25 @@
+FLEET  6 in 2 regions
+
+CLUSTER           REGION     VERSION  SUPPORT                    COMPUTE       STALE AMI  ADDONS   HEALTH
+[X] ancient       eu-west-1  1.29     unsupported                none          n/a        0        ok
+[OK] auto         eu-west-1  1.34     standard (243d)            Auto Mode     n/a        0        ok
+[OK] karpenter    eu-west-1  1.34     standard (243d)            Karpenter     n/a        0        ok
+[!] legacy        us-east-1  1.31     extended (243d) +$0.50/hr  1 nodegroup   unknown    0        ok
+[?] prod-current  us-east-1  1.34     standard (243d)            1 nodegroup   unknown    unknown  ok
+[!] prod-stale    us-east-1  1.33     standard (61d)             3 nodegroups  unknown    unknown  1 issue
+
+[OK] 2 current   [!] 2 need attention   [X] 1 unsupported   [?] 3 incomplete
+1 nodegroup behind the control plane · 2 clusters out of standard support (+$365/mo)
+
+[X] ancient is on a version that EKS no longer supports: refresh cluster upgrade-check ancient -r eu-west-1
+
+INCOMPLETE DATA
+[?] addon prod-current/vpc-cni (us-east-1): Throttled (eks:DescribeAddonVersions): ThrottlingException: Rate exceeded
+[?] addon prod-stale/coredns (us-east-1): Throttled (eks:DescribeAddonVersions): ThrottlingException: Rate exceeded
+[?] addon prod-stale/kube-proxy (us-east-1): Throttled (eks:DescribeAddonVersions): ThrottlingException: Rate exceeded
+[?] addon prod-stale/vpc-cni (us-east-1): Throttled (eks:DescribeAddonVersions): ThrottlingException: Rate exceeded
+[?] nodegroup legacy/ng (us-east-1): AccessDenied (grant ssm:GetParameter): AccessDeniedException: User: arn:aws:iam::123456789012:user/fake is not authorized to perform this action
+[?] nodegroup prod-current/ng (us-east-1): AccessDenied (grant ssm:GetParameter): AccessDeniedException: User: arn:aws:iam::123456789012:user/fake is not authorized to perform this action
+[?] nodegroup prod-stale/api (us-east-1): AccessDenied (grant ssm:GetParameter): AccessDeniedException: User: arn:aws:iam::123456789012:user/fake is not authorized to perform this action
+[?] nodegroup prod-stale/old (us-east-1): AccessDenied (grant ssm:GetParameter): AccessDeniedException: User: arn:aws:iam::123456789012:user/fake is not authorized to perform this action
+[?] nodegroup prod-stale/web (us-east-1): AccessDenied (grant ssm:GetParameter): AccessDeniedException: User: arn:aws:iam::123456789012:user/fake is not authorized to perform this action

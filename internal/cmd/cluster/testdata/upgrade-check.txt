@@ -1,0 +1,31 @@
+prod   [X] NOT READY   us-east-1 · 1.32 · standard (173d)
+
+READINESS
+  reason 1  [X] Insights: 1 ERROR insight (Deprecated APIs removed in 1.33)
+  reason 2  [X] VersionSkew: 1 nodegroup at the kubelet skew limit (ng-legacy (1.29, 3 behind)); upgrade the nodes before the control plane; 1 add-on behind latest (coredns (v1.11.3-eksbuild.1, latest v1.11.4-eksbuild.2))
+
+INSIGHTS  2
+  NAME      INSIGHT                          STATUS       VERSION
+  bc8b2f86  Deprecated APIs removed in 1.33  [X] ERROR    1.33
+  1a9f0c21  Kubelet version skew             [!] WARNING  1.33
+
+NODEGROUP SKEW  2
+  NAME       VERSION  BEHIND
+  ng-a       1.32     0
+  ng-legacy  1.29     [X] 3 (at the limit)
+
+ADD-ON SKEW  2
+  NAME     INSTALLED           LATEST              STATE
+  coredns  v1.11.3-eksbuild.1  v1.11.4-eksbuild.2  [!] behind
+  vpc-cni  v1.19.0-eksbuild.1  v1.19.0-eksbuild.1  current
+
+CHECKS  3
+  NAME          OUTCOME    MESSAGE
+  Insights      [X] Fail   1 ERROR insight (Deprecated APIs removed in 1.33)
+  VersionSkew   [X] Fail   1 nodegroup at the kubelet skew limit (ng-legacy (1.29, 3 behind)); upgrade the nodes before the control plane; 1 add-on behind latest (coredns (v1.11.3-eksbuild.1, latest v1.11.4-eksbuild.2))
+  ControlPlane  [OK] Pass  etcd 12% of 8 GiB
+
+ROLLBACK
+  to        1.31
+  until     2026-10-06 12:00 UTC
+  insights  0 passing, 0 warning, 0 error, 0 unknown

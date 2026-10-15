@@ -1,0 +1,48 @@
+exit: 1
+error: declined; nothing was changed
+--- stdout ---
+Run   [!] Declined   ClusterUpgrade
+
+RUN
+  operation       ClusterUpgrade
+  cluster         prod
+  region          us-east-1
+  version         1.32
+  target version  1.33
+  status          [!] Declined
+
+RESULTS  5
+  NAME                KIND          STATUS            FROM                TO                  UPDATE  NOTE  STARTED  FINISHED  FAILURE
+  control-plane@1.33  ControlPlane  [?] NotAttempted  1.32                1.33                -       -     -        -         -
+  vpc-cni@1.33        Addon         [?] NotAttempted  v1.19.0-eksbuild.1  v1.20.0-eksbuild.1  -       -     -        -         -
+  api@1.33            Nodegroup     [?] NotAttempted  1.32                1.33                -       -     -        -         -
+  web@1.33            Nodegroup     [?] NotAttempted  1.32                1.33                -       -     -        -         -
+  kube-proxy@1.33     Addon         [?] NotAttempted  v1.32.0-eksbuild.1  v1.33.0-eksbuild.1  -       -     -        -         -
+
+HEALTH GATE
+  decision  [OK] Go
+
+CHECKS  9
+  NAME           OUTCOME    MESSAGE
+  Nodes          [OK] Pass  4/4 nodes ready
+  Capacity       [OK] Pass  CPU mean 32%, peak 32%, 4 instances
+  ControlPlane   Skipped    control-plane metrics not emitted (EKS 1.28+ on a supported platform version)
+  Workloads      [OK] Pass  1/1 pods running in the system namespaces
+  DrainBlockers  [OK] Pass  no PodDisruptionBudget blocks a drain
+  PDBCoverage    [OK] Pass  every deployment has a PodDisruptionBudget (2)
+  Utilization    [OK] Pass  CPU 20%, memory 25% in use
+  Quotas         [OK] Pass  31% of the vCPU quota in use (40 of 128)
+  Kubernetes     [OK] Pass  Kubernetes API reachable
+
+NOTICES
+  1  self-managed and hybrid nodes are not upgraded by EKS or refresh: move them to 1.33 yourself after the control plane upgrades. Fargate pods stay at 1.32: delete them after the upgrade, and they come back at 1.33
+--- stderr ---
+refreshing the cluster insights of prod (waits up to 5m0s)
+PLAN  ClusterUpgrade, prod in us-east-1
+  control-plane@1.33  update 1.32 to 1.33 (VersionBehind)
+  vpc-cni@1.33        update v1.19.0-eksbuild.1 to v1.20.0-eksbuild.1 (VersionBehind)
+  api@1.33            update 1.32 to 1.33 (VersionBehind)
+  web@1.33            update 1.32 to 1.33 (VersionBehind)
+  kube-proxy@1.33     update v1.32.0-eksbuild.1 to v1.33.0-eksbuild.1 (VersionBehind)
+warning: self-managed and hybrid nodes are not upgraded by EKS or refresh: move them to 1.33 yourself after the control plane upgrades. Fargate pods stay at 1.32: delete them after the upgrade, and they come back at 1.33
+Upgrade the control plane of prod from 1.32 to 1.33? [y/N]: 

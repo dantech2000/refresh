@@ -1,0 +1,34 @@
+exit: 2
+error: dry run: a real run would ask about health warnings
+--- stdout ---
+Plan   [!] Ask   NodegroupUpdate
+
+PLAN
+  operation  NodegroupUpdate
+  cluster    prod
+  region     us-east-1
+  version    1.32
+  decision   [!] Ask
+
+STEPS  2
+  NAME  KIND       ACTION  REASON         FROM                                            TO                        NOTE
+  api   Nodegroup  Skip    AlreadyLatest  1.32                                            1.32                      -
+  web   Nodegroup  Submit  AMIOutdated    1.32 (release 1.32.0-20250101, AMI ami-old32x)  1.32 (AMI ami-latest132)  -
+
+HEALTH GATE
+  decision  [OK] Go
+  reasons   Kubernetes: no Kubernetes access: no kubeconfig found, and no in-cluster config: unable to load in-cluster configuration, KUBERNETES_SERVICE_HOST and KUBERNETES_SERVICE_PORT must be defined; the Kubernetes checks did not run
+  accepted  Kubernetes: no Kubernetes access: no kubeconfig found, and no in-cluster config: unable to load in-cluster configuration, KUBERNETES_SERVICE_HOST and KUBERNETES_SERVICE_PORT must be defined; the Kubernetes checks did not run
+
+CHECKS  9
+  NAME           OUTCOME    MESSAGE
+  Nodes          [OK] Pass  4/4 nodes ready (estimated)
+  Capacity       [OK] Pass  CPU mean 32%, peak 32%, 4 instances
+  ControlPlane   Skipped    control-plane metrics not emitted (EKS 1.28+ on a supported platform version)
+  Workloads      Skipped    no kubeconfig found, and no in-cluster config: unable to load in-cluster configuration, KUBERNETES_SERVICE_HOST and KUBERNETES_SERVICE_PORT must be defined
+  DrainBlockers  Skipped    no kubeconfig found, and no in-cluster config: unable to load in-cluster configuration, KUBERNETES_SERVICE_HOST and KUBERNETES_SERVICE_PORT must be defined
+  PDBCoverage    Skipped    no kubeconfig found, and no in-cluster config: unable to load in-cluster configuration, KUBERNETES_SERVICE_HOST and KUBERNETES_SERVICE_PORT must be defined
+  Utilization    Skipped    no kubeconfig found, and no in-cluster config: unable to load in-cluster configuration, KUBERNETES_SERVICE_HOST and KUBERNETES_SERVICE_PORT must be defined
+  Quotas         [OK] Pass  31% of the vCPU quota in use (40 of 128)
+  Kubernetes     [!] Warn   no Kubernetes access: no kubeconfig found, and no in-cluster config: unable to load in-cluster configuration, KUBERNETES_SERVICE_HOST and KUBERNETES_SERVICE_PORT must be defined; the Kubernetes checks did not run
+--- stderr ---

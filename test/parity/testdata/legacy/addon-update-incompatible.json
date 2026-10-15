@@ -1,0 +1,51 @@
+{
+  "exitCode": 1,
+  "stdout": "",
+  "stderr": "[X] Error: addon vpc-cni version v1.20.0-eksbuild.1 is not compatible with Kubernetes 1.32; supported versions (newest first): v1.19.0-eksbuild.1, v1.18.0-eksbuild.1\n",
+  "refusedBeforeMutation": true,
+  "changes": [],
+  "decision": [
+    "decision: addon prod/coredns: issues=none",
+    "decision: addon prod/coredns: status=ACTIVE",
+    "decision: addon prod/coredns: version=v1.11.4-eksbuild.2",
+    "decision: addon prod/vpc-cni: issues=none",
+    "decision: addon prod/vpc-cni: status=ACTIVE",
+    "decision: addon prod/vpc-cni: version=v1.18.0-eksbuild.1",
+    "decision: cluster prod: issues=none",
+    "decision: cluster prod: status=ACTIVE",
+    "decision: cluster prod: version=1.32",
+    "decision: nodegroup prod/ng-a: issues=none",
+    "decision: nodegroup prod/ng-a: release=1.32.0-20250101",
+    "decision: nodegroup prod/ng-a: size=2/1/3",
+    "decision: nodegroup prod/ng-a: status=ACTIVE",
+    "decision: nodegroup prod/ng-a: version=1.32",
+    "decision: nodegroup prod/ng-b: issues=none",
+    "decision: nodegroup prod/ng-b: release=1.32.0-20260101",
+    "decision: nodegroup prod/ng-b: size=2/1/3",
+    "decision: nodegroup prod/ng-b: status=ACTIVE",
+    "decision: nodegroup prod/ng-b: version=1.32"
+  ],
+  "operations": [
+    "eks:DescribeAddon",
+    "eks:DescribeAddonVersions",
+    "eks:DescribeCluster",
+    "eks:DescribeNodegroup",
+    "eks:ListAddons",
+    "eks:ListClusters",
+    "eks:ListNodegroups"
+  ],
+  "world": {
+    "us-east-1/prod": {
+      "cluster": "1.32 ACTIVE",
+      "nodegroups": {
+        "ng-a": "1.32 1.32.0-20250101 ACTIVE 2/1/3",
+        "ng-b": "1.32 1.32.0-20260101 ACTIVE 2/1/3"
+      },
+      "addons": {
+        "coredns": "v1.11.4-eksbuild.2 ACTIVE",
+        "vpc-cni": "v1.18.0-eksbuild.1 ACTIVE"
+      },
+      "updates": []
+    }
+  }
+}

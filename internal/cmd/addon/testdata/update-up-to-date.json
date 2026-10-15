@@ -1,0 +1,33 @@
+exit: 0
+error: 
+--- stdout ---
+{
+  "apiVersion": "refresh.drod.dev/v2",
+  "kind": "Plan",
+  "operation": "AddonUpdate",
+  "clusters": [
+    {
+      "cluster": "prod",
+      "region": "us-east-1",
+      "version": "1.33",
+      "decision": "NothingToDo",
+      "steps": [
+        {
+          "phase": "Addons",
+          "kind": "Addon",
+          "name": "kube-proxy",
+          "action": "Skip",
+          "reason": "AlreadyAtTarget",
+          "from": "v1.33.0-eksbuild.2",
+          "to": "v1.33.0-eksbuild.2"
+        }
+      ],
+      "blockers": [],
+      "notices": []
+    }
+  ],
+  "failures": []
+}
+--- stderr ---
+PLAN  AddonUpdate, prod in us-east-1
+  kube-proxy  skip, at v1.33.0-eksbuild.2 (AlreadyAtTarget)

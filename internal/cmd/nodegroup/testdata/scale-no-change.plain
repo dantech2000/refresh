@@ -1,0 +1,18 @@
+exit: 0
+error: 
+--- stdout ---
+FIELD	VALUE
+plan.operation	NodegroupScale
+plan.cluster	prod
+plan.region	us-east-1
+plan.version	1.33
+plan.decision	NothingToDo
+steps.web.kind	Scale
+steps.web.action	Skip
+steps.web.reason	NoChange
+steps.web.from	desired 2, min 1, max 3
+steps.web.to	desired 2, min 1, max 3
+steps.web.note	-
+--- stderr ---
+PLAN  NodegroupScale, prod in us-east-1
+  web  skip, at desired 2, min 1, max 3 (NoChange)

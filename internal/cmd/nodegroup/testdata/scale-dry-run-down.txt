@@ -1,0 +1,25 @@
+exit: 0
+error: 
+--- stdout ---
+Plan   [OK] Proceed   NodegroupScale
+
+PLAN
+  operation  NodegroupScale
+  cluster    prod
+  region     us-east-1
+  version    1.33
+  decision   [OK] Proceed
+
+STEPS  1
+  NAME  KIND   ACTION  REASON  FROM                     TO                       NOTE
+  web   Scale  Submit  -       desired 2, min 1, max 3  desired 1, min 1, max 3  -
+
+HEALTH GATE
+  decision  [OK] Go
+
+CHECKS  3
+  NAME           OUTCOME    MESSAGE
+  Nodes          [OK] Pass  2/2 nodes ready
+  DrainBlockers  [OK] Pass  no PodDisruptionBudget stops removing 1 node from web
+  Kubernetes     [OK] Pass  Kubernetes API reachable
+--- stderr ---

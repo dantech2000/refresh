@@ -2,10 +2,13 @@ package updatecheck
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
+	"runtime"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -55,12 +58,12 @@ func newTestServer(t *testing.T, tag string, hits *int32) *httptest.Server {
 func TestLatestTagFetches(t *testing.T) {
 	var hits int32
 	srv := newTestServer(t, "v9.9.9", &hits)
-	c := New(
-		WithBaseURL(srv.URL),
-		WithHTTPClient(srv.Client()),
-		WithCachePath(filepath.Join(t.TempDir(), "update-check.json")),
-		WithNow(func() time.Time { return time.Unix(1_000_000, 0) }),
-	)
+	c := &Checker{
+		URL:        srv.URL,
+		HTTPClient: srv.Client(),
+		CachePath:  filepath.Join(t.TempDir(), "update-check.json"),
+		Now:        func() time.Time { return time.Unix(1_000_000, 0) },
+	}
 	tag, err := c.LatestTag(context.Background())
 	if err != nil {
 		t.Fatalf("LatestTag: %v", err)
@@ -79,12 +82,12 @@ func TestLatestTagCacheThrottle(t *testing.T) {
 	cachePath := filepath.Join(t.TempDir(), "update-check.json")
 	now := time.Unix(1_000_000, 0)
 
-	c := New(
-		WithBaseURL(srv.URL),
-		WithHTTPClient(srv.Client()),
-		WithCachePath(cachePath),
-		WithNow(func() time.Time { return now }),
-	)
+	c := &Checker{
+		URL:        srv.URL,
+		HTTPClient: srv.Client(),
+		CachePath:  cachePath,
+		Now:        func() time.Time { return now },
+	}
 
 	// First call hits the network and writes the cache.
 	if _, err := c.LatestTag(context.Background()); err != nil {
@@ -92,12 +95,12 @@ func TestLatestTagCacheThrottle(t *testing.T) {
 	}
 	// Second call, 1h later (within the 24h window): must NOT hit the network.
 	now = now.Add(time.Hour)
-	c2 := New(
-		WithBaseURL(srv.URL),
-		WithHTTPClient(srv.Client()),
-		WithCachePath(cachePath),
-		WithNow(func() time.Time { return now }),
-	)
+	c2 := &Checker{
+		URL:        srv.URL,
+		HTTPClient: srv.Client(),
+		CachePath:  cachePath,
+		Now:        func() time.Time { return now },
+	}
 	tag, err := c2.LatestTag(context.Background())
 	if err != nil {
 		t.Fatalf("second LatestTag: %v", err)
@@ -111,12 +114,12 @@ func TestLatestTagCacheThrottle(t *testing.T) {
 
 	// More than 24h later: cache is stale, so it re-fetches.
 	now = now.Add(48 * time.Hour)
-	c3 := New(
-		WithBaseURL(srv.URL),
-		WithHTTPClient(srv.Client()),
-		WithCachePath(cachePath),
-		WithNow(func() time.Time { return now }),
-	)
+	c3 := &Checker{
+		URL:        srv.URL,
+		HTTPClient: srv.Client(),
+		CachePath:  cachePath,
+		Now:        func() time.Time { return now },
+	}
 	if _, err := c3.LatestTag(context.Background()); err != nil {
 		t.Fatalf("third LatestTag: %v", err)
 	}
@@ -131,12 +134,12 @@ func TestLatestTagFailSilentOnHTTPError(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	c := New(
-		WithBaseURL(srv.URL),
-		WithHTTPClient(srv.Client()),
-		WithCachePath(filepath.Join(t.TempDir(), "update-check.json")),
-		WithNow(func() time.Time { return time.Unix(1_000_000, 0) }),
-	)
+	c := &Checker{
+		URL:        srv.URL,
+		HTTPClient: srv.Client(),
+		CachePath:  filepath.Join(t.TempDir(), "update-check.json"),
+		Now:        func() time.Time { return time.Unix(1_000_000, 0) },
+	}
 	tag, err := c.LatestTag(context.Background())
 	if err == nil {
 		t.Fatalf("expected an error on HTTP 500, got tag=%q", tag)
@@ -144,7 +147,7 @@ func TestLatestTagFailSilentOnHTTPError(t *testing.T) {
 	if tag != "" {
 		t.Fatalf("tag = %q, want empty on error", tag)
 	}
-	// The caller (maybePrintUpdateHint) treats any error as "no hint", so the
+	// The caller treats any error as "no hint", so the
 	// returned error never reaches the user — this just documents the contract.
 }
 
@@ -169,15 +172,15 @@ func TestLatestTagRecordsFailedAttempt(t *testing.T) {
 			cachePath := filepath.Join(t.TempDir(), "update-check.json")
 			now := time.Unix(1_000_000, 0)
 			if tc.seedTag != "" {
-				New(WithCachePath(cachePath)).writeCache(cache{LastCheck: now.Add(-48 * time.Hour), LatestTag: tc.seedTag})
+				(&Checker{CachePath: cachePath}).writeCache(cache{LastCheck: now.Add(-48 * time.Hour), LatestTag: tc.seedTag})
 			}
 			newChecker := func() *Checker {
-				return New(
-					WithBaseURL(srv.URL),
-					WithHTTPClient(srv.Client()),
-					WithCachePath(cachePath),
-					WithNow(func() time.Time { return now }),
-				)
+				return &Checker{
+					URL:        srv.URL,
+					HTTPClient: srv.Client(),
+					CachePath:  cachePath,
+					Now:        func() time.Time { return now },
+				}
 			}
 
 			_, _ = newChecker().LatestTag(context.Background())
@@ -205,15 +208,95 @@ func TestLatestTagRecordsFailedAttempt(t *testing.T) {
 func TestLatestTagCanceledRunNotRecorded(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	c := New(
-		WithBaseURL("http://127.0.0.1:0"),
-		WithCachePath(filepath.Join(t.TempDir(), "update-check.json")),
-		WithNow(func() time.Time { return time.Unix(1_000_000, 0) }),
-	)
+	c := &Checker{
+		URL:       "http://127.0.0.1:0",
+		CachePath: filepath.Join(t.TempDir(), "update-check.json"),
+		Now:       func() time.Time { return time.Unix(1_000_000, 0) },
+	}
 	if _, err := c.LatestTag(ctx); err == nil {
 		t.Fatal("expected an error with a canceled context")
 	}
 	if _, ok := c.readCache(); ok {
 		t.Fatal("a canceled run wrote the cache; want no record")
+	}
+}
+
+// TestWriteCacheReplacesAtomically: the cache is replaced by a rename, so a
+// reader that opened the old file still reads all of the old content, and no
+// temporary file stays behind.
+func TestWriteCacheReplacesAtomically(t *testing.T) {
+	dir := t.TempDir()
+	cachePath := filepath.Join(dir, "update-check.json")
+	c := &Checker{CachePath: cachePath}
+	first := cache{LastCheck: time.Unix(1_000_000, 0).UTC(), LatestTag: "v1.0.0"}
+	second := cache{LastCheck: time.Unix(2_000_000, 0).UTC(), LatestTag: "v2.0.0"}
+
+	c.writeCache(first)
+	before, err := os.Stat(cachePath)
+	if err != nil {
+		t.Fatalf("the first write made no cache file: %v", err)
+	}
+	if got := before.Mode().Perm(); runtime.GOOS != "windows" && got != 0o600 {
+		t.Errorf("cache file mode = %o, want 600", got)
+	}
+	reader, err := os.Open(cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = reader.Close() }()
+
+	c.writeCache(second)
+
+	after, err := os.Stat(cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if os.SameFile(before, after) {
+		t.Error("the second write changed the cache file in place; want a new file renamed over it")
+	}
+	var old cache
+	if err := json.NewDecoder(reader).Decode(&old); err != nil {
+		t.Fatalf("reading through the handle opened before the write: %v", err)
+	}
+	if old != first {
+		t.Errorf("old handle read %+v, want %+v", old, first)
+	}
+	if got, ok := c.readCache(); !ok || got != second {
+		t.Errorf("readCache() = %+v, %t; want %+v, true", got, ok, second)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "update-check.json" {
+		names := make([]string, len(entries))
+		for i, e := range entries {
+			names[i] = e.Name()
+		}
+		t.Errorf("cache directory holds %v, want only update-check.json", names)
+	}
+}
+
+// TestWriteCacheFailureLeavesNoFile: a cache that cannot be replaced keeps
+// its content, and the temporary file is removed.
+func TestWriteCacheFailureLeavesNoFile(t *testing.T) {
+	dir := t.TempDir()
+	// A directory at the cache path makes the rename fail.
+	cachePath := filepath.Join(dir, "update-check.json")
+	if err := os.Mkdir(cachePath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cachePath, "keep"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	(&Checker{CachePath: cachePath}).writeCache(cache{LatestTag: "v1.0.0"})
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Errorf("cache directory holds %d entries, want 1: the temporary file was not removed", len(entries))
 	}
 }

@@ -1,0 +1,36 @@
+exit: 0
+error: 
+--- stdout ---
+Run   [OK] Succeeded   NodegroupScale
+
+RUN
+  operation  NodegroupScale
+  cluster    prod
+  region     us-east-1
+  version    1.33
+  status     [OK] Succeeded
+
+RESULTS  1
+  NAME  KIND   STATUS          FROM                     TO                       UPDATE                                NOTE  STARTED                  FINISHED                 FAILURE
+  web   Scale  [OK] Succeeded  desired 2, min 1, max 3  desired 1, min 1, max 3  00000000-0000-4000-8000-000000000001  -     2026-01-01 00:00:00 UTC  2026-01-01 00:00:30 UTC  -
+
+HEALTH GATE
+  decision  [OK] Go
+  reasons   DrainBlockers: removing 1 node from web could evict more pods than PDB default/shop allows
+  accepted  DrainBlockers: removing 1 node from web could evict more pods than PDB default/shop allows
+  forced    DrainBlockers: removing 1 node from web could evict more pods than PDB default/shop allows
+
+CHECKS  3
+  NAME           OUTCOME    MESSAGE
+  Nodes          [OK] Pass  2/2 nodes ready
+  DrainBlockers  [X] Fail   removing 1 node from web could evict more pods than PDB default/shop allows
+  Kubernetes     [OK] Pass  Kubernetes API reachable
+--- stderr ---
+PLAN  NodegroupScale, prod in us-east-1
+  web  scale from desired 2, min 1, max 3 to desired 1, min 1, max 3
+  [OK] Nodes          2/2 nodes ready
+  [X]  DrainBlockers  removing 1 node from web could evict more pods than PDB default/shop allows
+  [OK] Kubernetes     Kubernetes API reachable
+warning: --force goes past DrainBlockers: removing 1 node from web could evict more pods than PDB default/shop allows
+[~] web: Started (update 00000000-0000-4000-8000-000000000001)
+[OK] web: Succeeded

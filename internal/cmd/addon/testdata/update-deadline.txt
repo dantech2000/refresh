@@ -1,0 +1,32 @@
+exit: 4
+error: --wait-timeout passed before the update of add-on vpc-cni finished; it may still be running
+--- stdout ---
+Run   [!] Incomplete   AddonUpdate
+
+RUN
+  operation  AddonUpdate
+  cluster    prod
+  region     us-east-1
+  version    1.33
+  status     [!] Incomplete
+
+RESULTS  1
+  NAME     KIND   STATUS          FROM                TO                  UPDATE                                NOTE  STARTED                  FINISHED  FAILURE
+  vpc-cni  Addon  [~] InProgress  v1.19.0-eksbuild.1  v1.20.0-eksbuild.1  00000000-0000-4000-8000-000000000001  -     2026-01-01 00:00:00 UTC  -         Timeout: --wait-timeout passed before the update of add-on vpc-cni finished; it may still be running
+
+HEALTH GATE
+  decision  [OK] Go
+
+CHECKS  1
+  NAME    OUTCOME    MESSAGE
+  Addons  [OK] Pass  1 add-on ACTIVE
+
+FAILURES
+[?] update prod/vpc-cni (us-east-1): Timeout: --wait-timeout passed before the update of add-on vpc-cni finished; it may still be running
+--- stderr ---
+PLAN  AddonUpdate, prod in us-east-1
+  vpc-cni  update v1.19.0-eksbuild.1 to v1.20.0-eksbuild.1 (VersionBehind)
+[~] vpc-cni: Started (update 00000000-0000-4000-8000-000000000001)
+vpc-cni: InProgress
+vpc-cni: still InProgress
+[~] vpc-cni: InProgress: --wait-timeout passed before the update of add-on vpc-cni finished; it may still be running

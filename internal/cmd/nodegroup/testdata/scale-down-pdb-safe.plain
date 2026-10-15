@@ -1,0 +1,31 @@
+exit: 0
+error: 
+--- stdout ---
+FIELD	VALUE
+run.operation	NodegroupScale
+run.cluster	prod
+run.region	us-east-1
+run.version	1.33
+run.status	Succeeded
+results.web.kind	Scale
+results.web.status	Succeeded
+results.web.from	desired 2, min 1, max 3
+results.web.to	desired 1, min 1, max 3
+results.web.update	00000000-0000-4000-8000-000000000001
+results.web.note	-
+results.web.started	2026-01-01 00:00:00 UTC
+results.web.finished	2026-01-01 00:00:45 UTC
+results.web.failure	-
+health_gate.decision	Go
+checks.Nodes.outcome	Pass
+checks.Nodes.message	2/2 nodes ready
+checks.DrainBlockers.outcome	Pass
+checks.DrainBlockers.message	no PodDisruptionBudget stops removing 1 node from web
+checks.Kubernetes.outcome	Pass
+checks.Kubernetes.message	Kubernetes API reachable
+--- stderr ---
+PLAN  NodegroupScale, prod in us-east-1
+  web  scale from desired 2, min 1, max 3 to desired 1, min 1, max 3
+[~] web: Started (update 00000000-0000-4000-8000-000000000001)
+web: InProgress
+[OK] web: Succeeded

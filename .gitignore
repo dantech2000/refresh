@@ -19,7 +19,9 @@ go.work
 
 # Build artifacts
 dist/
-refresh
+# Man pages that the GoReleaser before-hook generates for the archives.
+/build/
+/refresh
 coverage.out
 coverage.html
 
@@ -49,6 +51,11 @@ Thumbs.db
 *.key
 *.crt
 *credentials*
+# The patterns above must never hide source code: a test file named
+# credentials_test.go was once dropped this way.
+!*.go
 
 # Claude ignore
 .claude/
+# Taskfile checksum cache
+.task/

@@ -1,0 +1,4 @@
+exit: 1
+error: no terminal to confirm the change; pass --yes
+--- stdout ---
+--- stderr ---

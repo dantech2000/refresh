@@ -5,9 +5,19 @@ version: 2
 
 dist: dist
 
+# The man pages come from the command tree of the source that is released.
+# SOURCE_DATE_EPOCH is the commit time, so the date in a page does not change
+# from one build of the same commit to the next. The pages go to a directory
+# outside dist/, which GoReleaser wants empty. build/ is in .gitignore.
+before:
+  hooks:
+    - rm -rf build/man
+    - mkdir -p build/man/man1
+    - sh -c 'SOURCE_DATE_EPOCH={{ .CommitTimestamp }} go run -ldflags "-X github.com/dantech2000/refresh/internal/build.version={{ .Version }}" ./cmd/refresh gen-docs --format man --out build/man/man1'
+
 builds:
   - id: refresh
-    main: ./main.go
+    main: ./cmd/refresh
     binary: refresh
     # Reproducible builds: strip local paths and pin the build timestamp to the
     # commit so the same source produces byte-identical binaries. (REF-74)
@@ -23,9 +33,9 @@ builds:
       - arm64
     ldflags:
       - -s -w
-      - -X github.com/dantech2000/refresh/internal/commands.version={{.Version}}
-      - -X github.com/dantech2000/refresh/internal/commands.commit={{.ShortCommit}}
-      - -X github.com/dantech2000/refresh/internal/commands.buildDate={{.Date}}
+      - -X github.com/dantech2000/refresh/internal/build.version={{.Version}}
+      - -X github.com/dantech2000/refresh/internal/build.commit={{.ShortCommit}}
+      - -X github.com/dantech2000/refresh/internal/build.buildDate={{.Date}}
     env:
       - CGO_ENABLED=0
 
@@ -36,6 +46,9 @@ archives:
     files:
       - README.md
       - LICENSE
+      # man/man1/refresh*.1 in the archive.
+      - src: build/man/man1/*.1
+        dst: man/man1
 
 checksum:
   name_template: "checksums.txt"
@@ -77,7 +90,39 @@ homebrew_casks:
       token: "{{ .Env.GH_PAT }}"
     directory: Casks
     homepage: "https://github.com/dantech2000/refresh"
-    description: "Manage and monitor AWS EKS node groups using your local kubeconfig and AWS credentials"
+    description: "Keep Amazon EKS clusters up to date: status, readiness, patch, upgrade"
+    # Homebrew links every man page of the staged archive.
+    manpages:
+      - man/man1/refresh.1
+      - man/man1/refresh-addon.1
+      - man/man1/refresh-addon-describe.1
+      - man/man1/refresh-addon-list.1
+      - man/man1/refresh-addon-update.1
+      - man/man1/refresh-cluster.1
+      - man/man1/refresh-cluster-describe.1
+      - man/man1/refresh-cluster-list.1
+      - man/man1/refresh-cluster-rollback.1
+      - man/man1/refresh-cluster-upgrade.1
+      - man/man1/refresh-cluster-upgrade-check.1
+      - man/man1/refresh-completion.1
+      - man/man1/refresh-completion-bash.1
+      - man/man1/refresh-completion-fish.1
+      - man/man1/refresh-completion-powershell.1
+      - man/man1/refresh-completion-zsh.1
+      - man/man1/refresh-context.1
+      - man/man1/refresh-context-add.1
+      - man/man1/refresh-context-current.1
+      - man/man1/refresh-context-list.1
+      - man/man1/refresh-context-remove.1
+      - man/man1/refresh-context-use.1
+      - man/man1/refresh-nodegroup.1
+      - man/man1/refresh-nodegroup-describe.1
+      - man/man1/refresh-nodegroup-list.1
+      - man/man1/refresh-nodegroup-scale.1
+      - man/man1/refresh-nodegroup-update.1
+      - man/man1/refresh-status.1
+      - man/man1/refresh-ui.1
+      - man/man1/refresh-version.1
     license: "MIT"
     # The release binary is not Developer ID-signed, so clear the download
     # quarantine after Homebrew stages it. Homebrew 6.0.22 deprecated the Ruby

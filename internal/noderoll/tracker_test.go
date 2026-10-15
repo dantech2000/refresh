@@ -1,94 +1,104 @@
 package noderoll
 
 import (
-	"context"
-	"reflect"
+	"time"
+
 	"testing"
+
+	"github.com/google/go-cmp/cmp"
 )
+
+func snapOf(nodes ...NodeView) Snapshot {
+	s := Snapshot{Nodes: nodes, Total: len(nodes)}
+	for _, n := range nodes {
+		switch n.Phase {
+		case PhaseDraining:
+			s.Draining++
+		case PhaseJoining:
+			s.Joining++
+		case PhaseReady:
+			if n.OnTarget {
+				s.ReadyTarget++
+			}
+		}
+	}
+	return s
+}
+
+func oldReady(name string) NodeView {
+	return NodeView{Name: name, OnTarget: false, Ready: true, Phase: PhaseReady}
+}
+
+func newJoining(name string) NodeView {
+	return NodeView{Name: name, OnTarget: true, Ready: false, Phase: PhaseJoining}
+}
+
+func newReady(name string) NodeView {
+	return NodeView{Name: name, OnTarget: true, Ready: true, Phase: PhaseReady}
+}
+
+func draining(name string, remaining, total int) NodeView {
+	return NodeView{Name: name, OnTarget: false, Ready: true, Phase: PhaseDraining, Pods: remaining, PodsTotal: total}
+}
 
 func TestTracker_DerivesLifecycleEvents(t *testing.T) {
 	tr := NewTracker()
-	// Baseline: 3 old nodes ready — no events.
+	// The starting point: three old nodes that are Ready. No events.
 	tr.Observe(snapOf(oldReady("a"), oldReady("b"), oldReady("c")))
 	if got := tr.Recent(0); len(got) != 0 {
-		t.Fatalf("baseline should emit no events, got %v", got)
+		t.Fatalf("the first snapshot gave events: %v", got)
 	}
-	// Surge a new node (joining) + cordon an old one (draining).
+	// A new node joins, and an old one is cordoned.
 	tr.Observe(snapOf(draining("a", 4, 4), oldReady("b"), oldReady("c"), newJoining("d")))
-	// New node goes Ready; drained node terminates.
+	// The new node is Ready, and the drained node is gone.
 	tr.Observe(snapOf(oldReady("b"), oldReady("c"), newReady("d")))
 
 	want := []Event{
-		{"a", EvtDraining},
-		{"d", EvtJoining},
-		{"d", EvtOnline},
-		{"a", EvtTerminated},
+		{Node: "a", Kind: EvtDraining},
+		{Node: "d", Kind: EvtJoining},
+		{Node: "d", Kind: EvtOnline},
+		{Node: "a", Kind: EvtTerminated},
 	}
-	if got := tr.Recent(0); !reflect.DeepEqual(got, want) {
-		t.Fatalf("events = %v, want %v", got, want)
-	}
-}
-
-func TestScriptedObserver_RunsToCompletion(t *testing.T) {
-	obs := NewScriptedObserver(DemoTimeline())
-	ctx := context.Background()
-	// Mirror the driver: pull frames until the snapshot reports the roll done.
-	done := func(s Snapshot) bool {
-		return s.Total > 0 && s.ReadyTarget == 3 && s.Draining == 0 && s.Joining == 0
-	}
-	var last Snapshot
-	finished := false
-	for range 100 {
-		s, err := obs.Snapshot(ctx)
-		if err != nil {
-			t.Fatal(err)
-		}
-		last = s
-		if done(s) {
-			finished = true
-			break
-		}
-	}
-	if !finished {
-		t.Fatalf("scripted roll never completed; last = %+v", last)
+	if diff := cmp.Diff(want, tr.Recent(0)); diff != "" {
+		t.Fatalf("events (-want +got):\n%s", diff)
 	}
 }
 
 func TestRecent(t *testing.T) {
-	tr := &Tracker{events: []Event{{"a", EvtJoining}, {"b", EvtOnline}, {"c", EvtDraining}}}
+	tr := &Tracker{events: []Event{{Node: "a", Kind: EvtJoining}, {Node: "b", Kind: EvtOnline}, {Node: "c", Kind: EvtDraining}}}
 	if got := tr.Recent(2); len(got) != 2 || got[0].Node != "b" {
-		t.Errorf("Recent(2) = %v, want last two", got)
+		t.Errorf("Recent(2) = %v, want the last two", got)
 	}
 	if got := tr.Recent(10); len(got) != 3 {
-		t.Errorf("Recent(10) = %v, want all 3", got)
+		t.Errorf("Recent(10) = %v, want all three", got)
 	}
-	// Recent hands out a copy: mutating it must not touch the tracker.
+	// Recent returns a copy: a change of it does not reach the tracker.
 	got := tr.Recent(1)
 	got[0].Node = "mutated"
 	if tr.Recent(1)[0].Node != "c" {
-		t.Error("Recent returned an alias of the tracker's history")
+		t.Error("Recent returned the history of the tracker itself")
 	}
 }
 
-// Several nodes leaving in one snapshot must emit terminated events in name
-// order, not map order.
+// Several nodes that go in one snapshot give their events in the order of
+// their names, and not in the order of a map.
 func TestTracker_TerminatedEventsSorted(t *testing.T) {
-	for range 20 { // map order varies per run; repeat to catch it
+	for range 20 { // the order of a map changes from run to run
 		tr := NewTracker()
 		tr.Observe(snapOf(oldReady("n-c"), oldReady("n-a"), oldReady("n-d"), oldReady("n-b")))
 		tr.Observe(snapOf())
 		want := []Event{
-			{"n-a", EvtTerminated}, {"n-b", EvtTerminated},
-			{"n-c", EvtTerminated}, {"n-d", EvtTerminated},
+			{Node: "n-a", Kind: EvtTerminated}, {Node: "n-b", Kind: EvtTerminated},
+			{Node: "n-c", Kind: EvtTerminated}, {Node: "n-d", Kind: EvtTerminated},
 		}
-		if got := tr.Recent(0); !reflect.DeepEqual(got, want) {
-			t.Fatalf("terminated events = %v, want %v", got, want)
+		if diff := cmp.Diff(want, tr.Recent(0)); diff != "" {
+			t.Fatalf("events (-want +got):\n%s", diff)
 		}
 	}
 }
 
-// The event history is bounded: only the last trackerEventCapacity events
-// survive, newest last.
+// The history is bounded: the last trackerEventCapacity events stay, the
+// newest last.
 func TestTracker_EventHistoryBounded(t *testing.T) {
 	tr := NewTracker()
 	tr.Observe(snapOf(oldReady("a")))
@@ -102,13 +112,29 @@ func TestTracker_EventHistoryBounded(t *testing.T) {
 	}
 	all := tr.Recent(0)
 	if len(all) != trackerEventCapacity {
-		t.Fatalf("retained %d events, want %d", len(all), trackerEventCapacity)
+		t.Fatalf("%d events kept, want %d", len(all), trackerEventCapacity)
 	}
-	// total is odd, so the last observation (index total-1, even) was draining.
+	// total is odd, so the last snapshot had the node draining.
 	if last := all[len(all)-1]; last.Kind != EvtDraining {
-		t.Errorf("newest event = %v, want draining", last)
+		t.Errorf("the newest event = %v, want draining", last)
 	}
 	if cap(tr.events) > 2*trackerEventCapacity {
-		t.Errorf("backing array grew to %d, want <= %d", cap(tr.events), 2*trackerEventCapacity)
+		t.Errorf("the backing array grew to %d, want at most %d", cap(tr.events), 2*trackerEventCapacity)
+	}
+}
+
+// ObserveAt gives each event the time of the snapshot that showed it.
+func TestObserveAt(t *testing.T) {
+	first := time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)
+	tr := NewTracker()
+	tr.ObserveAt(snapOf(oldReady("a")), first)
+	tr.ObserveAt(snapOf(draining("a", 1, 1)), first.Add(time.Second))
+	tr.ObserveAt(snapOf(), first.Add(2*time.Second))
+	want := []Event{
+		{Node: "a", Kind: EvtDraining, At: first.Add(time.Second)},
+		{Node: "a", Kind: EvtTerminated, At: first.Add(2 * time.Second)},
+	}
+	if diff := cmp.Diff(want, tr.Recent(0)); diff != "" {
+		t.Errorf("events (-want +got):\n%s", diff)
 	}
 }

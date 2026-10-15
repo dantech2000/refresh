@@ -1,0 +1,154 @@
+{
+  "apiVersion": "refresh.drod.dev/v2",
+  "kind": "ClusterList",
+  "clusters": [
+    {
+      "name": "dev",
+      "region": "us-east-1",
+      "arn": "arn:aws:eks:us-east-1:123456789012:cluster/dev",
+      "status": "ACTIVE",
+      "version": "1.9",
+      "platformVersion": "eks.1",
+      "endpoint": "https://dev.eks.fake.invalid",
+      "createdAt": "2026-01-01T00:00:00Z",
+      "tags": {},
+      "healthIssues": [],
+      "network": {
+        "vpcId": "",
+        "subnetIds": [],
+        "securityGroupIds": [],
+        "publicAccess": false,
+        "privateAccess": false,
+        "publicAccessCidrs": []
+      },
+      "security": {
+        "roleArn": "",
+        "logTypes": [],
+        "deletionProtection": false
+      }
+    },
+    {
+      "name": "prod-eu",
+      "region": "eu-west-1",
+      "arn": "arn:aws:eks:eu-west-1:123456789012:cluster/prod-eu",
+      "status": "FAILED",
+      "version": "1.33",
+      "platformVersion": "eks.1",
+      "endpoint": "https://prod-eu.eks.fake.invalid",
+      "createdAt": "2026-01-01T00:00:00Z",
+      "tags": {},
+      "healthIssues": [],
+      "network": {
+        "vpcId": "",
+        "subnetIds": [],
+        "securityGroupIds": [],
+        "publicAccess": false,
+        "privateAccess": false,
+        "publicAccessCidrs": []
+      },
+      "security": {
+        "roleArn": "",
+        "logTypes": [],
+        "deletionProtection": false
+      }
+    },
+    {
+      "name": "prod-payments",
+      "region": "us-east-1",
+      "arn": "arn:aws:eks:us-east-1:123456789012:cluster/prod-payments",
+      "status": "ACTIVE",
+      "version": "1.33",
+      "platformVersion": "eks.1",
+      "endpoint": "https://prod-payments.eks.fake.invalid",
+      "createdAt": "2026-01-01T00:00:00Z",
+      "upgradePolicy": "EXTENDED",
+      "tags": {
+        "team": "payments"
+      },
+      "healthIssues": [
+        {
+          "code": "Ec2SubnetInvalidConfiguration",
+          "message": "a subnet is gone",
+          "resourceIds": [
+            "subnet-9"
+          ]
+        }
+      ],
+      "network": {
+        "vpcId": "vpc-0a1",
+        "subnetIds": [
+          "subnet-1",
+          "subnet-2"
+        ],
+        "securityGroupIds": [
+          "sg-1"
+        ],
+        "publicAccess": true,
+        "privateAccess": false,
+        "publicAccessCidrs": [
+          "0.0.0.0/0"
+        ]
+      },
+      "security": {
+        "roleArn": "",
+        "kmsKeyArn": "arn:aws:kms:us-east-1:123456789012:key/k1",
+        "logTypes": [
+          "api",
+          "audit"
+        ],
+        "deletionProtection": true
+      }
+    },
+    {
+      "name": "prod-search",
+      "region": "us-east-1",
+      "arn": "arn:aws:eks:us-east-1:123456789012:cluster/prod-search",
+      "status": "UPDATING",
+      "version": "1.31",
+      "platformVersion": "eks.1",
+      "endpoint": "https://prod-search.eks.fake.invalid",
+      "createdAt": "2026-01-01T00:00:00Z",
+      "tags": {},
+      "healthIssues": [],
+      "network": {
+        "vpcId": "",
+        "subnetIds": [],
+        "securityGroupIds": [],
+        "publicAccess": false,
+        "privateAccess": false,
+        "publicAccessCidrs": []
+      },
+      "security": {
+        "roleArn": "",
+        "logTypes": [],
+        "deletionProtection": false
+      }
+    },
+    {
+      "name": "staging-data-platform-shared-services-blue",
+      "region": "us-east-1",
+      "arn": "arn:aws:eks:us-east-1:123456789012:cluster/staging-data-platform-shared-services-blue",
+      "status": "ACTIVE",
+      "version": "1.10",
+      "platformVersion": "eks.1",
+      "endpoint": "https://staging-data-platform-shared-services-blue.eks.fake.invalid",
+      "createdAt": "2026-01-01T00:00:00Z",
+      "tags": {},
+      "healthIssues": [],
+      "network": {
+        "vpcId": "",
+        "subnetIds": [],
+        "securityGroupIds": [],
+        "publicAccess": false,
+        "privateAccess": false,
+        "publicAccessCidrs": []
+      },
+      "security": {
+        "roleArn": "",
+        "logTypes": [],
+        "deletionProtection": false
+      }
+    }
+  ],
+  "failures": []
+}

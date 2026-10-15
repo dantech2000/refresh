@@ -1,0 +1,72 @@
+exit: 0
+error: 
+--- stdout ---
+{
+  "apiVersion": "refresh.drod.dev/v2",
+  "kind": "Plan",
+  "operation": "NodegroupScale",
+  "clusters": [
+    {
+      "cluster": "prod",
+      "region": "us-east-1",
+      "version": "1.33",
+      "decision": "Proceed",
+      "steps": [
+        {
+          "phase": "Scale",
+          "kind": "Scale",
+          "name": "web",
+          "action": "Submit",
+          "sizes": {
+            "before": {
+              "desired": 2,
+              "min": 1,
+              "max": 3
+            },
+            "after": {
+              "desired": 1,
+              "min": 1,
+              "max": 3
+            }
+          }
+        }
+      ],
+      "gate": {
+        "decision": "Go",
+        "reasons": [],
+        "accepted": [],
+        "forced": [],
+        "checks": [
+          {
+            "name": "Nodes",
+            "outcome": "Pass",
+            "blocking": true,
+            "message": "2/2 nodes ready",
+            "details": [],
+            "findings": []
+          },
+          {
+            "name": "DrainBlockers",
+            "outcome": "Pass",
+            "blocking": true,
+            "message": "no PodDisruptionBudget stops removing 1 node from web",
+            "details": [],
+            "findings": []
+          },
+          {
+            "name": "Kubernetes",
+            "outcome": "Pass",
+            "blocking": false,
+            "message": "Kubernetes API reachable",
+            "details": [],
+            "findings": []
+          }
+        ]
+      },
+      "blockers": [],
+      "notices": []
+    }
+  ],
+  "failures": []
+}
+--- stderr ---

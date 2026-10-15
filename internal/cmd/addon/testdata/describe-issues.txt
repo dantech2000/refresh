@@ -1,0 +1,13 @@
+coredns   [X] DEGRADED   prod in us-east-1
+
+OVERVIEW
+  version   v1.11.3-eksbuild.2
+  status    [X] DEGRADED
+  health    [X] Failed
+  arn       arn:aws:eks:us-east-1:123456789012:addon/prod/coredns/fake
+  created   2026-01-01 00:00 UTC
+  modified  2026-01-01 00:00 UTC
+
+ISSUES  1
+  NAME                          MESSAGE
+  InsufficientNumberOfReplicas  The add-on is unhealthy because it has no replicas

@@ -3,189 +3,267 @@ package tui
 import (
 	"fmt"
 	"strconv"
+	"strings"
 
-	"github.com/dantech2000/refresh/internal/tui/state"
+	"github.com/dantech2000/refresh/internal/apidoc"
+	"github.com/dantech2000/refresh/internal/fleet"
+	"github.com/dantech2000/refresh/internal/health"
+	"github.com/dantech2000/refresh/internal/view"
 )
 
-// clusterScreen: the readiness checks of the selected cluster, streaming in
-// as they finish, with the selected check's detail and the check log.
+// clusterScreen: the nodegroups and the add-ons of the selected cluster
+// on the left, its readiness on the right.
 func (m Model) clusterScreen(w, h int) Block {
 	c := m.cluster()
-	r, ok := m.st.Readiness[c.Name]
-	if !ok {
-		return Block{{}, append(Line{sp(1)}, section("Readiness · "+c.Name)...), {}, {sp(1), dimS("No readiness run yet. Press R to run the checks.")}}
+	if c.Name == "" {
+		return Block{{}, {sp(1), m.heading("Cluster")}, {}, {sp(1), dim("No cluster selected. The fleet screen lists them.")}}
 	}
-	head := Line{sp(1), bold(colMauve, heading(readinessTitle(c.Name, r.From, r.To))), sp(2)}
-	switch {
-	case r.Running:
-		head = append(head, tok(state.LevelProgress, "checking"))
-	case r.Blockers() > 0:
-		head = append(head, tok(state.LevelError, "blocked"))
-	case r.Warnings() > 0:
-		head = append(head, tok(state.LevelWarn, "ready with warnings"))
-	default:
-		head = append(head, tok(state.LevelOK, "ready"))
-	}
-	head = append(head, sp(2), sub(plural(r.Blockers(), "blocker")+" · "+plural(r.Warnings(), "warning")+" · "+strconv.Itoa(r.Passed())+" passed"))
-	right := Line{dimS("started " + clock(r.StartedAt)), sp(1)}
-	if n := r.Pending(); n > 0 {
-		right = Line{tok(state.LevelProgress, plural(n, "check")+" to go"), sp(1)}
-	}
-	top := Block{{}, joinRight(head, right, w), append(Line{sp(1)}, hrule(w-2)...)}
-
+	head := Line{sp(1), m.heading(c.Name), sp(2), sub(c.Region), sp(2), tx(c.Version.String()), sp(2)}
+	head = append(head, m.supportSeg(c)...)
+	right := Line{m.tok(c.Status, statusText(c)), sp(1)}
+	top := Block{{}, joinRight(head, right, w), append(Line{sp(1)}, hrule(w-2, m.bd)...)}
 	bodyH := h - len(top)
-	lw := w * 44 / 100
-	if w >= 140 {
-		lw = w * 55 / 100 // wide: room for the check names and verdicts
-	}
+	lw := w * 48 / 100
 	rw := w - lw - 1
-	return append(top, hjoin(bodyH, col{m.checkList(r, lw, bodyH), lw}, vrule(bodyH), col{m.checkDetail(r, rw, bodyH), rw})...)
+	return append(top, hjoin(bodyH, col{m.resources(c.Snapshot, lw, bodyH), lw}, vrule(bodyH, m.bd), col{m.readinessPane(rw, bodyH), rw})...)
 }
 
-func (m Model) checkList(r state.Readiness, w, h int) Block {
-	var out Block
-	group := ""
-	selRow := 0
-	nameW := 0
-	for _, ch := range r.Checks {
+// resources lists the nodegroups and the add-ons of the snapshot.
+func (m Model) resources(snap *fleet.Snapshot, w, h int) Block {
+	out := Block{{}, {sp(1), m.heading("Nodegroups"), sp(2), dim(plural(len(snap.Nodegroups), "nodegroup"))}}
+	if len(snap.Nodegroups) == 0 {
+		out = append(out, Line{sp(1), dim("none")})
+	}
+	nameW := len("NAME")
+	for _, n := range snap.Nodegroups {
+		nameW = max(nameW, width(n.Name))
+	}
+	nameW = min(nameW, 28) + 2
+	out = append(out, Line{sp(1), bold(view.RoleDim, padRight("NAME", nameW)+padRight("VERSION", 9)+padRight("STATUS", 10)+padRight("AMI", 10)+"SIZE")})
+	for _, n := range snap.Nodegroups {
+		l := Line{sp(1)}
+		if n.State != fleet.Collected {
+			l = append(l, Line{tx(n.Name)}.Fit(nameW)...)
+			l = append(l, m.tok(view.Unknown, "could not be read"))
+			out = append(out, l.Fit(w))
+			continue
+		}
+		l = append(l, Line{tx(n.Name)}.Fit(nameW)...)
+		version := Line{tx(n.Version.String())}
+		if behindCP(snap, n) {
+			version = Line{statusSeg(view.Warn, n.Version.String())}
+		}
+		l = append(l, version.Fit(9)...)
+		l = append(l, Line{m.tok(view.StatusOf(n.Status), strings.ToLower(n.Status))}.Fit(10)...)
+		l = append(l, Line{m.amiSeg(n)}.Fit(10)...)
+		sizes := "?"
+		if n.SizesKnown {
+			sizes = fmt.Sprintf("%d (%d-%d)", n.Desired, n.Min, n.Max)
+		}
+		l = append(l, sub(sizes))
+		out = append(out, l.Fit(w))
+	}
+	out = append(out, Line{}, Line{sp(1), m.heading("Add-ons"), sp(2), dim(plural(len(snap.Addons), "add-on"))})
+	if len(snap.Addons) == 0 {
+		out = append(out, Line{sp(1), dim("none")})
+	}
+	nameW = len("NAME")
+	for _, a := range snap.Addons {
+		nameW = max(nameW, width(a.Name))
+	}
+	nameW = min(nameW, 28) + 2
+	out = append(out, Line{sp(1), bold(view.RoleDim, padRight("NAME", nameW)+padRight("VERSION", 24)+padRight("STATUS", 10)+"LATEST")})
+	for _, a := range snap.Addons {
+		l := Line{sp(1)}
+		l = append(l, Line{tx(a.Name)}.Fit(nameW)...)
+		if a.State != fleet.Collected {
+			l = append(l, m.tok(view.Unknown, "could not be read"))
+			out = append(out, l.Fit(w))
+			continue
+		}
+		l = append(l, Line{sub(a.Version)}.Fit(24)...)
+		l = append(l, Line{m.tok(view.StatusOf(a.Status), strings.ToLower(a.Status))}.Fit(10)...)
+		switch behind, known := a.Behind(); {
+		case !known:
+			l = append(l, dim("unknown"))
+		case behind:
+			l = append(l, m.tok(view.Warn, a.Latest))
+		default:
+			l = append(l, m.tok(view.Healthy, "current"))
+		}
+		out = append(out, l.Fit(w))
+	}
+	return out.fit(w, h)
+}
+
+// amiSeg is the AMI cell of a nodegroup.
+func (m Model) amiSeg(n fleet.Nodegroup) Seg {
+	status, known := n.AMIStatus()
+	if !known {
+		return dim("unknown")
+	}
+	switch status {
+	case apidoc.AMILatest:
+		return m.tok(view.Healthy, "latest")
+	case apidoc.AMIOutdated:
+		return m.tok(view.Warn, "outdated")
+	case apidoc.AMIUpdating:
+		return m.tok(view.Progress, "updating")
+	case apidoc.AMICustom:
+		return sub("custom")
+	}
+	return dim("n/a")
+}
+
+// checks are the results of the last readiness run of the selected
+// cluster, for the cursor of the cluster screen.
+func (m Model) checks() []health.Result {
+	r := m.cluster().Readiness
+	if r == nil || r.Report == nil {
+		return nil
+	}
+	return r.Report.Checks
+}
+
+// readinessPane shows the last readiness run of the selected cluster: the
+// verdict, the checks with the selected one in full, and the insights
+// that are not passing.
+func (m Model) readinessPane(w, h int) Block {
+	c := m.cluster()
+	r := c.Readiness
+	head := Line{sp(1), m.heading("Readiness"), sp(2)}
+	switch {
+	case r == nil:
+		return Block{{}, head, {}, {sp(1), dim("No readiness run yet. Press r to run the checks.")}}.fit(w, h)
+	case r.Running():
+		head = append(head, m.tok(view.Progress, "checking "+dur(m.now.Sub(r.StartedAt))))
+		return Block{{}, head, {}, {sp(1), dim("Reading the cluster, its insights, and its control-plane metrics.")}}.fit(w, h)
+	case r.Err != "":
+		head = append(head, m.tok(view.Fail, "could not read the cluster"))
+		out := Block{{}, head, {}}
+		for _, l := range wrap(r.Err, w-2) {
+			out = append(out, Line{sp(1), role(view.RoleFail, l)})
+		}
+		return out.fit(w, h)
+	}
+	rep := r.Report
+	head = append(head, m.readinessVerdict(r)...)
+	head = append(head, sp(2), dim("checked "+clock(r.EndedAt)))
+	out := Block{{}, head.Fit(w)}
+	for _, reason := range rep.Reasons {
+		for i, l := range wrap(reason, w-4) {
+			prefix := sp(3)
+			if i == 0 {
+				prefix = Seg{Text: " - ", Role: view.RoleSubtext}
+			}
+			out = append(out, Line{prefix, sub(l)})
+		}
+	}
+	out = append(out, Line{})
+	nameW := len("CHECK")
+	for _, ch := range rep.Checks {
 		nameW = max(nameW, width(ch.Name))
 	}
-	nameW = min(nameW+2, 24)
-	for i, ch := range r.Checks {
-		if ch.Group != group {
-			group = ch.Group
-			if len(out) > 0 {
-				out = append(out, Line{})
-			}
-			out = append(out, Line{sp(1), Seg{Text: group, FG: colDim, Bold: true}})
-		}
-		mark := sp(2)
+	nameW += 2
+	for i, ch := range rep.Checks {
+		marker := sp(2)
 		if i == m.checkSel {
-			mark = fg(colMauve, "▶ ")
-			selRow = len(out)
+			marker = role(view.RoleAccent, m.bd.Marker+" ")
 		}
-		l := Line{sp(1), mark, levelGlyph(checkLevel(ch.Status)), sp(1)}
-		if ch.Status == state.CheckPending || ch.Status == state.CheckRunning {
-			l = append(l, sub(ch.Name))
-		} else {
-			l = append(l, Line{tx(ch.Name)}.Fit(nameW)...)
-			l = append(l, dimS(ch.Summary))
-		}
+		l := Line{sp(1), marker, m.mark(outcomeStatus(ch.Outcome)), sp(1)}
+		l = append(l, Line{tx(ch.Name)}.Fit(nameW)...)
+		l = append(l, sub(ch.Message))
+		l = l.Fit(w)
 		if i == m.checkSel {
-			l = l.Fit(w).WithBG(colSurface0)
+			l = l.WithBG(view.RoleSurface)
 		}
 		out = append(out, l)
 	}
-	// Scroll so the selected check stays visible.
-	if selRow >= h-1 {
-		out = out[selRow-h+2:]
-	}
-	return append(Block{{}}, out...)
-}
-
-func (m Model) checkDetail(r state.Readiness, w, h int) Block {
-	out := Block{{}}
-	if m.checkSel < len(r.Checks) {
-		out = append(out, checkBody(r.Checks[m.checkSel], w)...)
-	}
-	// The check log fills the bottom.
-	logH := min(8, max(3, h-len(out)-2))
-	out = out.fit(w, h-logH-1)
-	out = append(out, append(Line{sp(2)}, section("Check log", m.liveToken(r.Running)...)...))
-	evs := m.visible(m.feed().Readiness[r.Cluster].Log, nil)
-	for i := 0; i < len(evs) && i < logH; i++ {
-		e := evs[i]
-		l := Line{sp(2), dimS(clock(e.At)), sp(1), levelGlyph(e.Level), sp(1)}
-		l = append(l, Line{fg(colBlue, e.Subject)}.Fit(25)...)
-		out = append(out, append(l, sp(1), sub(e.Text)))
-	}
-	return out
-}
-
-// liveToken marks a pane that is still receiving events.
-func (m Model) liveToken(live bool) []Seg {
-	if m.pausedSeq != 0 || m.warnOnly {
-		return m.followToken()
-	}
-	if live {
-		return []Seg{tok(state.LevelOK, "live")}
-	}
-	return []Seg{dimS("done")}
-}
-
-// checkBody is the detail of one check: verdict, explanation, table, fix.
-func checkBody(ch state.Check, w int) Block {
-	inner := w - 4
-	lvl := checkLevel(ch.Status)
-	title := Line{sp(2), Seg{Text: levelGlyph(lvl).Text + " " + ch.Name, FG: levelColor(lvl), Bold: true}}
-	if ch.Source != "" {
-		title = append(title, sp(2), dimS("source: "+ch.Source))
-	}
-	out := Block{title}
-	switch ch.Status {
-	case state.CheckPending:
-		out = append(out, Line{sp(2), dimS("waiting to run")})
-	case state.CheckRunning:
-		out = append(out, Line{sp(2), tok(state.LevelProgress, "running…")})
-	default:
-		out = append(out, Line{sp(2), tx(ch.Summary)})
-	}
-	for _, d := range ch.Detail {
-		for _, s := range wrap(d, inner) {
-			out = append(out, Line{sp(2), sub(s)})
-		}
-	}
-	if ch.Table != nil {
+	if m.checkSel < len(rep.Checks) {
+		ch := rep.Checks[m.checkSel]
 		out = append(out, Line{})
-		out = append(out, tableBlock(ch.Table, inner).indent(2)...)
-	}
-	if len(ch.Fix) > 0 {
-		var fix Block
-		for i, f := range ch.Fix {
-			for j, s := range wrap(f, inner-7) {
-				prefix := "   "
-				if j == 0 {
-					prefix = strconv.Itoa(i+1) + ". "
-				}
-				fix = append(fix, Line{sub(prefix + s)})
+		for _, l := range wrap(ch.Message, w-4) {
+			out = append(out, Line{sp(3), tx(l)})
+		}
+		for _, d := range ch.Details {
+			for _, l := range wrap(d, w-4) {
+				out = append(out, Line{sp(3), sub(l)})
 			}
 		}
-		out = append(out, Line{})
-		out = append(out, box(Line{bold(colMauve, "Fix")}, fix, w-4, colSurface1).indent(2)...)
+		if n := len(ch.Findings); n > 0 {
+			out = append(out, Line{sp(3), dim(plural(n, "finding") + ": " + strings.Join(ch.Findings, ", "))}.Fit(w))
+		}
 	}
-	return out
+	// The insights that are not passing fill the rest.
+	var insights []apidoc.Insight
+	for _, in := range rep.Insights {
+		if in.Status != "PASSING" {
+			insights = append(insights, in)
+		}
+	}
+	if len(out) < h-2 {
+		out = append(out, Line{}, Line{sp(1), m.heading("Insights"), sp(2), dim(insightCounts(rep))})
+		for _, in := range insights {
+			if len(out) >= h {
+				break
+			}
+			l := Line{sp(1), m.mark(insightStatus(in.Status)), sp(1)}
+			l = append(l, Line{tx(in.Name)}.Fit(min(40, w/2))...)
+			l = append(l, sp(1), sub(in.StatusReason))
+			out = append(out, l.Fit(w))
+		}
+		if len(insights) == 0 && rep.InsightsEvaluated {
+			out = append(out, Line{sp(1), m.tok(view.Healthy, "every insight is passing")})
+		}
+	}
+	return out.fit(w, h)
 }
 
-// tableBlock draws a small table with a header and a rule.
-func tableBlock(t *state.Table, w int) Block {
-	widths := make([]int, len(t.Header))
-	for i, hd := range t.Header {
-		widths[i] = width(hd) + 3
-		for _, row := range t.Rows {
-			if i < len(row) {
-				widths[i] = max(widths[i], width(row[i])+3)
-			}
+// insightCounts is the summary of the insights of a report.
+func insightCounts(rep *health.ReadinessReport) string {
+	if !rep.InsightsEvaluated {
+		return "could not be read"
+	}
+	counts := map[string]int{}
+	for _, in := range rep.Insights {
+		counts[in.Status]++
+	}
+	var parts []string
+	for _, s := range []string{"ERROR", "WARNING", "PASSING", "UNKNOWN"} {
+		if n := counts[s]; n > 0 {
+			parts = append(parts, strconv.Itoa(n)+" "+strings.ToLower(s))
 		}
 	}
-	hl := Line{}
-	for i, hd := range t.Header {
-		hl = append(hl, Seg{Text: padRight(hd, widths[i]), FG: colDim, Bold: true})
+	if len(parts) == 0 {
+		return "none"
 	}
-	out := Block{hl, hrule(w)}
-	for _, row := range t.Rows {
-		l := Line{}
-		for i, cell := range row {
-			if i < len(widths) {
-				l = append(l, tx(padRight(cell, widths[i])))
-			}
-		}
-		out = append(out, l)
-	}
-	return out
+	return strings.Join(parts, ", ")
 }
 
-// readinessTitle names the cluster and the versions checked: "on 1.36"
-// when the control plane is already there (a catch-up).
-func readinessTitle(cluster, from, to string) string {
-	return fmt.Sprintf("Readiness · %s %s", cluster, state.VersionMove(from, to))
+// outcomeStatus maps the outcome of a check to the status that paints it.
+func outcomeStatus(o health.Outcome) view.Status {
+	switch o {
+	case health.Pass:
+		return view.Healthy
+	case health.Warn:
+		return view.Warn
+	case health.Fail:
+		return view.Fail
+	case health.Skipped:
+		return view.Neutral
+	}
+	return view.Unknown
+}
+
+// insightStatus maps an insight status to the status that paints it.
+func insightStatus(s string) view.Status {
+	switch s {
+	case "PASSING":
+		return view.Healthy
+	case "WARNING":
+		return view.Warn
+	case "ERROR":
+		return view.Fail
+	}
+	return view.Unknown
 }

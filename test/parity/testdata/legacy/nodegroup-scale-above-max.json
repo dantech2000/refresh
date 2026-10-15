@@ -1,0 +1,68 @@
+{
+  "exitCode": 1,
+  "stdout": "",
+  "stderr": "[X] Error: AWS API error while updating nodegroup scaling for prod/ng-a: Desired capacity 9 can't be greater than max size 3 (InvalidParameterException)\n",
+  "refusedBeforeMutation": false,
+  "changes": [
+    {
+      "mutation": {
+        "operation": "eks:UpdateNodegroupConfig",
+        "region": "us-east-1",
+        "target": "prod/ng-a",
+        "payload": {
+          "clientRequestToken": "token-1",
+          "scalingConfig": {
+            "desiredSize": 9
+          }
+        },
+        "outcome": "error=InvalidParameterException"
+      },
+      "evidence": [
+        "gate: addon prod/coredns: issues=none",
+        "gate: addon prod/coredns: status=ACTIVE",
+        "gate: addon prod/coredns: version=v1.11.4-eksbuild.2",
+        "gate: addon prod/vpc-cni: issues=none",
+        "gate: addon prod/vpc-cni: status=ACTIVE",
+        "gate: addon prod/vpc-cni: version=v1.18.0-eksbuild.1",
+        "target: cluster prod: issues=none",
+        "target: cluster prod: status=ACTIVE",
+        "target: cluster prod: version=1.32",
+        "target: nodegroup prod/ng-a: issues=none",
+        "target: nodegroup prod/ng-a: release=1.32.0-20250101",
+        "target: nodegroup prod/ng-a: size=2/1/3",
+        "target: nodegroup prod/ng-a: status=ACTIVE",
+        "target: nodegroup prod/ng-a: version=1.32",
+        "gate: nodegroup prod/ng-b: issues=none",
+        "gate: nodegroup prod/ng-b: release=1.32.0-20260101",
+        "gate: nodegroup prod/ng-b: size=2/1/3",
+        "gate: nodegroup prod/ng-b: status=ACTIVE",
+        "gate: nodegroup prod/ng-b: version=1.32"
+      ]
+    }
+  ],
+  "operations": [
+    "ec2:DescribeInstanceTypeOfferings",
+    "ec2:DescribeSubnets",
+    "eks:DescribeAddon",
+    "eks:DescribeCluster",
+    "eks:DescribeNodegroup",
+    "eks:ListAddons",
+    "eks:ListClusters",
+    "eks:ListNodegroups",
+    "eks:UpdateNodegroupConfig"
+  ],
+  "world": {
+    "us-east-1/prod": {
+      "cluster": "1.32 ACTIVE",
+      "nodegroups": {
+        "ng-a": "1.32 1.32.0-20250101 ACTIVE 2/1/3",
+        "ng-b": "1.32 1.32.0-20260101 ACTIVE 2/1/3"
+      },
+      "addons": {
+        "coredns": "v1.11.4-eksbuild.2 ACTIVE",
+        "vpc-cni": "v1.18.0-eksbuild.1 ACTIVE"
+      },
+      "updates": []
+    }
+  }
+}

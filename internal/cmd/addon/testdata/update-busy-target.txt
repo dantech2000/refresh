@@ -1,0 +1,39 @@
+exit: 4
+error: add-on vpc-cni is UPDATING to v1.19.5-eksbuild.1 (AddonUpdate); it was not changed. Run the command again once that finishes
+--- stdout ---
+Run   [!] Incomplete   AddonUpdate
+
+RUN
+  operation  AddonUpdate
+  cluster    prod
+  region     us-east-1
+  version    1.33
+  status     [!] Incomplete
+
+RESULTS  3
+  NAME        KIND   STATUS          FROM                TO                  UPDATE                                NOTE                   STARTED                  FINISHED                 FAILURE
+  vpc-cni     Addon  [!] Busy        v1.19.5-eksbuild.1  v1.20.0-eksbuild.1  -                                     AddonUpdate in flight  -                        -                        Busy: add-on vpc-cni is UPDATING to v1.19.5-eksbuild.1 (AddonUpdate); it was not changed. Run the command again once that finishes
+  coredns     Addon  [OK] Succeeded  v1.11.3-eksbuild.2  v1.11.4-eksbuild.2  00000000-0000-4000-8000-000000000002  -                      2026-01-01 00:00:00 UTC  2026-01-01 00:00:15 UTC  -
+  kube-proxy  Addon  - Skipped       v1.33.0-eksbuild.2  v1.33.0-eksbuild.2  -                                     -                      -                        -                        -
+
+VERIFICATION  1
+  NAME                 OUTCOME    MESSAGE
+  AddonHealth/coredns  [OK] Pass  coredns is ACTIVE at v1.11.4-eksbuild.2
+
+HEALTH GATE
+  decision  [OK] Go
+
+CHECKS  1
+  NAME    OUTCOME    MESSAGE
+  Addons  [OK] Pass  1 add-on ACTIVE
+
+FAILURES
+[?] addon prod/vpc-cni (us-east-1): Busy: add-on vpc-cni is UPDATING to v1.19.5-eksbuild.1 (AddonUpdate); it was not changed. Run the command again once that finishes
+--- stderr ---
+PLAN  AddonUpdate, prod in us-east-1
+  vpc-cni     skip, at v1.19.5-eksbuild.1 (InFlight: AddonUpdate)
+  coredns     update v1.11.3-eksbuild.2 to v1.11.4-eksbuild.2 (VersionBehind)
+  kube-proxy  skip, at v1.33.0-eksbuild.2 (AlreadyAtTarget)
+[!] vpc-cni: Busy: add-on vpc-cni is UPDATING to v1.19.5-eksbuild.1 (AddonUpdate); it was not changed. Run the command again once that finishes
+[~] coredns: Started (update 00000000-0000-4000-8000-000000000002)
+[OK] coredns: Succeeded

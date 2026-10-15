@@ -1,11 +1,9 @@
-// Package updatecheck implements an on-by-default (opt-out), fail-silent "newer release
-// available" check for the refresh CLI.
+// Package updatecheck finds out whether a newer release of refresh exists.
 //
-// It queries the GitHub Releases API for the latest tag, compares it against
-// the running version with a small semver comparison, and (when the local
-// build is behind) returns a one-line upgrade hint. Results are throttled via a
-// small JSON cache under the user config dir so the network is hit at most once
-// per day; every failure path is silent so the check never disrupts the CLI.
+// It asks the GitHub Releases API for the latest tag and compares it with
+// the running version. A small cache file limits the network call to one a
+// day. Every failure is an error that the caller ignores, so the check never
+// disturbs the CLI.
 package updatecheck
 
 import (
@@ -22,65 +20,40 @@ import (
 	"time"
 )
 
-// DefaultBaseURL is the GitHub Releases "latest" endpoint for this project.
-const DefaultBaseURL = "https://api.github.com/repos/dantech2000/refresh/releases/latest"
+// DefaultURL is the GitHub Releases "latest" endpoint of this project.
+const DefaultURL = "https://api.github.com/repos/dantech2000/refresh/releases/latest"
 
-// checkInterval is the minimum time between network fetches. Within this window
-// the cached tag is reused.
+// checkInterval is the minimum time between two network calls. Inside it
+// the cached tag is used.
 const checkInterval = 24 * time.Hour
 
-// fetchTimeout bounds the network call so a slow/hanging endpoint can't add
-// measurable latency to `refresh version`.
+// fetchTimeout limits the network call, so a slow endpoint cannot hold up
+// "refresh version" for long.
 const fetchTimeout = 2 * time.Second
 
-// Checker performs throttled, fail-silent update checks. The zero value is not
-// usable; construct it with New.
+// Checker reads the latest release tag. The zero value works: it asks
+// DefaultURL with a new HTTP client and keeps no cache.
+//
+// The limit of one network call a day is best-effort. Nothing locks the
+// cache file, so two runs that start together with an old cache both use the
+// network. A reader never sees a partly written cache.
 type Checker struct {
-	baseURL    string
-	httpClient *http.Client
-	cachePath  string
-	now        func() time.Time
+	// URL is the releases endpoint. Empty means DefaultURL.
+	URL string
+	// HTTPClient makes the request. Nil means a client with a short timeout.
+	HTTPClient *http.Client
+	// CachePath is the file that records the last check. Empty turns the
+	// cache off, and then every call uses the network.
+	CachePath string
+	// Now is the clock. Nil means time.Now.
+	Now func() time.Time
 }
 
-// Option customizes a Checker. Tests inject a base URL, HTTP client, cache path,
-// and clock so no real network or real home dir is touched.
-type Option func(*Checker)
-
-// WithBaseURL overrides the releases endpoint.
-func WithBaseURL(u string) Option { return func(c *Checker) { c.baseURL = u } }
-
-// WithHTTPClient overrides the HTTP client.
-func WithHTTPClient(h *http.Client) Option { return func(c *Checker) { c.httpClient = h } }
-
-// WithCachePath overrides the cache file path.
-func WithCachePath(p string) Option { return func(c *Checker) { c.cachePath = p } }
-
-// WithNow overrides the clock.
-func WithNow(now func() time.Time) Option { return func(c *Checker) { c.now = now } }
-
-// New builds a Checker with production defaults, applying any options.
-func New(opts ...Option) *Checker {
-	c := &Checker{
-		baseURL:    DefaultBaseURL,
-		httpClient: &http.Client{Timeout: fetchTimeout},
-		cachePath:  defaultCachePath(),
-		now:        time.Now,
+func (c *Checker) now() time.Time {
+	if c.Now != nil {
+		return c.Now()
 	}
-	for _, o := range opts {
-		o(c)
-	}
-	return c
-}
-
-// defaultCachePath resolves <user-config-dir>/refresh/update-check.json. On any
-// error it returns "", which disables caching (the check still works, just
-// un-throttled, which the caller's TTL logic tolerates).
-func defaultCachePath() string {
-	dir, err := os.UserConfigDir()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(dir, "refresh", "update-check.json")
+	return time.Now()
 }
 
 // cache is the throttle state persisted between runs.
@@ -128,13 +101,22 @@ func (c *Checker) fetchLatest(ctx context.Context) (string, error) {
 	reqCtx, cancel := context.WithTimeout(ctx, fetchTimeout)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, c.baseURL, nil)
+	url := c.URL
+	if url == "" {
+		url = DefaultURL
+	}
+	client := c.HTTPClient
+	if client == nil {
+		client = &http.Client{Timeout: fetchTimeout}
+	}
+
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, url, nil)
 	if err != nil {
 		return "", fmt.Errorf("building update-check request: %w", err)
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("fetching latest release: %w", err)
 	}
@@ -158,10 +140,10 @@ func (c *Checker) fetchLatest(ctx context.Context) (string, error) {
 }
 
 func (c *Checker) readCache() (cache, bool) {
-	if c.cachePath == "" {
+	if c.CachePath == "" {
 		return cache{}, false
 	}
-	b, err := os.ReadFile(c.cachePath)
+	b, err := os.ReadFile(c.CachePath)
 	if err != nil {
 		return cache{}, false
 	}
@@ -175,19 +157,35 @@ func (c *Checker) readCache() (cache, bool) {
 // writeCache persists the cache best-effort; errors are ignored so a read-only
 // config dir never breaks the CLI.
 func (c *Checker) writeCache(cc cache) {
-	if c.cachePath == "" {
+	if c.CachePath == "" {
 		return
 	}
-	// cliconfig creates the same <UserConfigDir>/refresh dir 0o755; the cache
-	// file itself is 0o600.
-	if err := os.MkdirAll(filepath.Dir(c.cachePath), 0o755); err != nil { //nolint:gosec // G301: matches cliconfig's mode for the shared dir
+	// The directory is shared with the context store, so it gets the usual
+	// mode. The cache file itself is private.
+	if err := os.MkdirAll(filepath.Dir(c.CachePath), 0o755); err != nil { //nolint:gosec // G301: a shared config directory
 		return
 	}
 	b, err := json.Marshal(cc)
 	if err != nil {
 		return
 	}
-	_ = os.WriteFile(c.cachePath, b, 0o600)
+	// Write a temporary file and rename it over the cache, so another
+	// refresh that reads the cache now sees the old file or the new one,
+	// never a part of one. CreateTemp makes the file private (0600).
+	tmp, err := os.CreateTemp(filepath.Dir(c.CachePath), filepath.Base(c.CachePath)+".*.tmp")
+	if err != nil {
+		return
+	}
+	_, err = tmp.Write(b)
+	if closeErr := tmp.Close(); err == nil {
+		err = closeErr
+	}
+	if err == nil {
+		err = os.Rename(tmp.Name(), c.CachePath)
+	}
+	if err != nil {
+		_ = os.Remove(tmp.Name())
+	}
 }
 
 // UpgradeHint returns a one-line "newer version available" message when latest

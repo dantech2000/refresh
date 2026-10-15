@@ -1,0 +1,49 @@
+exit: 0
+error: 
+--- stdout ---
+apiVersion: refresh.drod.dev/v2
+kind: Plan
+operation: AddonUpdate
+clusters:
+  - cluster: prod
+    region: us-east-1
+    version: "1.33"
+    decision: Proceed
+    steps:
+      - phase: Addons
+        kind: Addon
+        name: vpc-cni
+        action: Submit
+        reason: VersionBehind
+        from: v1.19.0-eksbuild.1
+        to: v1.20.0-eksbuild.1
+      - phase: Addons
+        kind: Addon
+        name: coredns
+        action: Submit
+        reason: VersionBehind
+        from: v1.11.3-eksbuild.2
+        to: v1.11.4-eksbuild.2
+      - phase: Addons
+        kind: Addon
+        name: kube-proxy
+        action: Skip
+        reason: AlreadyAtTarget
+        from: v1.33.0-eksbuild.2
+        to: v1.33.0-eksbuild.2
+    gate:
+      decision: Go
+      reasons: []
+      accepted: []
+      forced: []
+      checks:
+        - name: Addons
+          outcome: Pass
+          blocking: true
+          message: 2 add-ons ACTIVE
+          details: []
+          findings: []
+    blockers: []
+    notices: []
+failures: []
+--- stderr ---

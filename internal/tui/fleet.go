@@ -5,16 +5,20 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/dantech2000/refresh/internal/apidoc"
+	"github.com/dantech2000/refresh/internal/fleet"
 	"github.com/dantech2000/refresh/internal/tui/state"
+	"github.com/dantech2000/refresh/internal/view"
 )
 
 // fleetScreen: the cluster table and the selected cluster's card on the
-// left, the live fleet feed and the changes in flight on the right.
+// left, the fleet feed on the right.
 func (m Model) fleetScreen(w, h int) Block {
 	lw := w * 62 / 100
 	rw := w - lw - 1
-	return hjoin(h, col{m.fleetTable(lw, h), lw}, vrule(h), col{m.fleetFeed(rw, h), rw})
+	return hjoin(h, col{m.fleetTable(lw, h), lw}, vrule(h, m.bd), col{m.fleetFeed(rw, h), rw})
 }
 
 type fleetCol struct {
@@ -22,10 +26,10 @@ type fleetCol struct {
 	w    int
 }
 
-// fleetCols sizes the fleet table's columns to the names in the fleet: the
-// cluster and region columns fit their longest value (within limits), and
-// STATUS takes the rest. Every cell but the last leaves one space before
-// the next.
+// fleetCols sizes the fleet table's columns to the names in the fleet:
+// the cluster and region columns fit their longest value (within limits),
+// and STATUS takes the rest. Every cell but the last leaves one space
+// before the next.
 func (m Model) fleetCols(w int) []fleetCol {
 	nameW, regionW := len("CLUSTER"), len("REGION")
 	for _, c := range m.st.Clusters {
@@ -58,56 +62,52 @@ func (m Model) fleetCols(w int) []fleetCol {
 }
 
 func (m Model) fleetTable(w, h int) Block {
-	need, busy := 0, 0
+	need, changing := 0, 0
 	for _, c := range m.st.Clusters {
-		// A cluster that is changing can still need attention for
-		// something else (stale add-ons during a roll), as refresh status
-		// counts it.
-		if c.NeedsAttention() {
+		switch c.Status {
+		case view.Warn, view.Fail:
 			need++
-		}
-		if c.Busy != "" {
-			busy++
+		case view.Progress:
+			changing++
 		}
 	}
 	out := Block{
 		{},
-		{sp(1), bold(colMauve, heading("Fleet")), sp(2), dimS(fmt.Sprintf("%s · %d need attention · %d changing", plural(len(m.st.Clusters), "cluster"), need, busy))},
+		{sp(1), m.heading("Fleet"), sp(2), dim(fmt.Sprintf("%s · %d need attention · %d changing", plural(len(m.st.Clusters), "cluster"), need, changing))},
 	}
 	cols := m.fleetCols(w)
 	head := Line{sp(1)}
 	for _, c := range cols {
-		head = append(head, Seg{Text: padRight(c.name, c.w), FG: colDim, Bold: true})
+		head = append(head, Seg{Text: padRight(c.name, c.w), Role: view.RoleDim, Bold: true})
 	}
-	out = append(out, head, append(Line{sp(1)}, hrule(w-2)...))
+	out = append(out, head, append(Line{sp(1)}, hrule(w-2, m.bd)...))
 	if len(m.st.Clusters) == 0 {
 		out = append(out, Line{})
-		if p := m.st.FleetProblem; p != "" {
+		switch {
+		case m.st.Sweep.Error != "":
 			// No region answered: say why, not "no clusters".
-			for i, para := range strings.Split(p, "\n") {
-				c := colDim
+			for i, para := range strings.Split(m.st.Sweep.Error, "\n") {
+				r := view.RoleDim
 				if i == 0 {
-					c = colRed
+					r = view.RoleFail
 				}
 				for _, l := range wrap(para, w-4) {
-					out = append(out, Line{sp(2), fg(c, l)})
+					out = append(out, Line{sp(2), role(r, l)})
 				}
 			}
-			return out.fit(w, h)
-		}
-		if m.st.SyncedAt.IsZero() {
+		case m.st.Sweep.EndedAt.IsZero():
 			// The first sweep has not ended: nothing is known yet.
-			out = append(out, Line{sp(2), tok(state.LevelProgress, "Sweeping the regions for EKS clusters…")},
-				Line{sp(2), dimS("A large fleet, or many regions, takes a few seconds.")})
-			return out.fit(w, h)
+			out = append(out, Line{sp(2), m.tok(view.Progress, "Sweeping the regions for EKS clusters")},
+				Line{sp(2), dim("A large fleet, or many regions, takes a few seconds.")})
+		default:
+			out = append(out, Line{sp(2), tx("No EKS clusters in the regions swept.")},
+				Line{sp(2), dim("The header counts the regions swept; pick others with -r, or all with -A.")})
 		}
-		out = append(out, Line{sp(2), fg(colText, "No EKS clusters in the regions swept.")},
-			Line{sp(2), dimS("The header counts the regions swept; pick others with -r, or all with -A.")})
 		return out.fit(w, h)
 	}
-	// The rows that fit above the selected cluster's card; the window keeps
-	// the selection in view. A pane too short for five rows and the card
-	// drops the card.
+	// The rows that fit above the selected cluster's card; the window
+	// keeps the selection in view. A pane too short for five rows and the
+	// card drops the card.
 	card := m.clusterCard(w - 2)
 	rowsH := h - len(out) - 1 - len(card)
 	if rowsH < 5 {
@@ -123,7 +123,7 @@ func (m Model) fleetTable(w, h int) Block {
 		c := m.st.Clusters[i]
 		row := Line{sp(1)}
 		for j, fc := range cols {
-			cell := fleetCell(fc.name, c)
+			cell := m.fleetCell(fc.name, c)
 			if j > 0 && j < len(cols)-1 {
 				row = append(row, append(cell.Fit(fc.w-1), sp(1))...)
 				continue
@@ -131,20 +131,20 @@ func (m Model) fleetTable(w, h int) Block {
 			row = append(row, cell.Fit(fc.w)...)
 		}
 		if i == m.sel {
-			row[1] = fg(colMauve, "▶ ")
-			row = row.Fit(w).WithBG(colSurface0)
+			row[1] = role(view.RoleAccent, m.bd.Marker+" ")
+			row = row.Fit(w).WithBG(view.RoleSurface)
 		}
 		out = append(out, row)
 	}
 	if first > 0 || last < len(m.st.Clusters) {
 		var more []string
 		if first > 0 {
-			more = append(more, fmt.Sprintf("↑ %d above", first))
+			more = append(more, fmt.Sprintf("%d above", first))
 		}
 		if n := len(m.st.Clusters) - last; n > 0 {
-			more = append(more, fmt.Sprintf("↓ %d below", n))
+			more = append(more, fmt.Sprintf("%d below", n))
 		}
-		out = append(out, Line{sp(3), dimS(strings.Join(more, " · "))})
+		out = append(out, Line{sp(3), dim(strings.Join(more, " · "))})
 	}
 	if card != nil {
 		out = append(out, Line{})
@@ -153,8 +153,8 @@ func (m Model) fleetTable(w, h int) Block {
 	return out.fit(w, h)
 }
 
-func fleetCell(col string, c state.Cluster) Line {
-	switch col {
+func (m Model) fleetCell(column string, c state.Cluster) Line {
+	switch column {
 	case "":
 		return Line{sp(2)}
 	case "CLUSTER":
@@ -162,102 +162,123 @@ func fleetCell(col string, c state.Cluster) Line {
 	case "REGION":
 		return Line{sub(c.Region)}
 	case "VERSION":
-		l := Line{tx(c.Version)}
-		if strings.HasPrefix(c.Busy, "upgrading") || c.Busy == "rolling back" {
-			return append(l, sp(1), levelGlyph(state.LevelProgress))
+		if c.Snapshot == nil || c.Snapshot.Have.Cluster != fleet.Collected {
+			return Line{dim("?")}
 		}
-		if c.Behind() > 0 {
-			l = append(l, dimS(" → "+c.Latest))
+		l := Line{tx(c.Version.String())}
+		switch {
+		case c.Support == apidoc.SupportExtended:
+			return append(l, sp(1), statusSeg(view.Fail, "ext"))
+		case c.Support == apidoc.SupportUnsupported:
+			return append(l, sp(1), statusSeg(view.Fail, "eol"))
+		case slices.ContainsFunc(c.InFlight, func(s string) bool { return strings.HasPrefix(s, "control plane") }):
+			return append(l, sp(1), m.mark(view.Progress))
 		}
 		return l
 	case "NODEGROUPS":
-		l := Line{tx(strconv.Itoa(len(c.Nodegroups))), sp(1)}
-		if strings.HasPrefix(c.Busy, "rolling") || strings.HasSuffix(c.Busy, "nodegroups") {
-			return append(l, levelGlyph(state.LevelProgress))
+		if c.Snapshot == nil {
+			return Line{dim("?")}
 		}
-		if n := len(c.StaleNodegroups()); n > 0 {
-			return append(l, tok(state.LevelWarn, fmt.Sprintf("%d stale", n)))
+		l := Line{tx(strconv.Itoa(len(c.Snapshot.Nodegroups))), sp(1)}
+		switch {
+		case slices.ContainsFunc(c.InFlight, func(s string) bool { return strings.HasPrefix(s, "nodegroup ") }):
+			return append(l, m.mark(view.Progress))
+		case c.Stale.AMIs+c.Stale.Behind > 0:
+			return append(l, m.tok(view.Warn, fmt.Sprintf("%d stale", c.Stale.AMIs+c.Stale.Behind)))
+		case c.Stale.Unknown > 0:
+			// An AMI that could not be read is not current: say so.
+			return append(l, dim(fmt.Sprintf("? %d unknown", c.Stale.Unknown)))
 		}
-		// An AMI that could not be read is not current: say so.
-		unknown := 0
-		for _, ng := range c.Nodegroups {
-			if ng.AMIUnknown {
-				unknown++
-			}
-		}
-		if unknown > 0 {
-			return append(l, dimS(fmt.Sprintf("? %d unknown", unknown)))
-		}
-		return append(l, levelGlyph(state.LevelOK))
+		return append(l, m.mark(view.Healthy))
 	case "ADD-ONS":
-		if c.Busy == "updating add-ons" || strings.HasSuffix(c.Busy, "add-ons") {
-			return Line{tok(state.LevelProgress, "updating")}
+		switch {
+		case c.Snapshot == nil:
+			return Line{dim("?")}
+		case slices.ContainsFunc(c.InFlight, func(s string) bool { return strings.HasPrefix(s, "add-on ") }):
+			return Line{m.tok(view.Progress, "updating")}
+		case c.Stale.Addons > 0:
+			return Line{m.tok(view.Warn, fmt.Sprintf("%d stale", c.Stale.Addons))}
 		}
-		if n := len(c.StaleAddons()); n > 0 {
-			return Line{tok(state.LevelWarn, fmt.Sprintf("%d stale", n))}
-		}
-		return Line{tok(state.LevelOK, "current")}
+		return Line{m.tok(view.Healthy, "current")}
 	default:
-		lvl, text := c.Health()
-		return Line{Seg{Text: levelGlyph(lvl).Text + " " + text, FG: levelColor(lvl)}}
+		return Line{m.tok(c.Status, statusText(c))}
 	}
 }
 
-// clusterCard summarizes the selected cluster: next hop, readiness,
-// support, and what is stale.
+// statusText is the one phrase of the STATUS column.
+func statusText(c state.Cluster) string {
+	switch c.Status {
+	case view.Fail:
+		switch c.Support {
+		case apidoc.SupportExtended:
+			return "extended support"
+		case apidoc.SupportUnsupported:
+			return "unsupported"
+		default:
+			return "issues"
+		}
+	case view.Progress:
+		return c.InFlight[0]
+	case view.Warn:
+		return "needs attention"
+	case view.Unknown:
+		if c.Incomplete {
+			return "incomplete"
+		}
+		return "unknown"
+	}
+	return "current"
+}
+
+// clusterCard summarizes the selected cluster: the version and support,
+// the readiness, and what is stale.
 func (m Model) clusterCard(w int) Block {
 	c := m.cluster()
 	if c.Name == "" {
 		return nil
 	}
+	snap := c.Snapshot
 	var body Block
-	if c.ARN != "" {
-		body = append(body, Line{dimS(c.ARN)})
+	if snap != nil && snap.Cluster.ARN != "" {
+		body = append(body, Line{dim(snap.Cluster.ARN)})
 	} else {
-		body = append(body, Line{dimS(c.Region)})
+		body = append(body, Line{dim(c.Region)})
 	}
 	if c.Incomplete {
-		body = append(body, Line{tok(state.LevelWarn, "part of this cluster could not be read · counts may be low")})
+		body = append(body, Line{m.tok(view.Warn, "part of this cluster could not be read · counts may be low")})
 	}
-	next := Line{sub("next hop "), tx(c.Version + " → " + state.NextMinor(c.Version))}
-	switch {
-	case c.Latest == "":
-		next = Line{sub("version "), tx(c.Version), dimS(" · newest EKS version unknown")}
-	case c.Behind() == 0:
-		next = Line{sub("version "), tx(c.Version), dimS(" · newest")}
+	line := Line{sub("version "), tx(c.Version.String())}
+	if !c.Version.IsZero() {
+		line = append(line, dim(" · next hop "+nextMinor(c.Version).String()))
 	}
-	next = append(next, sp(3), sub("readiness "))
-	if r, ok := m.st.Readiness[c.Name]; ok {
-		next = append(next, readinessVerdict(r)...)
-	} else {
-		next = append(next, dimS("not run · press r"))
-	}
-	next = append(next, sp(3), sub("support "))
-	if c.ExtendedSupport {
-		next = append(next, fg(colRed, "extended since "+c.SupportEnds.Format("2006-01-02")))
-	} else {
-		next = append(next, tx("until "+c.SupportEnds.Format("2006-01-02")))
-	}
-	body = append(body, next)
+	line = append(line, sp(3), sub("readiness "))
+	line = append(line, m.readinessVerdict(c.Readiness)...)
+	line = append(line, sp(3), sub("support "))
+	line = append(line, m.supportSeg(c)...)
+	body = append(body, line)
 	// One stale item per line, names aligned: wrapping them as one line
 	// split a name from its version.
 	type staleItem struct{ name, what string }
 	var items []staleItem
-	for _, ng := range c.StaleNodegroups() {
-		what := "AMI " + ng.LatestAMI
-		if ng.LatestAMI == "" {
-			what = "AMI outdated"
+	if snap != nil {
+		for _, n := range snap.Nodegroups {
+			switch status, _ := n.AMIStatus(); {
+			case n.State != fleet.Collected:
+				continue
+			case behindCP(snap, n):
+				items = append(items, staleItem{n.Name, "on " + n.Version.String()})
+			case status == apidoc.AMIOutdated:
+				items = append(items, staleItem{n.Name, "AMI " + orDash(n.AMI.Latest)})
+			}
 		}
-		if ng.Version != c.Version {
-			what = "on " + ng.Version
+		for _, a := range snap.Addons {
+			if behind, _ := a.Behind(); behind {
+				items = append(items, staleItem{a.Name, a.Version + " → " + a.Latest})
+			}
 		}
-		items = append(items, staleItem{ng.Name, what})
 	}
-	for _, a := range c.StaleAddons() {
-		items = append(items, staleItem{a.Name, a.Version + " → " + a.Latest})
-	}
-	if len(items) == 0 {
-		body = append(body, Line{tok(state.LevelOK, "every nodegroup and add-on is current")})
+	if len(items) == 0 && !c.Incomplete {
+		body = append(body, Line{m.tok(view.Healthy, "every nodegroup and add-on is current")})
 	}
 	nameW := 0
 	for _, it := range items {
@@ -266,49 +287,84 @@ func (m Model) clusterCard(w int) Block {
 	const staleRows = 8
 	for i, it := range items {
 		if i == staleRows && len(items) > staleRows+1 {
-			body = append(body, Line{dimS(fmt.Sprintf("and %d more · enter for the cluster", len(items)-staleRows))})
+			body = append(body, Line{dim(fmt.Sprintf("and %d more · enter for the cluster", len(items)-staleRows))})
 			break
 		}
-		body = append(body, Line{sub(padRight(it.name, nameW) + "  "), tok(state.LevelWarn, it.what)}.Fit(w-4))
+		body = append(body, Line{sub(padRight(it.name, nameW) + "  "), m.tok(view.Warn, it.what)}.Fit(w-4))
 	}
-	if c.Busy != "" {
-		hint := "progress in the live feed"
-		if m.watchable(c.Name) {
-			hint = "enter to watch"
-		}
-		body = append(body, Line{tok(state.LevelProgress, c.Busy), sp(2), dimS(hint)})
+	for _, f := range c.InFlight {
+		body = append(body, Line{m.tok(view.Progress, f)})
 	}
-	if c.Busy != "" {
-		// Changes wait: say so where the keys would be.
-		body = append(body, Line{chip("r"), sp(1), sub("readiness"), sp(2), dimS("p a U wait until the change finishes")})
-	} else {
-		body = append(body, Line{chip("r"), sp(1), sub("readiness"), sp(2), chip("p"), sp(1), sub("patch nodegroup"), sp(2), chip("a"), sp(1), sub("update add-ons"), sp(2), chip("U"), sp(1), sub("upgrade cluster")})
-		if c.RollbackTo != "" {
-			body = append(body, Line{chip("B"), sp(1), sub("roll back to " + c.RollbackTo), sp(2), dimS("available until about " + c.RollbackUntil.UTC().Format("2006-01-02"))})
-		}
-	}
-	return box(Line{bold(colMauve, c.Name)}, body, w, colSurface1)
+	body = append(body, Line{chip("r"), sp(1), sub("readiness"), sp(2), chip("enter"), sp(1), sub("open the cluster")})
+	return box(Line{bold(view.RoleAccent, c.Name)}, body, w, m.bd)
 }
 
-func readinessVerdict(r state.Readiness) Line {
-	switch {
-	case r.Running:
-		return Line{tok(state.LevelProgress, fmt.Sprintf("checking %d/%d", len(r.Checks)-r.Pending(), len(r.Checks)))}
-	case r.Blockers() > 0:
-		l := Line{tok(state.LevelError, ""+plural(r.Blockers(), "blocker"))}
-		if r.Warnings() > 0 {
-			l = append(l, sp(1), tok(state.LevelWarn, ""+plural(r.Warnings(), "warning")))
-		}
-		return l
-	case r.Warnings() > 0:
-		return Line{tok(state.LevelWarn, ""+plural(r.Warnings(), "warning"))}
+// nextMinor is the version one minor above v: the next hop of an upgrade.
+func nextMinor(v fleet.Version) fleet.Version {
+	v.Minor++
+	return v
+}
+
+// behindCP reports whether a nodegroup runs an older minor than the
+// control plane.
+func behindCP(snap *fleet.Snapshot, n fleet.Nodegroup) bool {
+	behind, known := snap.VersionBehind(n)
+	return known && behind
+}
+
+// supportSeg says where the cluster stands in its support window.
+func (m Model) supportSeg(c state.Cluster) Line {
+	if c.Snapshot == nil || c.Snapshot.Have.Support != fleet.Collected {
+		return Line{dim("unknown")}
+	}
+	s := c.Snapshot.Cluster.Support
+	switch c.Support {
+	case apidoc.SupportExtended:
+		return Line{role(view.RoleFail, "extended, ends "+day(s.ExtendedEnd))}
+	case apidoc.SupportUnsupported:
+		return Line{role(view.RoleFail, "ended "+day(s.ExtendedEnd))}
+	case apidoc.SupportStandard:
+		return Line{tx("standard until " + day(s.StandardEnd))}
 	default:
-		return Line{tok(state.LevelOK, "ready")}
+		return Line{dim("unknown")}
 	}
 }
 
-// fleetFeed is the live fleet event feed, newest first, over cards for the
-// changes in flight.
+// day formats a date, or "?" for a date that is not known.
+func day(t time.Time) string {
+	if t.IsZero() {
+		return "?"
+	}
+	return t.Format("2006-01-02")
+}
+
+// readinessVerdict is the one-token verdict of a readiness run.
+func (m Model) readinessVerdict(r *state.Readiness) Line {
+	switch {
+	case r == nil:
+		return Line{dim("not run · press r")}
+	case r.Running():
+		return Line{m.tok(view.Progress, "checking "+dur(m.now.Sub(r.StartedAt)))}
+	case r.Err != "":
+		return Line{m.tok(view.Fail, "could not read the cluster")}
+	}
+	return Line{m.tok(readinessStatus(r.Report.Readiness), strings.ToLower(string(r.Report.Readiness)))}
+}
+
+// readinessStatus maps a verdict to the status that paints it.
+func readinessStatus(r apidoc.Readiness) view.Status {
+	switch r {
+	case apidoc.ReadinessReady:
+		return view.Healthy
+	case apidoc.ReadinessReview:
+		return view.Warn
+	case apidoc.ReadinessBlocked:
+		return view.Fail
+	}
+	return view.Unknown
+}
+
+// fleetFeed is the fleet feed, newest first.
 func (m Model) fleetFeed(w, h int) Block {
 	// With no cluster to scope to, the feed shows everything.
 	all := m.feedAll || len(m.st.Clusters) == 0
@@ -316,89 +372,28 @@ func (m Model) fleetFeed(w, h int) Block {
 	if !all {
 		scope = m.cluster().Name
 	}
-	out := Block{{}, joinRight(append(Line{sp(1), bold(colMauve, heading("Live")), sp(2)}, m.followToken()...), Line{dimS(scope), sp(1), chip("f"), sp(1)}, w)}
-	cards := m.activeCards(w - 2)
-	feedH := h - len(out) - len(cards) - 1
+	out := Block{{}, joinRight(Line{sp(1), m.heading("Feed")}, Line{dim(scope), sp(1), chip("f"), sp(1)}, w)}
 	nameW := 0
 	for _, c := range m.st.Clusters {
 		nameW = max(nameW, width(c.Name))
 	}
-	sel := m.cluster().Name
-	evs := m.visible(m.feed().Feed, func(e state.Event) bool { return all || e.Cluster == sel })
-	for i := 0; i < len(evs) && i < feedH; i++ {
-		e := evs[i]
-		l := Line{sp(1), dimS(clock(e.At)), sp(1)}
-		if all {
-			l = append(l, fg(colSky, padRight(e.Cluster, nameW)), sp(1))
+	sel := m.cluster().Key
+	shown := 0
+	for i := len(m.st.Feed) - 1; i >= 0 && shown < h-len(out); i-- {
+		e := m.st.Feed[i]
+		if !all && e.Cluster != sel && e.Cluster.Name != "" {
+			continue
 		}
-		l = append(l, levelGlyph(e.Level), sp(1))
-		if e.Subject != "" {
-			l = append(l, tx(e.Subject), sp(1))
+		shown++
+		l := Line{sp(1), dim(clock(e.At)), sp(1)}
+		if all && e.Cluster.Name != "" {
+			l = append(l, role(view.RoleInfo, padRight(e.Cluster.Name, nameW)), sp(1))
 		}
-		l = append(l, sub(e.Text))
-		if e.Detail != "" {
-			l = append(l, sp(1), dimS(e.Detail))
-		}
+		l = append(l, m.mark(e.Status), sp(1), sub(e.Text))
 		out = append(out, l)
 	}
-	if len(evs) == 0 {
-		out = append(out, Line{sp(1), dimS("no events yet")})
+	if shown == 0 {
+		out = append(out, Line{sp(1), dim("no events yet")})
 	}
-	out = out.fit(w, h-len(cards))
-	return append(out, cards.indent(1)...)
-}
-
-// activeCards shows a progress card for each change in flight.
-func (m Model) activeCards(w int) Block {
-	var out Block
-	n := 0
-	for i := len(m.st.Upgrades) - 1; i >= 0 && n < 2; i-- {
-		u := m.st.Upgrades[i]
-		if !u.Running() {
-			continue
-		}
-		n++
-		cur := u.Current()
-		phase := "waiting"
-		if cur >= 0 {
-			phase = strings.ToLower(u.Phases[cur].Name)
-		}
-		title := Line{levelGlyph(state.LevelProgress), sp(1), bold(colText, u.Cluster), sp(1), sub(state.VersionMove(u.From, u.To))}
-		body := Block{
-			joinRight(Line{sub("upgrade · " + phase)}, Line{dimS("4 to watch")}, w-4),
-			append(bar(w-12, u.Progress(), 0), sp(1), tx(fmt.Sprintf("%3.0f%%", u.Progress()*100))),
-		}
-		out = append(out, box(title, body, w, colSurface1)...)
-	}
-	for i := len(m.st.Rolls) - 1; i >= 0 && n < 2; i-- {
-		r := m.st.Rolls[i]
-		if !r.Running() || r.UpgradeOf != "" {
-			continue
-		}
-		n++
-		title := Line{levelGlyph(state.LevelProgress), sp(1), bold(colText, r.Cluster), sp(1), sub("/ " + r.Nodegroup)}
-		frac := float64(r.Replaced()) / float64(max(1, r.Planned))
-		body := Block{
-			joinRight(Line{sub(fmt.Sprintf("roll · %d/%d nodes replaced", r.Replaced(), r.Planned))}, Line{dimS("3 to watch")}, w-4),
-			append(bar(w-12, frac, 0.5/float64(max(1, r.Planned))), sp(1), tx(fmt.Sprintf("%3.0f%%", frac*100))),
-		}
-		out = append(out, box(title, body, w, colSurface1)...)
-	}
-	return out
-}
-
-// watchable reports whether this TUI runs a change on cluster that the rolls
-// or upgrade screen can show.
-func (m Model) watchable(cluster string) bool {
-	for _, u := range m.st.Upgrades {
-		if u.Cluster == cluster && u.Running() {
-			return true
-		}
-	}
-	for _, r := range m.st.Rolls {
-		if r.Cluster == cluster && r.Running() {
-			return true
-		}
-	}
-	return false
+	return out.fit(w, h)
 }

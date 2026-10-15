@@ -1,0 +1,26 @@
+exit: 4
+error: could not read the versions of add-on vpc-cni that Kubernetes 1.33 can run; could not read every add-on of prod, so nothing shows that no change is running
+--- stdout ---
+Plan   [X] Blocked   AddonUpdate
+
+PLAN
+  operation  AddonUpdate
+  cluster    prod
+  region     us-east-1
+  version    1.33
+  decision   [X] Blocked
+
+STEPS  1
+  NAME     KIND   ACTION   REASON  FROM                TO  NOTE
+  vpc-cni  Addon  Blocked  -       v1.19.0-eksbuild.1  -   -
+
+BLOCKERS  2
+  NAME  KIND        STEP     MESSAGE
+  prod  [X] Unread  vpc-cni  could not read the versions of add-on vpc-cni that Kubernetes 1.33 can run
+  prod  [X] Unread  -        could not read every add-on of prod, so nothing shows that no change is running
+
+INCOMPLETE DATA
+[?] addon prod/vpc-cni (us-east-1): AccessDenied (grant eks:DescribeAddonVersions): AccessDeniedException: User: arn:aws:iam::123456789012:user/fake is not authorized to perform this action
+--- stderr ---
+PLAN  AddonUpdate, prod in us-east-1
+  [X] vpc-cni  blocked

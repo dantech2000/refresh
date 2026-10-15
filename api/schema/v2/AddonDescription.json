@@ -1,0 +1,234 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drod.dev/refresh/schema/v2/AddonDescription.json",
+  "$defs": {
+    "Addon": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "description": "status is the EKS status, such as ACTIVE or DEGRADED."
+        },
+        "health": {
+          "$ref": "#/$defs/AddonHealth",
+          "description": "health is the status and the health issues as one of a closed set of values. An add-on with a health issue is never Healthy."
+        },
+        "arn": {
+          "type": "string"
+        },
+        "serviceAccountRoleArn": {
+          "type": "string"
+        },
+        "latest": {
+          "$ref": "#/$defs/AddonLatest",
+          "description": "latest is the newest compatible version, in a document that reads it."
+        },
+        "configuration": {
+          "type": "string",
+          "description": "configuration is the configuration values of the add-on, as the JSON or YAML text that EKS returns."
+        },
+        "issues": {
+          "items": {
+            "$ref": "#/$defs/Issue"
+          },
+          "type": "array",
+          "description": "issues are the health issues that EKS reports for the add-on."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "modifiedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "incomplete": {
+          "type": "boolean",
+          "description": "incomplete is true when the add-on could not be read. Its failure is in the failures list of the document."
+        }
+      },
+      "type": "object",
+      "required": [
+        "name"
+      ],
+      "description": "Addon is one installed EKS add-on. A key is left out when its data was not read: an add-on that could not be described has its name and incomplete."
+    },
+    "AddonHealth": {
+      "type": "string",
+      "enum": [
+        "Healthy",
+        "Failed",
+        "InProgress",
+        "Unknown"
+      ],
+      "description": "AddonHealth is the health of an add-on, from its EKS status and its health issues."
+    },
+    "AddonLatest": {
+      "properties": {
+        "version": {
+          "type": "string",
+          "description": "version is left out when EKS publishes no compatible version."
+        },
+        "behind": {
+          "type": "boolean",
+          "description": "behind is true when the installed version is older than Version. It is left out when there is no version to compare with."
+        }
+      },
+      "type": "object",
+      "description": "AddonLatest is the newest version of an add-on that is compatible with the Kubernetes version of its cluster."
+    },
+    "Failure": {
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/FailureKind"
+        },
+        "name": {
+          "type": "string",
+          "description": "name identifies the item. For a Region failure it is the region."
+        },
+        "cluster": {
+          "type": "string",
+          "description": "cluster is the cluster that the item belongs to."
+        },
+        "region": {
+          "type": "string"
+        },
+        "operation": {
+          "type": "string",
+          "description": "operation is the IAM action that failed, such as \"eks:DescribeNodegroup\"."
+        },
+        "reason": {
+          "type": "string",
+          "examples": [
+            "AccessDenied",
+            "CredentialError",
+            "Throttled",
+            "NotFound",
+            "RegionUnavailable",
+            "InvalidRequest",
+            "ServiceError",
+            "NetworkError",
+            "Timeout",
+            "Interrupted",
+            "UpdateFailed",
+            "UpdateCancelled",
+            "NotMonitored",
+            "NotAttempted",
+            "Busy",
+            "Unknown"
+          ]
+        },
+        "retryable": {
+          "type": "boolean",
+          "description": "retryable reports whether the same command, run again with no other change, may succeed."
+        },
+        "error": {
+          "type": "string",
+          "description": "error is one line of text for people. Do not parse it; use Reason."
+        },
+        "awsErrorCode": {
+          "type": "string",
+          "description": "awsErrorCode is the AWS API error code, such as AccessDeniedException, when AWS answered."
+        },
+        "updateId": {
+          "type": "string",
+          "description": "updateId is the EKS update ID, for a failure of a started update."
+        }
+      },
+      "type": "object",
+      "required": [
+        "kind",
+        "name",
+        "reason",
+        "retryable",
+        "error"
+      ],
+      "description": "Failure is one item that refresh could not read, or one action that it tried and that did not complete."
+    },
+    "FailureKind": {
+      "type": "string",
+      "enum": [
+        "Region",
+        "Cluster",
+        "Nodegroup",
+        "Addon",
+        "Insight",
+        "Update",
+        "PodDisruptionBudget",
+        "Node"
+      ],
+      "description": "FailureKind is the type of item a Failure is about."
+    },
+    "Failures": {
+      "items": {
+        "$ref": "#/$defs/Failure"
+      },
+      "type": "array",
+      "description": "Failures is the failure list of a document. A nil list encodes as [], so a document always has its failures key as a list."
+    },
+    "Issue": {
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "resourceIds": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object",
+      "required": [
+        "code",
+        "message",
+        "resourceIds"
+      ],
+      "description": "Issue is a health issue that EKS reports for a resource."
+    }
+  },
+  "properties": {
+    "apiVersion": {
+      "type": "string",
+      "const": "refresh.drod.dev/v2",
+      "description": "The version of the document contract."
+    },
+    "kind": {
+      "type": "string",
+      "const": "AddonDescription",
+      "description": "The type of the document."
+    },
+    "cluster": {
+      "type": "string"
+    },
+    "region": {
+      "type": "string"
+    },
+    "addon": {
+      "$ref": "#/$defs/Addon"
+    },
+    "failures": {
+      "$ref": "#/$defs/Failures",
+      "description": "Every failure of the run: the items that refresh could not read and the actions that did not complete. The list is sorted by kind, region, cluster, name, and operation. It is [] when there are no failures."
+    }
+  },
+  "type": "object",
+  "required": [
+    "apiVersion",
+    "kind",
+    "cluster",
+    "region",
+    "addon",
+    "failures"
+  ],
+  "title": "AddonDescription",
+  "description": "The document that `refresh addon describe -o json` prints. -o yaml prints the same structure."
+}

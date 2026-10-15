@@ -3,28 +3,125 @@ package health
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/dantech2000/refresh/internal/apidoc"
 )
 
-// kubeletShutdownMessage is the status message the kubelet sets on pods it
-// terminates during a graceful node shutdown (nodeShutdownMessage in
-// pkg/kubelet/nodeshutdown).
+// criticalNamespaces hold the pods that every node needs.
+var criticalNamespaces = []string{"kube-system", "kube-public", "kube-node-lease"}
+
+// minRunningPodPercent is the share of the critical pods that must be
+// Running and ready for a warning rather than a failure.
+const minRunningPodPercent = 90
+
+// kubeletShutdownMessage is what the kubelet writes on a pod it ended for
+// a node shutdown.
 const kubeletShutdownMessage = "Pod was terminated in response to imminent node shutdown."
 
-// staleFailedPod reports whether pod is a Failed pod left behind by eviction
-// or node shutdown. Such pods linger until garbage collection and say nothing
-// about the health of their live replacements. The reasons are:
-//   - "Evicted": kubelet node-pressure eviction.
-//   - "Terminated": graceful node shutdown on kubelet 1.22 and later. Only
-//     skipped when the DisruptionTarget condition (reason
-//     TerminationByKubelet) or the kubelet shutdown message confirms it, since
-//     the reason alone is generic.
-//   - "Shutdown": graceful node shutdown on kubelet 1.21.
-//   - "NodeShutdown": pod admission rejected on a node shutting down.
-func staleFailedPod(pod corev1.Pod) bool {
+// Workloads checks that the pods of the system namespaces are Running
+// with every container ready. A Succeeded pod, and a Failed pod that an
+// eviction or a node shutdown left behind, do not count: they stay until
+// garbage collection and say nothing about their replacements.
+func Workloads() Check {
+	return Check{Name: "Workloads", Blocking: true, FailClosed: true, Needs: Needs{Kube: true}, Run: runWorkloads}
+}
+
+func runWorkloads(_ context.Context, in *Input) Result {
+	var (
+		total, running int
+		problems       []string
+		details        []string
+		failures       []apidoc.Failure
+		unread         []string
+	)
+	// The three lists in one round trip.
+	together(
+		func() { _, _ = in.reads.Pods(criticalNamespaces[0]) },
+		func() { _, _ = in.reads.Pods(criticalNamespaces[1]) },
+		func() { _, _ = in.reads.Pods(criticalNamespaces[2]) },
+	)
+	for _, ns := range criticalNamespaces {
+		pods, err := in.reads.Pods(ns)
+		if err != nil {
+			failures = append(failures, kubeFailure(in.Snapshot.Cluster.Name, "listing pods in "+ns, err))
+			unread = append(unread, ns)
+			continue
+		}
+		nsTotal, nsRunning := 0, 0
+		for i := range pods.Items {
+			pod := &pods.Items[i]
+			if pod.Status.Phase == corev1.PodSucceeded || staleFailedPod(pod) {
+				continue
+			}
+			nsTotal++
+			if problem := podProblem(pod); problem == "" {
+				nsRunning++
+			} else {
+				problems = append(problems, ns+"/"+pod.Name+" ("+problem+")")
+			}
+		}
+		total += nsTotal
+		running += nsRunning
+		details = append(details, fmt.Sprintf("%s: %d/%d pods running", ns, nsRunning, nsTotal))
+	}
+	r := evaluateWorkloads(total, running, problems)
+	r.Details = append(details, r.Details...)
+	if len(unread) == 0 {
+		return r
+	}
+	r.Failures = failures
+	if r.Outcome != Fail {
+		r.Outcome = Unreadable
+	}
+	r.Message += "; not read: " + strings.Join(unread, ", ")
+	return r
+}
+
+// evaluateWorkloads is the rule, apart from the reads.
+func evaluateWorkloads(total, running int, problems []string) Result {
+	findings := make([]string, 0, len(problems))
+	for _, p := range problems {
+		name, _, _ := strings.Cut(p, " (")
+		findings = append(findings, name)
+	}
+	slices.Sort(findings)
+	r := Result{Findings: findings}
+	switch {
+	case total == 0:
+		r.Outcome, r.Message = Warn, "no pods in the system namespaces"
+	case len(problems) == 0:
+		r.Outcome, r.Message = Pass, fmt.Sprintf("%d/%d pods running in the system namespaces", running, total)
+	case running*100 >= total*minRunningPodPercent:
+		r.Outcome, r.Message = Warn, fmt.Sprintf("%d/%d system pods running; %s", running, total, strings.Join(problems, ", "))
+	default:
+		r.Outcome, r.Message = Fail, fmt.Sprintf("%d/%d system pods running; %s", running, total, strings.Join(problems, ", "))
+	}
+	return r
+}
+
+// podProblem says what is wrong with a pod, or "" for a Running pod whose
+// containers are all ready.
+func podProblem(pod *corev1.Pod) string {
+	if pod.Status.Phase != corev1.PodRunning {
+		return string(pod.Status.Phase)
+	}
+	for _, c := range pod.Status.ContainerStatuses {
+		if !c.Ready {
+			return "containers not ready"
+		}
+	}
+	return ""
+}
+
+// staleFailedPod reports whether a Failed pod was left behind by an
+// eviction or a node shutdown. "Terminated" is a generic reason, so it
+// counts only with the DisruptionTarget condition of the kubelet or its
+// shutdown message.
+func staleFailedPod(pod *corev1.Pod) bool {
 	if pod.Status.Phase != corev1.PodFailed {
 		return false
 	}
@@ -33,148 +130,11 @@ func staleFailedPod(pod corev1.Pod) bool {
 		return true
 	case "Terminated":
 		for _, c := range pod.Status.Conditions {
-			if c.Type == corev1.DisruptionTarget && c.Status == corev1.ConditionTrue &&
-				c.Reason == corev1.PodReasonTerminationByKubelet {
+			if c.Type == corev1.DisruptionTarget && c.Status == corev1.ConditionTrue && c.Reason == corev1.PodReasonTerminationByKubelet {
 				return true
 			}
 		}
 		return pod.Status.Message == kubeletShutdownMessage
 	}
 	return false
-}
-
-// CheckCriticalWorkloads validates that critical system workloads are running
-func (hc *HealthChecker) CheckCriticalWorkloads(ctx context.Context) HealthResult {
-	return hc.checkCriticalWorkloads(ctx, "")
-}
-
-// checkCriticalWorkloads is CheckCriticalWorkloads for clusterName. The
-// cluster name goes on the failure of each namespace whose pods could not be
-// listed.
-func (hc *HealthChecker) checkCriticalWorkloads(ctx context.Context, clusterName string) HealthResult {
-	result := HealthResult{
-		Name:       "Critical Workloads",
-		IsBlocking: true, // Critical workloads are blocking
-		Details:    []string{},
-	}
-
-	if hc.k8sClient == nil {
-		return skippedResult(result.Name, "Kubernetes client not available, skipping workload check",
-			"Install kubectl and configure cluster access to enable this check")
-	}
-
-	// Check critical namespaces
-	criticalNamespaces := []string{
-		"kube-system",
-		"kube-public",
-		"kube-node-lease",
-	}
-
-	totalPods := 0
-	runningPods := 0
-	var problemPods []string
-	// unread are the namespaces whose pod list failed. Their pods are
-	// unknown, so the check cannot pass and cannot say "no pods".
-	var unread []string
-
-	for _, namespace := range criticalNamespaces {
-		pods, err := hc.k8sClient.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
-		if err != nil {
-			result.Details = append(result.Details, fmt.Sprintf("Failed to list pods in %s: %v", namespace, err))
-			result.failures = append(result.failures, clusterFailure(clusterName, "", fmt.Errorf("listing pods in %s: %w", namespace, err)))
-			unread = append(unread, namespace)
-			continue
-		}
-
-		namespacePods := 0
-		namespaceRunning := 0
-
-		for _, pod := range pods.Items {
-			// Skip completed pods (jobs, etc.)
-			if pod.Status.Phase == "Succeeded" {
-				continue
-			}
-			// Skip stale Failed pods left behind by eviction or node shutdown:
-			// they linger until garbage collection and say nothing about the
-			// health of the live replacement pods.
-			if staleFailedPod(pod) {
-				continue
-			}
-
-			totalPods++
-			namespacePods++
-
-			switch pod.Status.Phase {
-			case "Running":
-				// Check if all containers are ready
-				allReady := true
-				for _, containerStatus := range pod.Status.ContainerStatuses {
-					if !containerStatus.Ready {
-						allReady = false
-						break
-					}
-				}
-				if allReady {
-					runningPods++
-					namespaceRunning++
-				} else {
-					problemPods = append(problemPods, fmt.Sprintf("%s/%s (containers not ready)", namespace, pod.Name))
-				}
-			case "Pending":
-				problemPods = append(problemPods, fmt.Sprintf("%s/%s (Pending)", namespace, pod.Name))
-			case "Failed":
-				problemPods = append(problemPods, fmt.Sprintf("%s/%s (Failed)", namespace, pod.Name))
-			case "Unknown":
-				problemPods = append(problemPods, fmt.Sprintf("%s/%s (Unknown)", namespace, pod.Name))
-			default:
-				problemPods = append(problemPods, fmt.Sprintf("%s/%s (%s)", namespace, pod.Name, pod.Status.Phase))
-			}
-		}
-
-		result.Details = append(result.Details, fmt.Sprintf("%s: %d/%d pods running", namespace, namespaceRunning, namespacePods))
-	}
-
-	// Calculate score and status
-	if totalPods == 0 && len(unread) > 0 {
-		result.Status = StatusWarn
-		result.Score = 60
-		result.Message = fmt.Sprintf("Failed to list pods in %s", strings.Join(unread, ", "))
-		return result
-	}
-	if totalPods == 0 {
-		result.Status = StatusWarn
-		result.Score = 70
-		result.Message = "No critical pods found"
-		return result
-	}
-
-	scorePercentage := (runningPods * 100) / totalPods
-	result.Score = scorePercentage
-
-	if len(problemPods) == 0 {
-		result.Status = StatusPass
-		result.Message = fmt.Sprintf("%d/%d critical pods running", runningPods, totalPods)
-	} else if scorePercentage >= 90 {
-		result.Status = StatusWarn
-		result.Message = fmt.Sprintf("%d/%d critical pods running, %d issues", runningPods, totalPods, len(problemPods))
-		result.Details = append(result.Details, fmt.Sprintf("Problem pods: %v", problemPods))
-	} else {
-		result.Status = StatusFail
-		result.Message = fmt.Sprintf("%d/%d critical pods running, %d issues", runningPods, totalPods, len(problemPods))
-		result.Details = append(result.Details, fmt.Sprintf("Problem pods: %v", problemPods))
-	}
-
-	if len(unread) > 0 {
-		// The pods that were read say nothing about the unread namespaces: a
-		// pass becomes a warning, and a warning or failure stays as it is.
-		// The score is capped whatever the status, so a namespace with a
-		// problem pod cannot score higher than one where every pod is ready.
-		if result.Status == StatusPass {
-			result.Status = StatusWarn
-		}
-		result.Score = min(result.Score, 60)
-		result.Message += fmt.Sprintf("; failed to list pods in %s", strings.Join(unread, ", "))
-	}
-
-	return result
 }

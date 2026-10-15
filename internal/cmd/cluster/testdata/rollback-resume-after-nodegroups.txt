@@ -1,0 +1,54 @@
+exit: 0
+error: 
+--- stdout ---
+Run   [OK] Succeeded   ClusterRollback
+
+RUN
+  operation       ClusterRollback
+  cluster         prod
+  region          us-east-1
+  version         1.33
+  target version  1.32
+  status          [OK] Succeeded
+
+RESULTS  5
+  NAME           KIND          STATUS          FROM                TO                  UPDATE                                NOTE      STARTED                  FINISHED                 FAILURE
+  api            Nodegroup     [OK] Succeeded  1.33                1.32                -                                     attached  2026-01-01 00:00:00 UTC  2026-01-01 00:00:30 UTC  -
+  web            Nodegroup     - Skipped       1.32                1.32                -                                     -         -                        -                        -
+  vpc-cni        Addon         [OK] Succeeded  v1.20.0-eksbuild.1  v1.19.0-eksbuild.1  00000000-0000-4000-8000-000000000002  -         2026-01-01 00:00:30 UTC  2026-01-01 00:01:00 UTC  -
+  kube-proxy     Addon         [OK] Succeeded  v1.33.0-eksbuild.1  v1.32.0-eksbuild.1  00000000-0000-4000-8000-000000000003  -         2026-01-01 00:01:00 UTC  2026-01-01 00:01:30 UTC  -
+  control-plane  ControlPlane  [OK] Succeeded  1.33                1.32                00000000-0000-4000-8000-000000000004  -         2026-01-01 00:01:30 UTC  2026-01-01 00:02:15 UTC  -
+
+VERIFICATION  5
+  NAME                    OUTCOME    MESSAGE
+  NodegroupActive/api     [OK] Pass  api ACTIVE
+  NodesReady/api          Skipped    no baseline of the nodes before the roll
+  NewPendingPods/api      Skipped    no baseline of the Pending pods before the roll
+  AddonHealth/vpc-cni     [OK] Pass  vpc-cni is ACTIVE at v1.19.0-eksbuild.1
+  AddonHealth/kube-proxy  [OK] Pass  kube-proxy is ACTIVE at v1.32.0-eksbuild.1
+
+NOTICES
+  1  self-managed and hybrid nodes are not rolled back by EKS or refresh: move them to 1.32 yourself before the control plane rolls back. Fargate pods at 1.33 trigger the kubelet skew insight: delete them first, and they come back at 1.32
+--- stderr ---
+PLAN  ClusterRollback, prod in us-east-1
+  api            wait for the update to 1.32 that is running (InFlight)
+  web            skip, at 1.32 (AlreadyAtTarget)
+  vpc-cni        update v1.20.0-eksbuild.1 to v1.19.0-eksbuild.1 (VersionAhead)
+  kube-proxy     update v1.33.0-eksbuild.1 to v1.32.0-eksbuild.1 (VersionAhead)
+  control-plane  update 1.33 to 1.32 (VersionAhead)
+warning: self-managed and hybrid nodes are not rolled back by EKS or refresh: move them to 1.32 yourself before the control plane rolls back. Fargate pods at 1.33 trigger the kubelet skew insight: delete them first, and they come back at 1.32
+phase: nodegroups
+warning: nodegroup api is UPDATING already; waiting for that update
+api: UPDATING
+[OK] api: Succeeded
+phase: add-ons
+[~] vpc-cni: Started (update 00000000-0000-4000-8000-000000000002)
+vpc-cni: InProgress
+[OK] vpc-cni: Succeeded
+[~] kube-proxy: Started (update 00000000-0000-4000-8000-000000000003)
+kube-proxy: InProgress
+[OK] kube-proxy: Succeeded
+phase: control plane
+[~] control-plane: Started (update 00000000-0000-4000-8000-000000000004)
+control-plane: InProgress
+[OK] control-plane: Succeeded

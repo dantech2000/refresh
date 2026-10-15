@@ -1,0 +1,32 @@
+exit: 0
+error: 
+--- stdout ---
+Run   [OK] Succeeded   NodegroupScale
+
+RUN
+  operation  NodegroupScale
+  cluster    prod
+  region     us-east-1
+  version    1.33
+  status     [OK] Succeeded
+
+RESULTS  1
+  NAME  KIND   STATUS          FROM                     TO                       UPDATE                                NOTE  STARTED                  FINISHED                 FAILURE
+  web   Scale  [OK] Succeeded  desired 2, min 1, max 3  desired 3, min 1, max 3  00000000-0000-4000-8000-000000000001  -     2026-01-01 00:00:00 UTC  2026-01-01 00:00:45 UTC  -
+
+HEALTH GATE
+  decision  [OK] Go
+
+CHECKS  1
+  NAME    OUTCOME    MESSAGE
+  Quotas  [OK] Pass  31% of the vCPU quota in use (40 of 128)
+
+NOTICES
+  1  EC2 does not offer every instance type of nodegroup web in each of its availability zones (r8g.large in us-east-1a, r8g.large in us-east-1b); new nodes may fail to launch there. This checks the offering, and not the capacity that is free now
+--- stderr ---
+PLAN  NodegroupScale, prod in us-east-1
+  web  scale from desired 2, min 1, max 3 to desired 3, min 1, max 3
+warning: EC2 does not offer every instance type of nodegroup web in each of its availability zones (r8g.large in us-east-1a, r8g.large in us-east-1b); new nodes may fail to launch there. This checks the offering, and not the capacity that is free now
+[~] web: Started (update 00000000-0000-4000-8000-000000000001)
+web: InProgress
+[OK] web: Succeeded

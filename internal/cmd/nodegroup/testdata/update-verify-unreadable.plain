@@ -1,0 +1,36 @@
+exit: 4
+error: listing Pending pods before the roll: Pod is forbidden: User "fake" cannot list the resource at the cluster scope
+--- stdout ---
+FIELD	VALUE
+run.operation	NodegroupUpdate
+run.cluster	prod
+run.region	us-east-1
+run.version	1.32
+run.status	Incomplete
+results.web.kind	Nodegroup
+results.web.status	Succeeded
+results.web.from	1.32 (release 1.32.0-20250101, AMI ami-old32x)
+results.web.to	1.32 (AMI ami-latest132)
+results.web.update	00000000-0000-4000-8000-000000000001
+results.web.note	-
+results.web.started	2026-01-01 00:00:00 UTC
+results.web.finished	2026-01-01 00:00:30 UTC
+results.web.failure	-
+verification.NodegroupActive.outcome	Pass
+verification.NodegroupActive.message	web ACTIVE
+verification.NodesReady.outcome	Unreadable
+verification.NodesReady.message	the nodes could not be listed before the roll
+verification.NewPendingPods.outcome	Unreadable
+verification.NewPendingPods.message	the Pending pods could not be listed before the roll
+notices.1	the health checks were skipped (--skip-health-check)
+--- stderr ---
+PLAN  NodegroupUpdate, prod in us-east-1
+  web  roll onto the latest AMI of 1.32 (ami-latest132) (AMIOutdated)
+warning: the health checks were skipped (--skip-health-check)
+[~] web: Started (update 00000000-0000-4000-8000-000000000001)
+web: InProgress
+[OK] web: Succeeded
+  [OK] NodegroupActive  web ACTIVE
+  [?]  NodesReady       the nodes could not be listed before the roll
+  [?]  NewPendingPods   the Pending pods could not be listed before the roll
+warning: cluster prod (us-east-1): AccessDenied: listing Pending pods before the roll: Pod is forbidden: User "fake" cannot list the resource at the cluster scope

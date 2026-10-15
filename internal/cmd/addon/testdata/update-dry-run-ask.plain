@@ -1,0 +1,20 @@
+exit: 2
+error: dry run: a real run would ask about health warnings
+--- stdout ---
+FIELD	VALUE
+plan.operation	AddonUpdate
+plan.cluster	prod
+plan.region	us-east-1
+plan.version	1.33
+plan.decision	Ask
+steps.coredns.kind	Addon
+steps.coredns.action	Submit
+steps.coredns.reason	VersionBehind
+steps.coredns.from	v1.11.3-eksbuild.2
+steps.coredns.to	v1.11.4-eksbuild.2
+steps.coredns.note	-
+health_gate.decision	Ask
+health_gate.reasons	Addons: coredns is DEGRADED (InsufficientNumberOfReplicas); the update will try to repair it
+checks.Addons.outcome	Warn
+checks.Addons.message	coredns is DEGRADED (InsufficientNumberOfReplicas); the update will try to repair it
+--- stderr ---

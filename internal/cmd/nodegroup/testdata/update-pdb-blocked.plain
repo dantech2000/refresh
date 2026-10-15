@@ -1,0 +1,47 @@
+exit: 3
+error: blocked by 1 health check: DrainBlockers: PDB default/web allows 0 disruptions on the target nodegroups; the roll would stall on eviction; nothing was started
+--- stdout ---
+FIELD	VALUE
+plan.operation	NodegroupUpdate
+plan.cluster	prod
+plan.region	us-east-1
+plan.version	1.32
+plan.decision	Blocked
+steps.web.kind	Nodegroup
+steps.web.action	Submit
+steps.web.reason	AMIOutdated
+steps.web.from	1.32 (release 1.32.0-20250101, AMI ami-old32x)
+steps.web.to	1.32 (AMI ami-latest132)
+steps.web.note	-
+health_gate.decision	Block
+health_gate.reasons	DrainBlockers: PDB default/web allows 0 disruptions on the target nodegroups; the roll would stall on eviction
+checks.Nodes.outcome	Pass
+checks.Nodes.message	4/4 nodes ready
+checks.Capacity.outcome	Pass
+checks.Capacity.message	CPU mean 32%, peak 32%, 4 instances
+checks.ControlPlane.outcome	Skipped
+checks.ControlPlane.message	control-plane metrics not emitted (EKS 1.28+ on a supported platform version)
+checks.Workloads.outcome	Pass
+checks.Workloads.message	2/2 pods running in the system namespaces
+checks.DrainBlockers.outcome	Fail
+checks.DrainBlockers.message	PDB default/web allows 0 disruptions on the target nodegroups; the roll would stall on eviction
+checks.PDBCoverage.outcome	Pass
+checks.PDBCoverage.message	every deployment has a PodDisruptionBudget (2)
+checks.Utilization.outcome	Pass
+checks.Utilization.message	CPU 20%, memory 25% in use
+checks.Quotas.outcome	Pass
+checks.Quotas.message	31% of the vCPU quota in use (40 of 128)
+checks.Kubernetes.outcome	Pass
+checks.Kubernetes.message	Kubernetes API reachable
+--- stderr ---
+PLAN  NodegroupUpdate, prod in us-east-1
+  web  roll onto the latest AMI of 1.32 (ami-latest132) (AMIOutdated)
+  [OK] Nodes          4/4 nodes ready
+  [OK] Capacity       CPU mean 32%, peak 32%, 4 instances
+       ControlPlane   control-plane metrics not emitted (EKS 1.28+ on a supported platform version)
+  [OK] Workloads      2/2 pods running in the system namespaces
+  [X]  DrainBlockers  PDB default/web allows 0 disruptions on the target nodegroups; the roll would stall on eviction
+  [OK] PDBCoverage    every deployment has a PodDisruptionBudget (2)
+  [OK] Utilization    CPU 20%, memory 25% in use
+  [OK] Quotas         31% of the vCPU quota in use (40 of 128)
+  [OK] Kubernetes     Kubernetes API reachable

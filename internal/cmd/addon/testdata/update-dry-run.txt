@@ -1,0 +1,25 @@
+exit: 0
+error: 
+--- stdout ---
+Plan   [OK] Proceed   AddonUpdate
+
+PLAN
+  operation  AddonUpdate
+  cluster    prod
+  region     us-east-1
+  version    1.33
+  decision   [OK] Proceed
+
+STEPS  3
+  NAME        KIND   ACTION  REASON           FROM                TO                  NOTE
+  vpc-cni     Addon  Submit  VersionBehind    v1.19.0-eksbuild.1  v1.20.0-eksbuild.1  -
+  coredns     Addon  Submit  VersionBehind    v1.11.3-eksbuild.2  v1.11.4-eksbuild.2  -
+  kube-proxy  Addon  Skip    AlreadyAtTarget  v1.33.0-eksbuild.2  v1.33.0-eksbuild.2  -
+
+HEALTH GATE
+  decision  [OK] Go
+
+CHECKS  1
+  NAME    OUTCOME    MESSAGE
+  Addons  [OK] Pass  2 add-ons ACTIVE
+--- stderr ---

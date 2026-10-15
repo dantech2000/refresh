@@ -1,0 +1,27 @@
+exit: 3
+error: health checks reported 1 warning and --require-healthy is set: Addons: coredns is DEGRADED; the update will try to repair it; nothing was started
+--- stdout ---
+Plan   [X] Blocked   AddonUpdate
+
+PLAN
+  operation  AddonUpdate
+  cluster    prod
+  region     us-east-1
+  version    1.33
+  decision   [X] Blocked
+
+STEPS  1
+  NAME     KIND   ACTION  REASON         FROM                TO                  NOTE
+  coredns  Addon  Submit  VersionBehind  v1.11.3-eksbuild.2  v1.11.4-eksbuild.2  -
+
+HEALTH GATE
+  decision  [X] Block
+  reasons   Addons: coredns is DEGRADED; the update will try to repair it
+
+CHECKS  1
+  NAME    OUTCOME   MESSAGE
+  Addons  [!] Warn  coredns is DEGRADED; the update will try to repair it
+--- stderr ---
+PLAN  AddonUpdate, prod in us-east-1
+  coredns  update v1.11.3-eksbuild.2 to v1.11.4-eksbuild.2 (VersionBehind)
+  [!] Addons  coredns is DEGRADED; the update will try to repair it

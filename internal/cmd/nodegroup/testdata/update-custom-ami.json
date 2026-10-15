@@ -1,0 +1,36 @@
+exit: 0
+error: 
+--- stdout ---
+{
+  "apiVersion": "refresh.drod.dev/v2",
+  "kind": "Plan",
+  "operation": "NodegroupUpdate",
+  "clusters": [
+    {
+      "cluster": "prod",
+      "region": "us-east-1",
+      "version": "1.32",
+      "decision": "NothingToDo",
+      "steps": [
+        {
+          "phase": "Roll",
+          "kind": "Nodegroup",
+          "name": "web",
+          "action": "Manual",
+          "reason": "CustomAMI",
+          "from": "1.32",
+          "to": "1.32"
+        }
+      ],
+      "blockers": [],
+      "notices": [
+        "nodegroup web has a custom AMI (AMI type CUSTOM) and is not rolled; publish a new launch template version to roll it"
+      ]
+    }
+  ],
+  "failures": []
+}
+--- stderr ---
+PLAN  NodegroupUpdate, prod in us-east-1
+  web  left to you (CustomAMI)
+warning: nodegroup web has a custom AMI (AMI type CUSTOM) and is not rolled; publish a new launch template version to roll it

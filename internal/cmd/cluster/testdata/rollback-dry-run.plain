@@ -1,0 +1,61 @@
+exit: 0
+error: 
+--- stdout ---
+FIELD	VALUE
+plan.operation	ClusterRollback
+plan.cluster	prod
+plan.region	us-east-1
+plan.version	1.33
+plan.target_version	1.32
+plan.decision	Proceed
+steps.api.kind	Nodegroup
+steps.api.action	Submit
+steps.api.reason	VersionAhead
+steps.api.from	1.33
+steps.api.to	1.32
+steps.api.note	-
+steps.web.kind	Nodegroup
+steps.web.action	Submit
+steps.web.reason	VersionAhead
+steps.web.from	1.33
+steps.web.to	1.32
+steps.web.note	-
+steps.vpc-cni.kind	Addon
+steps.vpc-cni.action	Submit
+steps.vpc-cni.reason	VersionAhead
+steps.vpc-cni.from	v1.20.0-eksbuild.1
+steps.vpc-cni.to	v1.19.0-eksbuild.1
+steps.vpc-cni.note	-
+steps.kube-proxy.kind	Addon
+steps.kube-proxy.action	Submit
+steps.kube-proxy.reason	VersionAhead
+steps.kube-proxy.from	v1.33.0-eksbuild.1
+steps.kube-proxy.to	v1.32.0-eksbuild.1
+steps.kube-proxy.note	-
+steps.control-plane.kind	ControlPlane
+steps.control-plane.action	Submit
+steps.control-plane.reason	VersionAhead
+steps.control-plane.from	1.33
+steps.control-plane.to	1.32
+steps.control-plane.note	-
+health_gate.decision	Go
+checks.Nodes.outcome	Pass
+checks.Nodes.message	4/4 nodes ready
+checks.Capacity.outcome	Pass
+checks.Capacity.message	CPU mean 32%, peak 32%, 4 instances
+checks.ControlPlane.outcome	Skipped
+checks.ControlPlane.message	control-plane metrics not emitted (EKS 1.28+ on a supported platform version)
+checks.Workloads.outcome	Pass
+checks.Workloads.message	1/1 pods running in the system namespaces
+checks.DrainBlockers.outcome	Pass
+checks.DrainBlockers.message	no PodDisruptionBudget blocks a drain
+checks.PDBCoverage.outcome	Pass
+checks.PDBCoverage.message	every deployment has a PodDisruptionBudget (2)
+checks.Utilization.outcome	Pass
+checks.Utilization.message	CPU 20%, memory 25% in use
+checks.Quotas.outcome	Pass
+checks.Quotas.message	31% of the vCPU quota in use (40 of 128)
+checks.Kubernetes.outcome	Pass
+checks.Kubernetes.message	Kubernetes API reachable
+notices.1	self-managed and hybrid nodes are not rolled back by EKS or refresh: move them to 1.32 yourself before the control plane rolls back. Fargate pods at 1.33 trigger the kubelet skew insight: delete them first, and they come back at 1.32
+--- stderr ---

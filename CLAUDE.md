@@ -1,453 +1,287 @@
 # CLAUDE.md
 
-Guidance for AI agents (and humans) working in this repo.
+Guidance for AI agents and for people who work in this repo.
 
 ## What this is
 
-`refresh` — the **EKS upgrade companion**: a Go CLI for the cluster
-upgrade/patching lifecycle — *status → readiness → patch → upgrade*. The core
-loop is `refresh status` (what's stale across the fleet) → `cluster
-upgrade-check` (am I ready) → `nodegroup update` / `addon update` (patch safely,
-with pre-flight health gates, dry-run, and live monitoring) → `cluster upgrade`
-(orchestrate the whole thing). Supporting surface: `cluster list/describe`,
-`nodegroup list/describe/scale`, `addon *`, and kubectx-style contexts.
+`refresh` is a Go CLI that keeps Amazon EKS clusters up to date. The product is
+one loop: `refresh status` (what is out of date in the fleet), `cluster
+upgrade-check` (is the cluster ready), `nodegroup update` and `addon update`
+(patch, behind a health gate), and `cluster upgrade` (the whole upgrade, in
+order). `cluster rollback` undoes an upgrade. The rest is reads (`cluster
+list/describe`, `nodegroup list/describe`, `addon list/describe`), `nodegroup
+scale`, contexts, and an experimental TUI (`refresh ui`).
 
-Browse-y features that competed with eksctl/k9s/Kubecost (cost estimation,
-CloudWatch utilization tables, `cluster diff`, the standalone `workload pdbs`
-command) were removed on purpose: they compete with those tools, not with the
-upgrade loop. Don't re-add them. PDB awareness still lives where it earns its
-keep: the pre-flight health checks and `nodegroup scale --check-pdbs`.
+Features that compete with eksctl, k9s, or Kubecost were removed on purpose:
+cost estimation, utilization tables, `cluster diff`, a standalone PDB command.
+Do not add them again.
 
-Module path: `github.com/dantech2000/refresh`. Entry point: `main.go`.
+`CONTRACT.md` is the public interface: commands, flags, env vars, documents,
+exit codes. A change to any of them is a contract change. Do not make one
+without the owner's sign-off.
 
-## Build / test / lint
+Module path: `github.com/dantech2000/refresh`. The binary is `cmd/refresh`.
 
-Prefer the Taskfile targets; raw commands shown for reference.
+## Build, test, lint
+
+Use the Taskfile targets.
 
 ```bash
-task build          # go build -o dist/refresh . (CGO_ENABLED=0)
+task build          # go build -o dist/refresh ./cmd/refresh (CGO_ENABLED=0)
 task test           # go test ./...
-task test:coverage  # coverage profile + html
 task test:race      # go test -race -shuffle=on -count=2 ./...  (COUNT=n to change)
-task lint           # golangci-lint (CI-pinned version via go run; config: .golangci.yml)
+task lint           # golangci-lint at the CI-pinned version (config: .golangci.yml)
 task vet            # go vet ./...
-task vuln           # govulncheck ./...  (pinned)
-task deadcode       # fail on code unreachable even from tests (pinned)
+task vuln           # govulncheck ./...
+task deadcode       # fail on code that nothing reaches, tests included
 task tidy:check     # go mod tidy -diff
-task docs:check     # regenerate docs/reference and docs/schema, fail if either changed
-task fuzz           # run every FuzzXxx target for FUZZTIME (default 30s); failing inputs land in testdata/fuzz/
-task test:live      # read-only checks against a real account (AWS_PROFILE): AMI SSM paths, support calendar, add-on versions, offerings, schemas
-task dev:full       # fmt, vet, lint, tidy:check, deadcode, vuln, docs:check, test:race, build (run before pushing)
+task docs:check     # regenerate docs/reference and api/schema, fail if either changed
+task docs:build     # mkdocs build --strict
+task fuzz           # every FuzzXxx target for FUZZTIME (default 30s)
+task test:parity    # the parity suite
+task test:live      # read-only checks against a real account (AWS_PROFILE): AMI paths, calendar, add-on versions, regions, offerings, schemas
+task run:sim -- status -A   # the binary against a fake fleet, no AWS account
+task run:tui:sim    # the TUI against the fake fleet
+task dev:full       # everything CI runs; run it before you push
 ```
 
-CI mirrors `dev:full` on every PR: tidy check, docs reference check,
-`go test -race` (+ coverage to Codecov), a shuffled `-race -count=5` stress
-job, `golangci-lint` (includes govet and gofmt), `govulncheck`, and
-`deadcode`. A push to main runs only the coverage job (Codecov's base). A
-nightly workflow runs `-race -count=20`, every fuzz target for 60s, and
-`govulncheck` on main.
+CI runs the same checks on every PR: tidy, the docs freshness check, `go test
+-race` with coverage, a shuffled `-race -count=5` run, golangci-lint,
+govulncheck, and deadcode. A nightly workflow runs `-race -count=20`, every
+fuzz target for 60s, and govulncheck.
 
-`go run ./internal/tools/fakefleet` (a dev tool, not linked into the binary)
-serves a large fake fleet on `fakeaws.Start`: many clusters over many
-regions, random latency, a slow region, a closed region, and throttled
-calls (`-clusters`, `-regions`, `-latency`, `-throttle`, `-closed-region`).
-It prints the environment to point refresh at it (`source` it, then run
-`refresh status -A` or `refresh ui -A`). Use it to test sweeps, retries,
-and the TUI at fleet scale with no AWS account.
+**Toolchain.** The Taskfile sets `GOTOOLCHAIN` to the `toolchain` line of
+`go.mod`, which is the Go that CI uses. A newer local Go formats differently.
+The versions of golangci-lint, govulncheck, and deadcode are pinned in the
+Taskfile `vars` and must match the workflows.
 
-`task test:live` (`-tags livecheck`, never in CI) checks the data refresh
-depends on against a real account, with read-only calls that cost nothing: the
-latest-AMI SSM path of every AMI type for every EKS version, the
-`fallbackCalendar` dates against `DescribeClusterVersions`, add-on version
-ordering, instance offerings, and the published schemas against real
-`-o json|yaml` output. Run it with a `ReadOnlyAccess` identity. It fails when
-AWS adds an AMI type refresh has no SSM spec for, or the calendar goes stale.
+**The fake fleet.** `tools/fakefleet` serves a fake AWS and a fake Kubernetes
+API from one world: many clusters in many regions, a slow region, a closed
+region, throttled calls, and clusters in named situations (a PDB that blocks a
+drain, a degraded add-on, a roll that fails). `task run:sim -- <args>` starts
+it, runs the binary against it, and prints which cluster shows what. Use it to
+see real output with no account. `FAKEFLEET_FLAGS="-speed 60"` makes the
+clock of the world run faster, so a roll ends in seconds.
 
-**Toolchain pinning.** The Taskfile sets `GOTOOLCHAIN` to the `toolchain`
-line in `go.mod`, which is the Go that CI uses. A newer local Go formats
-differently, so without the pin a change can pass `task fmt` and fail CI's
-gofmt. `task lint` builds golangci-lint with that toolchain for the same
-reason, and CI uses `install-mode: goinstall`. To opt out for one run, set
-`GOTOOLCHAIN=local task ...`. Tool versions (golangci-lint, govulncheck,
-deadcode) are pinned in the Taskfile `vars` and must match the workflows.
+## Layout
 
-Requires Go 1.26+ (`go.mod` pins the `go` and `toolchain` versions).
-
-## Architecture
-
-Layered, with dependency injection via interfaces (so everything is mockable):
+The standard Go project layout. All product code is under `internal/`.
 
 ```
-command (CLI wiring)  internal/commands/{statuscmd,cluster,nodegroup,addon,ctxcmd}
-  → runner            internal/commands/runner   (AWS setup, cluster/region resolution, kube client, EncodeStdout, spinners)
-  → factory           internal/commands/factory  (service constructors)
-  → service           internal/services/*        (business logic + AWS calls)
-  → view              internal/commands/{clusterview,statusview}, internal/rollview, internal/render, internal/ui
+cmd/refresh/            main: signals, the root command, the exit code
+internal/
+  apidoc/               every document type, the kind registry, enums, Failure
+  awsx/                 config load, Clients, retry policies, paging, error classes, the IAM table
+  awsx/awsxtest/        an HTTP server that answers the AWS APIs from a world
+  fleet/                Snapshot, the fetcher, the region sweep, Version
+  fleet/fleetdata/      facts that refresh ships with: support calendar, AMI SSM paths, regions
+  fleet/fleettest/      the world model and its clock
+  health/               the checks, Gate, drain blockers, post-roll verification
+  change/               plans, waits, rolls, add-on update, scale, the upgrade and rollback engines
+  noderoll/             the node observer and tracker of a roll
+  kube/                 kube client resolution
+  kube/kubetest/        Kubernetes fakes driven by a world
+  fanout/               bounded fan-out and a per-run memo
+  exitcode/             the six exit codes
+  contexts/             the saved contexts (context.yaml)
+  updatecheck/          the release check of `refresh version`
+  build/                version, commit, build date (set with -X)
+  cmdutil/              Factory, IOStreams, ExitError, flag helpers, target resolution, Print
+  cmd/root/             the root command and the global flags
+  cmd/<group>/          one package per command group: cluster, nodegroup, addon, status,
+                        contextcmd, version, ui, gendocs
+  cmd/changecmd/        what the five changing commands share: flags, renderers, the run loop
+  cmd/fleetcmd/         what the sweep commands share: regions, progress, kube access
+  cmd/cmdtest/          runs a whole command against the fake AWS, for tests
+  view/                 theme, list columns, describe sections, plain output, the live region
+  tui/, tui/backend/    the Bubble Tea model, and the backend that feeds it
+api/schema/v2/          the generated JSON Schemas; the docs site publishes them
+test/parity/            the parity suite
+tools/genschema/        writes api/schema/v2 from the Go types
+tools/fakefleet/        the fake fleet server
+tools/mkdocs/           the MkDocs hook that publishes api/schema
+docs/                   user documentation (Material for MkDocs); docs/reference is generated
 ```
 
-**runner** helpers (use these, don't re-implement them):
+### Dependency direction
 
-- `SetupAWS(ctx, cmd)` opens the API context with the global `--timeout`,
-  loads the config, and resolves credentials locally (no STS round trip; a
-  sweep in which no region answered asks STS through `NoRegionAnswered`).
-  `SetupAWSWithDeadline(ctx, cmd, d)`
-  takes an explicit deadline (`d <= 0` = none) for commands that scope their
-  own long waits (`nodegroup update`, `nodegroup scale --wait`, `addon update`,
-  `cluster upgrade`).
-  Prompts under the returned context pause the deadline and wait on the
-  signal context (see `apiContext`).
-- Cluster resolution: `ResolveClusterOrList` for read-only commands (flag →
-  positional → refresh context → kubeconfig current cluster; prints the
-  cluster list hint to stderr and returns an error when nothing resolves);
-  `ResolveCluster` for mutating commands (no kubeconfig fallback, never lists);
-  `ResolveClusterName` when the caller parsed the requested cluster itself.
-  A read-only `[cluster] [item]` command parses with `DescribeTarget` (a lone
-  positional is the item when a context is active) and resolves with
-  `ResolveClusterNameOrList`.
-  All of them read `--format` and never prompt for `-o json/yaml`, even on a
-  TTY. Exact names beat substring matches.
-  `nodegroup update` reads `EKS_CLUSTER_NAME` in code; never give a
-  `--cluster` flag an env `Sources` (urfave reports it as set).
-- `Regions(cmd, allRegions)` is the only way to read a subcommand's
-  repeatable `-r/--region`: it folds in the global `--region` placed before
-  the subcommand (without a sweep) and returns nil when there is no explicit
-  list, so `REFRESH_EKS_REGIONS` / the partition default apply.
-- `ResolveClusterKubeClient` returns the Kubernetes client for the target
-  cluster: a kubeconfig context whose server matches the EKS endpoint,
-  `--kube-context` as named, or in-cluster config only when
-  `REFRESH_IN_CLUSTER_NAME` matches. On a mismatch it warns once and returns
-  nil. Build health checkers with `health.NewCheckerForConfig(awsCfg, kube,
-  metrics)` so every command gets the same EKS/CloudWatch/ASG/Service Quotas
-  wiring.
+`apidoc` and `awsx` import no other refresh package. `fleet` imports them.
+`health` and `change` import `fleet`. `cmd/...`, `cmdutil`, `view`, and `tui`
+are on top. Nothing below them reads a flag or writes to a terminal.
+`exitcode` and `fanout` import nothing of refresh. A `...test` package is
+imported only by tests, `test/`, and `tools/`. An `imports_test.go` in each of
+`apidoc`, `awsx`, `fleet`, `health`, `change`, `noderoll`, `cmdutil`, `tui`,
+and `tui/backend` enforces this. If one fails, move the code. Do not edit the
+test to allow the import.
 
-Supporting packages: `internal/aws` (SDK abstractions, AMI lookup, cluster name
-resolution), `internal/aws/awserr` (see below), `internal/awsconfig` (unified
-config loading), `internal/cliconfig` (YAML context store), `internal/common`
-(retry, bounded fan-out, paging, memo; imports no other refresh package, so any
-layer can use it), `internal/config`
-(defaults, env var names), `internal/health` (pre-flight checks, PDB gates,
-kube target matching), `internal/monitoring` (update progress),
-`internal/dryrun`, `internal/regionsweep` (one call per region, sorted into
-answered, skipped, and failed; every multi-region command uses it),
-`internal/types`, `internal/mocks`,
-`internal/services/upgrade` (cluster upgrade orchestrator: plan generation +
-control-plane/addon/nodegroup phases + sequencing engine; resumable by
-re-deriving the plan from live cluster state, not state files).
+## Code standards
 
-**`internal/aws/awserr`** is a leaf package: `FormatAWSError`, `ListAllPages`,
-`Summary`, and the typed error classifiers (smithy API codes, net/url errors,
-the SDK retryables). It imports neither `internal/ui` nor `internal/health`,
-which breaks the `internal/aws` → `internal/ui` → `internal/health` cycle, so
-the health checks can format AWS errors too. `internal/aws` re-exports
-`FormatAWSError` and `ListAllPages`, so existing callers keep their imports.
-Classify errors with `errors.As`, never by matching strings.
+The code follows the published Go guides: Effective Go, Go Code Review
+Comments, and Google's Go style guide. Do not add project-specific
+abstractions or rules. `REWRITE.md` ("Code standards") has the reasoning.
 
-**Output contract** (docs: `docs/concepts/output.md`):
+- Packages are named for what they provide. No `common`, `types`, `helpers`.
+- Interfaces are small and defined by the consumer, only where needed.
+- No package-level mutable state. Pass dependencies in.
+- Errors that a caller must tell apart are typed and wrapped with `%w`. Use
+  `errors.Is` and `errors.As`. Never match error text.
+- Options go in a struct when a function has many.
+- Tests are table-driven, with the standard library and `go-cmp`.
 
-- `-o json|yaml`: stdout holds exactly one document (`runner.EncodeStdout`).
-  Progress, notices, prompts, spinners, and credential help go to stderr or
-  are dropped. Check `runner.IsMachineFormat(format)` before printing anything
-  human. Machine runs never prompt: fail with an error that names `--yes`.
-- Every document is a type that implements `apidoc.Document`
-  (`DocumentKind()`). `runner.EncodeStdout` accepts only those, and writes
-  `apiVersion: refresh.drod.dev/v1` and `kind` as the first two keys. A new
-  document type goes in its package's `Documents()` list, and its kind in
-  `internal/apidoc`.
-- No document prints `null`. A list is `[]` when empty (`apidoc.List`), a map
-  is `{}`, and a key whose data was not collected is left out.
-- refresh's own enum values are PascalCase; AWS values pass through
-  unchanged. Every named string type in a document implements `EnumValues()`
-  (`TestEnumsAreComplete`).
-- `-o plain`: pure TSV. A header row whose names match the table view, then
-  one row per item; `-` for empty cells; no title, footer, or blank lines
-  (`internal/ui/plaintest` asserts this). Describe commands use `FIELD`/`VALUE`.
-- Human stderr writes go through `ui.Stderr`, which strips ANSI unless stderr
-  itself is a color TTY. Color is decided per stream: use `ui.ColorFor(w, …)`
-  / `ui.StderrColor(…)` for stderr, never the stdout-derived fatih global.
-  `--no-color`, any non-empty `NO_COLOR`, and `TERM=dumb` disable both.
-- Prompts use `ui.ReadLine` / `ui.Confirm` (one shared, ctx-cancellable stdin
-  reader).
-- A top-level error prints through `render.Theme.ErrorLines` (in `main`),
-  which styles lines by role and wraps to the terminal width. Multi-line help
-  text uses its layout: a headline without a trailing period, a `Cause: …` or
-  `AWS: …` line (use `awserr.Summary`, not the raw SDK chain), then a heading
-  ending in `:` and rows indented two spaces whose second column starts after
-  two spaces. A row whose first column the cause names is marked.
+Three rules are this project's own. Each comes from a past bug.
 
-**Output / rendering** (`internal/render`): the human-facing design system —
-palette (Catppuccin, truecolor with 256/none downgrade + capability detection),
-status tokens (`glyph + label + color`, with an ASCII fallback so color is
-always *additive*), primitives (section/table/KV/callout/bar) that reuse the
-ANSI-width math in `internal/ui`, and `LiveRegion` for in-place redraw (degrades
-to appended snapshots when piped). **Rule: render in the view layer, never from
-services.** Machine formats (`-o json/yaml/plain`) do NOT go through `render` —
-they stay in `runner.EncodeStdout`, byte-for-byte unchanged; each restyled view
-branches `if ui.PlainOutput()` to keep the `-o plain` TSV path.
+| Rule | Reason |
+|---|---|
+| Terminal output goes through `IOStreams`, from `main`, the command packages, `cmdutil`, `view`, and `tui` only | Code below the commands once printed, and machine output could be corrupted |
+| A status or an outcome is a named type, never a parsed string | The old TUI matched engine phases by label prefix |
+| A package that starts a goroutine has a goleak `TestMain` | Leaks were found this way |
 
-**Live node-roll** (`internal/noderoll`): observes a managed-nodegroup roll in
-real time (nodes draining/joining/terminating) from live Kubernetes Node state —
-the per-node truth EKS's coarse `DescribeUpdate` can't give. `KubeObserver`
-scopes by the `eks.amazonaws.com/nodegroup` label and classifies by Ready /
-cordon-or-drain-taint, with old-vs-new from either the `nodegroup-image` AMI
-label or a roll-start `CaptureBaseline`. It is watch-backed when possible
-(`StartInformers`: node and event informers, snapshots read the local cache;
-pods are listed per draining node with a `spec.nodeName` field selector, never
-cluster-wide) and falls back to per-poll List calls when informers can't start — the
-watch is an upgrade, never a requirement. Note this applies only to the
-repeatedly-polled live view; one-shot reads (pre-flight health checks,
-`--check-pdbs`, post-roll verify) correctly stay as single List calls. `Tracker` diffs snapshots into a
-lifecycle event feed. Testable with **zero AWS / zero cluster** via
-`client-go/kubernetes/fake` (see `observer_test.go`) and a `ScriptedObserver`
-(`DemoTimeline`). `refresh nodegroup update --simulate` (hidden flag) drives the
-whole live panel from the scripted observer — demos, asciinema, and manual QA
-with no AWS.
+## How the pieces work
 
-**Experimental TUI**: `refresh ui` is a Bubble Tea app (`internal/tui`),
-shown as experimental (user docs: `docs/commands/ui.md`), that draws a `state.State` from a
-`state.Backend` (`internal/tui/state`) and never calls AWS itself; every
-backend call runs in a `tea.Cmd`. Two backends: `internal/tui/live` (the
-default) sweeps the fleet in the background with the status service
-(`status.ListOptions.Detail` keeps the per-nodegroup and add-on rows), runs
-`cluster upgrade-check` for readiness, and dry-runs changes with the real
-planners. It is read-only unless `refresh ui --allow-changes`: then `Start`
-can begin a nodegroup roll, an add-on update, or a cluster upgrade. An
-add-on update's dry run is the service's own preview (`UpdateAll` dry run,
-dependency order); `Start` previews again, refuses if the plan changed, and
-updates each add-on pinned to the previewed version with `--health-check
---wait` semantics. The roll re-runs the
-`nodegroup update` health gate, pins to the nodegroup's own version through
-`StartNodegroupRoll`, runs `nodegroup update`'s PDB drain gate in the dry
-run and again at `Start` (a blocker or unreadable PDBs block; the TUI has no
-`--force`), refuses when the nodegroup's version changed since the dry run,
-claims the cluster (one change per cluster), and is
-watched through the EKS update (quiet `monitoring.MonitorUpdates`, the
-authority) and the `noderoll` observer when a kubeconfig context matches
-(resolved with `health.ConnectKubeClientForCluster` directly, never
-`runner.ResolveClusterKubeClient`, which writes to stderr). `Start` needs the
-roll's dry run first, runs `nodegroup update`'s decision table
-(`AMIUpdateDecider`) on the live nodegroup and pins its live version, and
-refuses when the re-run health gate finds anything the dry run did not show
-(a check that ran in the dry run and is skipped now counts). The EKS update
-status decides the result (a Failed update is failed even though the monitor
-also errors). While the TUI runs, `runLive` discards klog
-(`klog.SetLogger(logr.Discard())`) and points `os.Stdin`/`os.Stderr` at
-/dev/null (`detachStdio`): client-go's exec authenticator captures them for
-kubeconfig exec plugins. The TUI keeps the real terminal.
-The TUI roll runs the same pre-flight and post-roll steps as the CLI:
-metrics-server drain headroom in the health gate, the instance-type
-availability warning in the dry run, and `nodegroup.VerifyPostRoll` (shared
-with the command; issues fail the roll's result like exit 5). A cluster
-upgrade (`live/upgrade.go`) runs the `cluster upgrade` engine
-(`upgrade.Service.BuildPlan` + `Execute`): `Start` needs the upgrade's dry
-run, `BuildPlan` refreshes insights, and the run asks (y/n in the TUI,
-`Backend.Answer`) when the steps changed since the dry run or a nodegroup's
-health gate warns (a WARN decision; skipped checks alone never ask). Before
-each nodegroup roll the gate also runs `cluster upgrade`'s PDB drain-blocker
-check (`health.DrainBlockerReport.Names`), which stops the run. Pause and
-stop act between phases through the engine's `Confirm` hook; only
-`ErrAborted` and the gate's stop mean stopped, so a failure after a stop
-request is still a failure. The run is bounded by
-`config.DefaultUpgradeTimeout`, as `cluster upgrade` is. An add-on dry run
-that could not preview every add-on is blocked, as `addon update --all`
-fails closed. A cluster rollback (`live/rollback.go`) runs `cluster
-rollback`'s planner and engine (`BuildRollbackPlan` + `ExecuteRollback`) on
-the Upgrade screen with the same dry run, questions, pause, stop, and
-pre-roll gate; `B` offers it only after a readiness run found a rollback
-window (`UpgradeReport.Rollback`), and the simulator refuses it. Without the flag `Start`, `StopAfterCurrent`, `TogglePause`,
-and `Answer` return `live.ErrReadOnly` and plans name the CLI command. Changes started elsewhere (the CLI, the console)
-are adopted by the sweep (`live/observed.go`): an `UPDATING` nodegroup gets a
-watched roll (the EKS update found with `ListUpdates`, the node view, the
-post-roll nodegroup check) and an `UPDATING` cluster a watched control-plane
-phase; both are `StartedElsewhere`, claim nothing, and refuse stop, pause,
-and answer. Before any start the backend re-reads the cluster, nodegroup,
-and add-on statuses and refuses while one is changing (`checkNotBusy`).
-`State` never calls AWS, so the TUI's fast
-polling is free. `internal/sim` is a deterministic simulated fleet on a
-virtual clock (rolls, add-on updates, readiness checks, upgrades; node
-lifecycle events come from the real `noderoll.Tracker`). The simulator is dev-only:
-`REFRESH_DEV_SIMULATE=1 refresh ui` (or `task run:tui:sim`) turns it on, with
-`REFRESH_DEV_SIM_SPEED` and `REFRESH_DEV_SIM_SEED`; there is no flag and no
-user doc. Without the switch `refresh ui` runs the live backend (`-r`, `-A`,
-`--interval`). TUI glyphs come from
-`render.Theme.Mark`, so the render guard test holds; they are always Unicode
-(the TUI needs a UTF-8 terminal: its borders and bars are Unicode too).
-Tests step the world with `sim.World.Advance` and assert every screen fills
-the terminal exactly (`internal/tui/model_test.go`).
+**AWS calls (`awsx`).** `awsx.Clients` holds every service client of one
+region. There is one retry layer, the SDK retryer, with a policy per kind of
+call: `Read` (5 attempts), `Sweep` (short dial timeout, a dial failure is not
+retried), `Poll` (1 attempt; the wait loop goes on through transient errors),
+and `Mutate` (5 attempts with one idempotency token). Do not wrap a call in
+your own retry. Page a list call with `awsx.ListAll`. Classify an error with
+`awsx.Classify`; `awsx.FormatAWSError` turns it into a message that names the
+IAM action. A new AWS call needs a row in `awsx.RequiredPermissions` and the
+same row in the IAM table of `docs/concepts/configuration.md`
+(`TestRequiredPermissionsMatchDocs`).
 
-## Conventions (follow these when editing)
+**The read model (`fleet`).** `fleet.Fetch` reads what a `Need` asks for into
+one `Snapshot`: the cluster, its nodegroups, its add-ons, the latest versions,
+and the failures. Each group of fields has a provenance (collected, partial,
+not requested, not attempted, failed). Unknown is never the zero value. Every
+view and every check reads the snapshot. A command fetches once.
 
-- **CLI framework:** urfave/cli **v3**. Handlers are
-  `func(ctx context.Context, cmd *cli.Command) error`; flags may appear before or after
-  positional args.
-- **Output:** every list/describe command supports `-o table|json|yaml|plain[|tree]` via
-  `runner.EncodeStdout`, and follows the output contract above. A partial result (items that
-  could not be read) is never a success: name the failures on stderr, add `failures` to the
-  JSON/YAML payload, and exit 4.
-- **Failures:** report a partial failure as a `diag.Failure` (`internal/diag`) in the
-  document's top-level `failures` (`diag.List`, `[]` when empty), never as strings or ad hoc
-  structs. Build it with `diag.FromError(kind, name, diag.Op…, err)` (typed classification) or
-  `diag.New` for a failure with no error value. Print the stderr lines with
-  `runner.ReportFailures` and get the exit error from `runner.IncompleteExit`, both from the same
-  list. `diagtest.CheckFailureFields` enforces this on the output types. A partly read row
-  gets `incomplete: true`, never its own error text. A service that makes several AWS calls
-  tags its error with `diag.WithOperation` so the caller can build the failure. Read commands
-  list failures in the table view's `INCOMPLETE DATA` section (`render.FailureSection`) and
-  skip the stderr lines there (`runner.TableListsFailures`). Regions a default sweep skips are
-  not failures: one `runner.ReportSkippedRegions` notice.
-- **Exit codes** (`docs/concepts/exit-codes.md`): one contract for every command.
-  `0` ok · `1` error or interrupt · `2` needs attention (warnings/stale) · `3` blocked or
-  unsupported (a gate stopped it, nothing changed) · `4` incomplete data or partial failure ·
-  `5` post-action verification failed. Use the `runner.Exit*` constants with
-  `cli.Exit(msg, code)`, returned unwrapped (urfave does not unwrap). Print the document
-  first, then return the exit error. A new command needs an `exitCodeHelp` entry in
-  `internal/commands/exitcodes.go`; a test walks the CLI tree and fails without it.
-- **AWS calls:** wrap in `common.WithRetry`; format errors with `awsinternal.FormatAWSError`
-  (or `awserr.FormatAWSError` below `internal/ui`); page list calls with `ListAllPages`.
-  `TestAWSCallsAreRetried` (`internal/common/awscall_guard_test.go`) fails on an SDK operation
-  call outside a `WithRetry` or `ListAllPages` function literal, unless its function is in
-  that test's commented allowlist (status polls that already poll through transient errors).
-  Set `ClientRequestToken: aws.String(common.IdempotencyToken())` on mutating calls (Update*).
-  New IAM actions go in `RequiredPermissions` (`awserr/permissions.go`) and in the IAM table in
-  `docs/concepts/configuration.md`; a test fails if the two differ or if code calls an
-  unlisted AWS API.
-- **Concurrency:** fan out per-item AWS calls with `common.ForEachParallel` (bounded); thread
-  `ctx` everywhere; multi-region work uses a concurrency cap. Run a best-effort observer next
-  to an authoritative wait with `common.RunAlongside`.
-- **Testing:** use the configurable EKS mock + fluent builders in `internal/mocks` — no live AWS
-  in unit tests. Inject failures with the typed errors (`mocks.AccessDenied()`,
-  `mocks.Throttling()`, `mocks.NotFound()`, `mocks.APIError(code, msg)`), not `errors.New`.
-  Test a whole command (flags, setup, stdout/stderr, exit code) with `internal/mocks/fakeaws`:
-  `fakeaws.New(t, clusters...)` serves EKS/STS over `AWS_ENDPOINT_URL`, and
-  `fakeaws.Run(t, fakeaws.App(cmds...), args...)` returns stdout, stderr, and the error. These
-  tests set env vars, so they can't use `t.Parallel()`. Don't sleep to wait for goroutines;
-  use a handshake (a channel the code under test signals). CI runs `-race -count=5
-  -shuffle=on`, so tests must not depend on order or leak package state.
-  Packages that start goroutines have a `goleak.VerifyTestMain` TestMain (`goleak_test.go`);
-  a new package that starts one needs it too, and every goleak ignore needs a comment saying why.
-- **Context:** commands derive from the signal-cancellable root via `runner.SetupAWS` /
-  `SetupAWSWithDeadline`; don't build `context.Background()` in command actions.
-- **Flag shorthands:** each letter has one meaning CLI-wide (`internal/flagcanon`): `-c`
-  cluster, `-n` nodegroup, `-a` addon, `-o` format, `-r` region, `-t` timeout, `-d` dry-run,
-  `-y` yes, `-q` quiet, `-w` watch, `-f` filter. A flag with one of these long names carries
-  its letter; any other shorthand needs a `flagcanon.Allowed` entry with a reason
-  (`TestFlagShorthandCanon` walks the tree). When you remove a shorthand, add it to the
-  removed table in `flagcanon` so the error names the replacement. Keep a renamed flag one
-  release as a hidden alias (`flagcanon.DeprecatedDuration` / `DeprecatedSwitch`), which warns
-  on stderr.
-- **Mutating commands** (`addon update`, `nodegroup scale`, `nodegroup update`, `cluster
-  upgrade`, `cluster rollback`) share `runner.DryRunFlag` (`-d`), `runner.YesFlag` (`-y`), `--wait-timeout`
-  (`runner.WaitTimeoutFlag`, read with `runner.WaitTimeout`), and `--kubeconfig`/`--kube-context`
-  where a kube client is used. Call `runner.RequireYesUnattended(cmd)` before any AWS call
-  (fails for `-o json/yaml` or no TTY without `--yes`), and ask with
-  `runner.ConfirmMutation(ctx, question)` ("… [y/N]" on stderr, shared prompt reader).
-  `--dry-run` never prompts. The global API timeout is `runner.APITimeout(cmd)`.
+**Failures.** A partial result is never a success. A read that fails becomes
+an `apidoc.Failure` in the top-level `failures` of the document
+(`fleet.FailureFromError`), the row gets `incomplete: true`, and the command
+exits 4. Print with `cmdutil.ReportFailures` and return
+`cmdutil.IncompleteError`.
 
-## Code patterns (copy these)
+**Health (`health`).** A check returns a `Result` with an outcome from a
+closed set: `Pass`, `Warn`, `Fail`, `Skipped`, `Unreadable`. There is no
+score. `health.Gate(results, policy)` returns a `Verdict`: `Go`, `Ask`, or
+`Block`, with the reasons and the exit code. A front end supplies only the
+confirm function. Gate policy does not live in a command.
 
-Retry + idempotency on a mutating call (token computed **once**, outside the retry):
+**Changes (`change`).** A changing command builds a plan (`change.NewPlan`),
+and `change.Run` executes it with three hooks: events, questions, and the
+checkpoint between phases. A dry run returns the plan and stops. The busy
+rule, the gate, plan revalidation, the waits (`WaitUpdate` follows an update
+ID, `WaitSettled` follows a resource to a postcondition), and the one rule for
+the exit code are all in `change`. The CLI and the TUI are front ends of the
+same `Run`. Do not assemble a roll in a command.
 
-```go
-token := common.IdempotencyToken() // stable across SDK transport retries
-out, err := common.WithRetry(ctx, common.DefaultRetryConfig,
-    func(rc context.Context) (*eks.UpdateNodegroupVersionOutput, error) {
-        return eksClient.UpdateNodegroupVersion(rc, &eks.UpdateNodegroupVersionInput{
-            ClusterName:        aws.String(clusterName),
-            NodegroupName:      aws.String(ng),
-            ClientRequestToken: aws.String(token),
-        })
-    })
-if err != nil {
-    return awsinternal.FormatAWSError(err, "updating nodegroup version")
-}
-```
+**Views (`view`).** A list column is defined once and gives the table cell and
+the plain cell. A describe view is a list of sections; plain output derives
+its `FIELD`/`VALUE` rows from the same sections. Machine formats do not go
+through `view`: `cmdutil.Print` encodes the document.
 
-A nodegroup roll already has this in one place: call
-`nodegroup.StartNodegroupRoll` (`internal/services/nodegroup/version_update.go`),
-which `nodegroup update` and `cluster upgrade` both use.
+## The output contract
 
-`WithRetry[T]` (`internal/common/retry.go`) is generic and retries
-throttling/5xx/transient errors with full jitter while honoring `ctx`; it does
-not retry permanent errors such as AccessDenied. A long poll (an update
-wait) keeps going through transient errors and stops on
-`common.IsPermanentAPIError`. `FormatAWSError(err, op)`
-(`internal/aws/awserr/errors.go`, re-exported by `internal/aws`) turns SDK
-errors into actionable messages (e.g. a missing IAM permission lists the
-actions) and wraps the original, so `errors.Is`/`errors.As` still work —
-wrap every surfaced AWS error.
+`docs/concepts/output.md` is the user-facing text. In short:
 
-Unit test with the fluent EKS mock (no live AWS):
+- `-o json|yaml` prints exactly one document on stdout. Everything for people
+  goes to stderr. A machine run never prompts.
+- A document is a type that implements `apidoc.Document`. It starts with
+  `apiVersion: refresh.drod.dev/v2` and `kind`. A new kind goes in the kind
+  registry of `apidoc`, gets a schema (`task docs:gen`), and a golden test
+  that validates real output against it (`cmdutiltest.ValidateJSON`).
+- No `null`: a list is `[]`, a map is `{}`, and a key with no data is left out.
+- refresh's own enum values are PascalCase. AWS values pass through.
+- `-o plain` is TSV: a header row, then rows, `-` for an empty cell.
+- Exit codes: `0` ok, `1` error or interrupt, `2` needs attention, `3` blocked,
+  `4` incomplete or partial failure, `5` the check after a change found
+  issues. The highest wins; an interrupt is always 1. Return a
+  `cmdutil.ExitError`; `main` unwraps it.
 
-```go
-api := mocks.NewEKSAPI().
-    WithCluster("prod", "1.32").
-    WithNodegroup("ng-a", "1.32", ekstypes.AMITypesAl2X8664).
-    Build()
-svc := nodegroup.NewService(api, /* ec2, asg, … */)
-// drive svc methods against api; assert on the returned summaries/errors
-```
+## Adding a command
 
-`internal/mocks` exposes a configurable `EKSAPI` plus the `EKSAPIBuilder`
-(`NewEKSAPI().With…().Build()`); see `internal/mocks/builders.go` for the full
-`With*` catalog (clusters, nodegroups, addons, insights, update status
-scripts, `WithPageSize` to force paging). Unknown clusters return a typed
-`ResourceNotFoundException`, as EKS does.
+Cobra is used directly, as `gh` and `kubectl` use it. Model a read command on
+`internal/cmd/addon/list.go` and a changing command on
+`internal/cmd/nodegroup/scale.go`.
 
-## Adding a new command
+1. **Options.** A struct with the streams and the lazy dependencies from the
+   `Factory`, and one field per flag.
+2. **The command.** `newCmdX(f *cmdutil.Factory) *cobra.Command`, with `Use`,
+   `Short`, `Long`, `Example`, and `Args`. `RunE` calls `complete`, `validate`,
+   then `run`.
+3. **Flags.** Use the `cmdutil` helpers so that a flag is the same everywhere:
+   `AddOutputFlag`, `AddClusterFlag` (read) or `AddChangeClusterFlag`
+   (changing), `AddFilterFlag`, `AddSortFlags`, `AddWatchFlags`,
+   `AddChangeFlags`. A flag letter has one meaning (`TestFlagShorthands`).
+4. **`complete`** fills the options from flags, args, env, and the context.
+   **`validate`** rejects bad input. Neither touches the network.
+5. **A changing command** calls `cmdutil.RequireYes` before it builds a
+   client, resolves its cluster with `cmdutil.ResolveCluster(f, name, false)`
+   (never the kubeconfig, also with `--dry-run`), and runs through
+   `changecmd`.
+6. **Output.** `cmdutil.Print(ios, format, doc, view)`.
+7. **Help.** A changing command lists its exit codes in `Long`
+   (`TestChangeCommandsAgreeOnExitCodes`). Add the command to a help group
+   (`TestEveryCommandIsInAHelpGroup`).
+8. **Docs.** Run `task docs:gen` and commit `docs/reference`. Write the
+   hand-written page in `docs/commands/`.
 
-Follow the layered flow (model it on the `cluster` command):
+## Testing
 
-1. **Command def** — add a `*cli.Command` in `internal/commands/<group>/command.go`
-   with flags (`-o/--format`, `--timeout`, …). Action signature is
-   `func(ctx context.Context, cmd *cli.Command) error`.
-2. **Action** — in `actions.go`: validate `--format` with
-   `runner.ValidateFormat`, get AWS config via `runner.SetupAWS(ctx, cmd)`,
-   resolve the cluster with `runner.ResolveClusterOrList` (read-only) or
-   `runner.ResolveCluster` (mutating), run the fetch inside
-   `runner.WithSpinner`. Don't add a local flag that shadows a global one
-   (`--timeout`, `--region`, `--max-concurrency`, …) unless it means something
-   different; `main_flags_test.go` fails otherwise.
-3. **Service** — construct it through `internal/commands/factory`; put
-   business logic + AWS calls in `internal/services/<group>`. A command that
-   needs a raw client uses `factory.NewEKSClient` / `factory.NewSSMClient`,
-   never an SDK `NewFromConfig` (`TestCommandsBuildClientsThroughFactory`).
-4. **Output** — `runner.EncodeStdout(cmd.String("format"), payload)`; if it
-   returns `handled==false`, fall through to a `clusterview`/`ui` table renderer.
-5. **Tests** — drive the service with `internal/mocks` and the command with
-   `internal/mocks/fakeaws`; tag output structs with both `json:` and `yaml:`
-   (a reflection test enforces matching tags).
+1. **Table tests** for pure decision functions (the gate table, the exit-code
+   table, the planners).
+2. **Whole-command tests** through the fake world. `cmdtest.NewFake(t, world,
+   region)` starts a fake AWS and gives a factory that reaches it; `e.Run(ctx,
+   args...)` runs the real root command; `e.Out` and `e.Err` hold what it
+   wrote. Compare with `cmdutiltest.Golden(t, file, got, *update)`; run the
+   test with `-update` to rewrite the golden files, and read the diff.
+   `e.Server` counts requests, and a fault set on the world
+   (`World.SetFault`) makes a call fail: denied, throttled, a lost response.
+3. **Lifecycle tests** for `change`, `noderoll`, and `tui`, with `-race`,
+   goleak, and handshakes. Do not sleep to wait for a goroutine.
 
-## Known gotchas
+Real SDK clients talk to `awsxtest` over HTTP. There are no mocks of the AWS
+interfaces. Kubernetes tests use `kubetest`. World time is virtual:
+`UseWorldClock` makes a wait as fast as the fake answers.
 
-- `gopkg.in/yaml.v3` ignores `json` tags. `runner.EncodeStdout` round-trips YAML
-  through JSON so keys stay camelCase, but still add explicit `yaml:`
-  tags to any struct you might marshal directly.
-- **The docs command reference is generated.** After changing any command or
-  flag, run `task docs:gen` — the hidden `gen-docs` command walks the CLI tree
-  into `docs/reference/`, and a CI step fails if the committed reference is stale.
-  Behaviour changes also need the hand-written pages (`docs/concepts/`,
-  `docs/commands/`); `uv run --frozen mkdocs build --strict` must pass.
-- **The JSON Schemas are generated too.** `task docs:gen` also runs
-  `internal/tools/genschema`, which writes one schema per kind to
-  `docs/schema/v1/`. The tool is not linked into the binary. CI fails when a
-  schema is stale. A new kind needs its schema and a run in
-  `TestDocumentsMatchSchemas`, which validates real command output against it.
-- **Docs live in-repo** under `docs/` (Material for MkDocs, via a `uv`-managed
-  hash-locked venv) and publish to <https://drod.dev/refresh/> on merge to `main`.
-  Cost/utilization/`cluster diff`/`workload pdbs` were removed on purpose (see
-  "What this is") — don't re-add them.
+CI runs `-race -count=5 -shuffle=on`, so a test must not depend on order or
+leave package state behind. A test that sets env vars cannot use
+`t.Parallel()`.
+
+**The parity suite (`test/parity`).** A scenario is a command line on a seeded
+world. The suite runs the binary as a subprocess, records which facts it had
+read before each changing request, and compares that evidence, the changing
+requests, and the exit code with the recorded trace of the same scenario from
+the last release of the old CLI (`testdata/legacy/*.json`). An intended
+difference has an entry with a reason in `testdata/allowlist.json`.
+`test/parity/README.md` has the rules. A new safety behaviour gets a scenario.
+
+## Gotchas
+
+- **The command reference and the schemas are generated.** After a change to a
+  command, a flag, or a document type, run `task docs:gen`. CI fails when
+  `docs/reference` or `api/schema` is stale.
+- **gen-docs removes stale pages.** It deletes `refresh*` pages in
+  `docs/reference` that no command produces any more, and keeps other files.
+- **`-o` is not a global flag.** Each command registers it with its formats.
+- **`context add` shadows `--region` and `--profile` on purpose.** No other
+  command may shadow a global flag.
+- **The TUI points stderr at the null device while it runs**, so a kubeconfig
+  exec plugin cannot write over the screen.
+- **Docs.** `uv run --frozen mkdocs build --strict` must pass. The site
+  publishes to <https://drod.dev/refresh/> on a merge to `main`.
 
 ## Where work is tracked
 
-Issues and bugs live in **Linear, team `REF`** (project "Refresh — EKS CLI").
-The upgrade-companion roadmap has shipped: `status`, `cluster upgrade-check`,
-the fleet-wide `nodegroup update`, `cluster upgrade`, and the docs site. Open
-work is a backlog of review follow-ups (correctness leftovers, health-check
-scoring, view migration to `internal/render`). There is no in-repo TODO file.
+Issues live in Linear, team `REF` (project "Refresh — EKS CLI"). There is no
+TODO file in the repo.
 
 ## Release
 
 release-please keeps a release PR up to date from the Conventional Commit
-messages on `main`. Merging it tags the release, and GoReleaser builds the
-binaries, signs the checksums, and updates the Homebrew cask. The version is
-stamped into `internal/commands/version.go` by ldflags. See README "Release
-process".
+messages on `main`. Merging it tags the release. GoReleaser then builds the
+binaries, generates the man pages (`gen-docs --format man`) into the archives
+and the Homebrew cask, signs the checksums, and updates the cask. The version,
+commit, and build date are set in `internal/build` with ldflags. `task
+release:test` checks the config and that a release-style build prints all
+three.

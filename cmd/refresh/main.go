@@ -1,0 +1,197 @@
+// Command refresh is the EKS upgrade companion.
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"log"
+	"log/slog"
+	"net/http"
+	"os"
+	"os/signal"
+	"path/filepath"
+	"strings"
+	"syscall"
+
+	"github.com/go-logr/logr"
+	"k8s.io/klog/v2"
+
+	"github.com/dantech2000/refresh/internal/build"
+	"github.com/dantech2000/refresh/internal/cmd/root"
+	"github.com/dantech2000/refresh/internal/cmdutil"
+	"github.com/dantech2000/refresh/internal/contexts"
+	"github.com/dantech2000/refresh/internal/updatecheck"
+)
+
+func main() {
+	ctx, stop := notifyContext(context.Background())
+	code := run(ctx, os.Args[1:], cmdutil.System())
+	stop()
+	os.Exit(code)
+}
+
+// run executes the command line in args and returns the exit code of the
+// process.
+func run(ctx context.Context, args []string, streams *cmdutil.IOStreams) int {
+	f := &cmdutil.Factory{
+		IOStreams:     streams,
+		Build:         build.Get(),
+		LatestRelease: latestRelease,
+		Contexts:      contexts.DefaultStore,
+		HTTPClient:    &http.Client{},
+	}
+	f.AWS = cmdutil.NewAWS(f)
+	f.Kube = cmdutil.NewKube(f)
+	f.RouteLogs = routeLogs(streams.ErrOut)
+	return execute(ctx, args, f)
+}
+
+// routeLogs returns the function that routes the logs of the process,
+// once the log level is known. The default slog logger writes the lines
+// of refresh at that level or above to errOut, so --log-level debug shows
+// each AWS call attempt and the reads that fell back. client-go and its
+// informers log a failed list or watch through klog, which writes to
+// stderr by default: over the roll panel, and into the stderr of a run
+// with a machine format. So their lines are discarded, and shown on errOut
+// only at the debug level (--log-level debug, --verbose).
+//
+// slog and klog have one logger each for the process. This is the only
+// place that sets them, and execute puts the defaults back when the
+// command has ended.
+func routeLogs(errOut io.Writer) func(slog.Level) {
+	return func(level slog.Level) {
+		slog.SetDefault(slog.New(slog.NewTextHandler(errOut, &slog.HandlerOptions{Level: level})))
+		logger := logr.Discard()
+		if level <= slog.LevelDebug {
+			logger = logr.FromSlogHandler(slog.NewTextHandler(errOut, &slog.HandlerOptions{Level: slog.LevelDebug}))
+		}
+		klog.SetLogger(logger)
+	}
+}
+
+// execute runs the command line in args with the dependencies in f. ctx is
+// the signal context: when it is cancelled, the run was interrupted.
+func execute(ctx context.Context, args []string, f *cmdutil.Factory) int {
+	cmd := root.NewCmdRoot(f)
+	cmd.SetArgs(args)
+	if f.RouteLogs != nil {
+		// The command has ended, and so has everything that logs.
+		defer klog.ClearLogger()
+		// A slog default with a handler of its own also takes over the
+		// output of the log package, so both are put back.
+		logger, out, flags := slog.Default(), log.Writer(), log.Flags()
+		defer func() {
+			slog.SetDefault(logger)
+			log.SetOutput(out)
+			log.SetFlags(flags)
+		}()
+	}
+	return exitCode(ctx, f.IOStreams.ErrOut, cmd.ExecuteContext(ctx))
+}
+
+// exitCode prints err once on errOut and returns the exit code for it. An
+// ExitError sets the code, and any other error is exit 1. An ExitError
+// without a message prints nothing: the command already printed its result.
+//
+// The message of a verdict, exit 2 (needs attention) or exit 3 (blocked),
+// prints alone: it is the answer of the command, not an error. Every other
+// message starts with "Error: ".
+//
+// An interrupt is exit 1, whatever the command returned, with one exception:
+// to stop a watch with Ctrl+C is the normal way to end it, and exits 0.
+// For every other command a result
+// that Ctrl+C cut short is not a partial result. The rule reads the signal
+// context and not the error, because a run that the --timeout deadline cut
+// short keeps its own code. The message of an interrupted run says
+// "interrupted", and never "context canceled": see interruptWords.
+func exitCode(ctx context.Context, errOut io.Writer, err error) int {
+	// A watch that the user stopped ended the normal way.
+	if errors.Is(err, cmdutil.ErrStopped) {
+		return cmdutil.ExitOK
+	}
+	interrupted := ctx.Err() != nil
+	msg := ""
+	if err != nil {
+		// Cobra ends its "Did you mean this?" list with a line break.
+		msg = strings.TrimRight(err.Error(), "\n")
+	}
+	if interrupted {
+		msg = interruptWords(msg)
+	}
+	code := cmdutil.ExitCode(err)
+	if interrupted {
+		code = cmdutil.ExitFailure
+	}
+	if msg != "" {
+		if code != cmdutil.ExitNeedsAttention && code != cmdutil.ExitBlocked {
+			msg = "Error: " + msg
+		}
+		// Nothing can report a failed write to stderr.
+		_, _ = fmt.Fprintln(errOut, msg)
+	}
+	return code
+}
+
+// interruptWords returns the message of a run that the user interrupted.
+// An error that ends in the cancelled context says "context canceled",
+// which are the words of the Go runtime and not of the user: the message
+// says "interrupted" in their place, once. An empty message is
+// "interrupted" too.
+func interruptWords(msg string) string {
+	raw := context.Canceled.Error()
+	if !strings.HasSuffix(msg, raw) {
+		if msg == "" {
+			return "interrupted"
+		}
+		return msg
+	}
+	msg = strings.TrimSuffix(strings.TrimSuffix(msg, raw), ": ")
+	switch {
+	case msg == "":
+		return "interrupted"
+	case strings.Contains(msg, "interrupted"):
+		return msg
+	}
+	return msg + ": interrupted"
+}
+
+// latestRelease asks GitHub for the newest release tag. A cache file keeps
+// the network call to about one a day.
+func latestRelease(ctx context.Context) (string, error) {
+	checker := updatecheck.Checker{CachePath: updateCachePath()}
+	return checker.LatestTag(ctx)
+}
+
+// updateCachePath returns the file that records the last update check. It
+// is next to the context file, so refresh has one configuration directory
+// and REFRESH_CONFIG_HOME moves both files. Without a path the checker still
+// works; it then uses the network on every call.
+func updateCachePath() string {
+	store, err := contexts.DefaultStore()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(filepath.Dir(store.Path), "update-check.json")
+}
+
+// notifyContext returns a context that the first SIGINT or SIGTERM cancels,
+// so the calls in flight stop. Default signal handling is back before the
+// context is cancelled, so a second signal kills the process even when
+// something ignores the context. The caller must call the returned function
+// to release the signal handler.
+func notifyContext(parent context.Context) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(parent)
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		select {
+		case <-signals:
+		case <-ctx.Done():
+		}
+		signal.Stop(signals)
+		cancel()
+	}()
+	return ctx, cancel
+}

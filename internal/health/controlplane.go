@@ -9,82 +9,28 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
 	cwtypes "github.com/aws/aws-sdk-go-v2/service/cloudwatch/types"
 
-	"github.com/dantech2000/refresh/internal/aws/awserr"
-	"github.com/dantech2000/refresh/internal/common"
+	"github.com/dantech2000/refresh/internal/apidoc"
+	"github.com/dantech2000/refresh/internal/awsx"
+	"github.com/dantech2000/refresh/internal/fleet"
 )
 
-// EKS standard control-plane etcd limit. At 8 GiB etcd raises a no-space alarm
-// and the API server goes read-only (writes rejected) — so a cluster near this
-// line is unsafe to upgrade until the database is compacted/trimmed.
-// https://docs.aws.amazon.com/eks/latest/best-practices/known_limits_and_service_quotas.html
-const etcdQuotaBytes = 8 * 1024 * 1024 * 1024
-
-// Control-plane gate thresholds (percent). etcd usage is the blocking signal;
-// the API-server error rate is advisory (warn-only) so noisy request metrics
-// never wrongly block an upgrade.
+// The control-plane thresholds. etcd is the blocking signal: at 8 GiB the
+// database goes read-only, which AWS documents. The API server rates only
+// warn, and only above a request floor so an idle cluster does not trip
+// on a handful of errors.
 const (
-	etcdFailPercent = 95.0 // near read-only — block
-	etcdWarnPercent = 80.0 // getting tight — warn
-
-	apiserver5xxWarnPercent = 2.0    // server-error ratio over the window
-	apiserver429WarnPercent = 1.0    // throttled ratio over the window
-	apiserverMinReqsForRate = 1000.0 // ignore the ratio below this volume (too noisy)
-
-	// controlPlaneWindow is how far back to aggregate. The AWS/EKS metrics are
-	// emitted per-minute; a 15-minute window smooths a single blip.
-	controlPlaneWindow = 15 * time.Minute
+	etcdLimitBytes      = 8 << 30
+	etcdFailPercent     = 95.0
+	etcdWarnPercent     = 80.0
+	apiServer5xxPercent = 2.0
+	apiServer429Percent = 1.0
+	apiServerMinReqs    = 1000.0
+	controlPlaneWindow  = 15 * time.Minute
 )
 
-// metricDataAPI is the slice of CloudWatch the control-plane gate needs. The
-// concrete *cloudwatch.Client satisfies it; tests pass a fake.
-type metricDataAPI interface {
-	GetMetricData(ctx context.Context, in *cloudwatch.GetMetricDataInput, optFns ...func(*cloudwatch.Options)) (*cloudwatch.GetMetricDataOutput, error)
-}
-
-// controlPlaneMetrics holds the control-plane signals aggregated over the
-// window. The *Known flags distinguish "measured zero" from "not emitted".
-type controlPlaneMetrics struct {
-	etcdInUseBytes float64
-	etcdKnown      bool
-	reqTotal       float64
-	req5xx         float64
-	req429         float64
-	pendingPods    float64
-	pendingKnown   bool
-	// hasData is true when CloudWatch returned at least one datapoint, i.e. the
-	// AWS/EKS control-plane metrics are being emitted (cluster is ≥1.28 on a
-	// supported platform version). When false, the gate is Skipped.
-	hasData bool
-}
-
-// CheckControlPlaneMetrics gates upgrade readiness on the EKS control plane:
-// etcd database usage vs the 8 GiB read-only limit, plus the API-server error
-// rate. It reads the free AWS/EKS CloudWatch metrics (no Container Insights /
-// agent). Clusters below 1.28 don't emit these — the check is then Skipped, not
-// failed. This is a readiness GATE, not a utilization-browse surface (REF-78).
-func (hc *HealthChecker) CheckControlPlaneMetrics(ctx context.Context, clusterName string) HealthResult {
-	if hc.cwClient == nil {
-		return skippedResult("Control Plane", "control-plane metrics unavailable (no CloudWatch client)")
-	}
-	return checkControlPlaneMetrics(ctx, hc.cwClient, clusterName)
-}
-
-// checkControlPlaneMetrics is CheckControlPlaneMetrics against any
-// GetMetricData-capable client, so it is testable with a fake.
-func checkControlPlaneMetrics(ctx context.Context, api metricDataAPI, clusterName string) HealthResult {
-	m, err := fetchControlPlaneMetrics(ctx, api, clusterName)
-	if err != nil {
-		return skippedResult("Control Plane", fmt.Sprintf("Unable to fetch control-plane metrics: %s", awserr.Summary(err)))
-	}
-	return evaluateControlPlane(m)
-}
-
-// controlPlaneQueries pairs each CloudWatch query id with its AWS/EKS metric
-// name and statistic. Sum for counters (request totals), Maximum for gauges (etcd size,
-// pending pods).
-var controlPlaneQueries = []struct {
-	id, metric, stat string
-}{
+// controlPlaneQueries are the AWS/EKS metrics the check reads, with the
+// statistic for each: the maximum of a gauge, the sum of a counter.
+var controlPlaneQueries = []struct{ id, metric, stat string }{
 	{"etcd", "etcd_mvcc_db_total_size_in_use_in_bytes", "Maximum"},
 	{"req_total", "apiserver_request_total", "Sum"},
 	{"req_5xx", "apiserver_request_total_5XX", "Sum"},
@@ -92,13 +38,42 @@ var controlPlaneQueries = []struct {
 	{"pending", "scheduler_pending_pods", "Maximum"},
 }
 
-// fetchControlPlaneMetrics pulls the AWS/EKS control-plane metrics for one
-// cluster in a single GetMetricData call, aggregating each over the window.
-func fetchControlPlaneMetrics(ctx context.Context, api metricDataAPI, clusterName string) (controlPlaneMetrics, error) {
-	end := time.Now()
-	start := end.Add(-controlPlaneWindow)
-	period := int32(controlPlaneWindow.Seconds())
+// ControlPlane checks the EKS control plane from its free CloudWatch
+// metrics: the etcd database against its 8 GiB limit, and the API server
+// error and throttle rates over the last 15 minutes. A control plane that
+// emits no metrics, which is one below 1.28, is skipped.
+func ControlPlane() Check {
+	return Check{Name: "ControlPlane", Blocking: true, Run: runControlPlane}
+}
 
+// controlPlaneMetrics are the metrics of the window. A Known flag tells a
+// measured zero from a metric that was not emitted.
+type controlPlaneMetrics struct {
+	etcdBytes, reqTotal, req5xx, req429, pending float64
+	etcdKnown, pendingKnown, any                 bool
+}
+
+func runControlPlane(ctx context.Context, in *Input) Result {
+	cluster := in.Snapshot.Cluster.Name
+	m, err := fetchControlPlaneMetrics(ctx, in, cluster)
+	if err != nil {
+		f := fleet.FailureFromError(apidoc.FailureCluster, cluster, err)
+		return Result{Outcome: Unreadable, Message: "could not read the control-plane metrics: " + f.Error + failureAction(f), Failures: []apidoc.Failure{f}}
+	}
+	return evaluateControlPlane(m)
+}
+
+// failureAction names the IAM action of a failed AWS read, for a message.
+func failureAction(f apidoc.Failure) string {
+	if f.Operation == "" {
+		return ""
+	}
+	return " (" + f.Operation + ")"
+}
+
+func fetchControlPlaneMetrics(ctx context.Context, in *Input, cluster string) (controlPlaneMetrics, error) {
+	end := in.Now
+	start := end.Add(-controlPlaneWindow)
 	queries := make([]cwtypes.MetricDataQuery, 0, len(controlPlaneQueries))
 	for _, q := range controlPlaneQueries {
 		queries = append(queries, cwtypes.MetricDataQuery{
@@ -107,123 +82,107 @@ func fetchControlPlaneMetrics(ctx context.Context, api metricDataAPI, clusterNam
 				Metric: &cwtypes.Metric{
 					Namespace:  aws.String("AWS/EKS"),
 					MetricName: aws.String(q.metric),
-					Dimensions: []cwtypes.Dimension{{Name: aws.String("ClusterName"), Value: aws.String(clusterName)}},
+					Dimensions: []cwtypes.Dimension{{Name: aws.String("ClusterName"), Value: aws.String(cluster)}},
 				},
-				Period: aws.Int32(period),
+				Period: aws.Int32(int32(controlPlaneWindow.Seconds())),
 				Stat:   aws.String(q.stat),
 			},
 		})
 	}
-
-	out, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*cloudwatch.GetMetricDataOutput, error) {
-		return api.GetMetricData(rc, &cloudwatch.GetMetricDataInput{
-			StartTime:         aws.Time(start),
-			EndTime:           aws.Time(end),
-			MetricDataQueries: queries,
-		})
+	results, err := metricData(ctx, in.Clients.CloudWatch, &cloudwatch.GetMetricDataInput{
+		StartTime: aws.Time(start), EndTime: aws.Time(end), MetricDataQueries: queries,
 	})
 	if err != nil {
-		return controlPlaneMetrics{}, awserr.FormatAWSError(err, "fetching control-plane metrics")
+		return controlPlaneMetrics{}, err
 	}
-
 	var m controlPlaneMetrics
-	for _, r := range out.MetricDataResults {
-		if r.Id == nil || len(r.Values) == 0 {
+	for _, r := range results {
+		if len(r.Values) == 0 {
 			continue
 		}
-		m.hasData = true
-		v := aggregateValues(*r.Id, r.Values)
-		switch *r.Id {
+		m.any = true
+		switch aws.ToString(r.Id) {
 		case "etcd":
-			m.etcdInUseBytes, m.etcdKnown = v, true
+			m.etcdBytes, m.etcdKnown = maxOf(r.Values), true
 		case "req_total":
-			m.reqTotal = v
+			m.reqTotal = sumOf(r.Values)
 		case "req_5xx":
-			m.req5xx = v
+			m.req5xx = sumOf(r.Values)
 		case "req_429":
-			m.req429 = v
+			m.req429 = sumOf(r.Values)
 		case "pending":
-			m.pendingPods, m.pendingKnown = v, true
+			m.pending, m.pendingKnown = maxOf(r.Values), true
 		}
 	}
 	return m, nil
 }
 
-// aggregateValues collapses a result's datapoints to one number: the max for
-// gauges, the sum for counters. With a single window-length period there is
-// usually one value, but a metric can return a few; reduce defensively.
-func aggregateValues(id string, values []float64) float64 {
-	sumStat := id == "req_total" || id == "req_5xx" || id == "req_429"
-	if sumStat {
-		total := 0.0
-		for _, v := range values {
-			total += v
-		}
-		return total
+// evaluateControlPlane is the rule, apart from the read.
+func evaluateControlPlane(m controlPlaneMetrics) Result {
+	if !m.any {
+		return Result{Outcome: Skipped, Message: "control-plane metrics not emitted (EKS 1.28+ on a supported platform version)"}
 	}
-	return maxFloat(values)
-}
-
-// evaluateControlPlane turns the aggregated metrics into a gate verdict (pure,
-// table-testable). etcd usage drives Warn/Fail; the API-server error rate is
-// advisory; the scheduler backlog is informational.
-func evaluateControlPlane(m controlPlaneMetrics) HealthResult {
-	if !m.hasData {
-		return skippedResult("Control Plane", "control-plane metrics unavailable (requires EKS 1.28+ on a supported platform version)")
-	}
-	result := HealthResult{Name: "Control Plane", IsBlocking: true}
-
-	result.Status = StatusPass
-	result.Score = 100
-	result.Message = "Control plane healthy"
-
-	// etcd usage vs the 8 GiB read-only limit — the blocking signal.
+	r := Result{Outcome: Pass, Message: "control plane healthy"}
 	if m.etcdKnown {
-		pct := m.etcdInUseBytes / float64(etcdQuotaBytes) * 100
-		result.Details = append(result.Details,
-			fmt.Sprintf("etcd database %.1f%% of the 8 GiB limit (%.2f GiB in use)", pct, m.etcdInUseBytes/(1024*1024*1024)))
+		pct := m.etcdBytes / etcdLimitBytes * 100
+		r.Details = append(r.Details, fmt.Sprintf("etcd database %.1f%% of the 8 GiB limit (%.2f GiB in use)", pct, m.etcdBytes/(1<<30)))
 		switch {
 		case pct >= etcdFailPercent:
-			result.Status = StatusFail
-			result.Score = 30
-			result.Message = fmt.Sprintf("etcd database near the 8 GiB read-only limit (%.1f%%) — compact before upgrading", pct)
+			r.Outcome, r.Message = Fail, fmt.Sprintf("etcd database near the 8 GiB read-only limit (%.1f%%); compact it before a change", pct)
 		case pct >= etcdWarnPercent:
-			result.Status = StatusWarn
-			result.Score = 70
-			result.Message = fmt.Sprintf("etcd database growing toward the 8 GiB limit (%.1f%%)", pct)
+			r.Outcome, r.Message = Warn, fmt.Sprintf("etcd database growing toward the 8 GiB limit (%.1f%%)", pct)
+		default:
+			r.Message = fmt.Sprintf("etcd %.0f%% of 8 GiB", pct)
 		}
 	} else {
-		result.Details = append(result.Details, "etcd size metric not reported")
+		r.Details = append(r.Details, "etcd size metric not reported")
 	}
-
-	// API-server error rate — advisory (warn-only), and only above a volume
-	// floor so a handful of errors on an idle cluster doesn't trip it.
-	if m.reqTotal >= apiserverMinReqsForRate {
+	if m.reqTotal >= apiServerMinReqs {
 		errPct := m.req5xx / m.reqTotal * 100
-		result.Details = append(result.Details,
-			fmt.Sprintf("API-server 5xx rate %.2f%% (%d of %d requests)", errPct, int(m.req5xx), int(m.reqTotal)))
-		if errPct >= apiserver5xxWarnPercent && result.Status == StatusPass {
-			result.Status = StatusWarn
-			result.Score = 70
-			result.Message = fmt.Sprintf("Elevated API-server error rate (%.2f%% 5xx)", errPct)
+		r.Details = append(r.Details, fmt.Sprintf("API server 5xx rate %.2f%% (%.0f of %.0f requests)", errPct, m.req5xx, m.reqTotal))
+		if errPct >= apiServer5xxPercent && r.Outcome == Pass {
+			r.Outcome, r.Message = Warn, fmt.Sprintf("elevated API server error rate (%.2f%% 5xx)", errPct)
+		}
+		if throttled := m.req429 / m.reqTotal * 100; throttled >= apiServer429Percent && r.Outcome == Pass {
+			r.Outcome, r.Message = Warn, fmt.Sprintf("API server is throttling requests (%.1f%% 429)", throttled)
 		}
 	}
 	if m.req429 > 0 {
-		result.Details = append(result.Details, fmt.Sprintf("API-server throttled %d requests (429) in the window", int(m.req429)))
-		// A few 429s are normal: API priority and fairness sheds bursts,
-		// such as a new cluster's add-on installs. Warn on a rate, above
-		// the same volume floor as 5xx (a real cluster showed 1 in 4,348).
-		if m.reqTotal >= apiserverMinReqsForRate && m.req429/m.reqTotal*100 >= apiserver429WarnPercent && result.Status == StatusPass {
-			result.Status = StatusWarn
-			result.Score = 70
-			result.Message = fmt.Sprintf("API-server is throttling requests (%.1f%% 429)", m.req429/m.reqTotal*100)
+		r.Details = append(r.Details, fmt.Sprintf("API server throttled %.0f requests (429) in the window", m.req429))
+	}
+	if m.pendingKnown && m.pending > 0 {
+		r.Details = append(r.Details, fmt.Sprintf("scheduler pending pods: %.0f", m.pending))
+	}
+	return r
+}
+
+// metricData reads every page of one GetMetricData call.
+func metricData(ctx context.Context, cw *cloudwatch.Client, in *cloudwatch.GetMetricDataInput) ([]cwtypes.MetricDataResult, error) {
+	return awsx.ListAll(ctx,
+		func(ctx context.Context, token *string) (*cloudwatch.GetMetricDataOutput, error) {
+			in.NextToken = token
+			return cw.GetMetricData(ctx, in)
+		},
+		func(out *cloudwatch.GetMetricDataOutput) ([]cwtypes.MetricDataResult, *string) {
+			return out.MetricDataResults, out.NextToken
+		},
+	)
+}
+
+func sumOf(values []float64) float64 {
+	total := 0.0
+	for _, v := range values {
+		total += v
+	}
+	return total
+}
+
+func maxOf(values []float64) float64 {
+	m := 0.0
+	for i, v := range values {
+		if i == 0 || v > m {
+			m = v
 		}
 	}
-
-	// Scheduler backlog — informational only.
-	if m.pendingKnown && m.pendingPods > 0 {
-		result.Details = append(result.Details, fmt.Sprintf("Scheduler pending pods: %d", int(m.pendingPods)))
-	}
-
-	return result
+	return m
 }

@@ -3,124 +3,120 @@ package tui
 import (
 	"strings"
 	"testing"
+
+	"github.com/dantech2000/refresh/internal/view"
 )
 
+var unicode = view.Theme{Unicode: true}.Border()
+
 func TestLineFitPadsAndTruncates(t *testing.T) {
-	l := Line{tx("hello "), fg(colGreen, "● world")}
-	if got := l.Fit(20); got.Width() != 20 || got.Plain() != "hello ● world       " {
-		t.Fatalf("Fit(20) = %q", got.Plain())
+	l := Line{tx("hello"), sub(" world")}
+	if got := l.Fit(14).Plain(); got != "hello world   " {
+		t.Errorf("pad: %q", got)
 	}
-	if got := l.Fit(8); got.Width() != 8 || got.Plain() != "hello ●…" {
-		t.Fatalf("Fit(8) = %q", got.Plain())
+	if got := l.Fit(7).Plain(); got != "hello …" {
+		t.Errorf("cut: %q", got)
 	}
 	if got := l.Fit(0); got != nil {
-		t.Fatalf("Fit(0) = %q", got.Plain())
+		t.Errorf("zero width: %v", got)
 	}
 }
 
-func TestLineCutKeepsCellsAndWideRunes(t *testing.T) {
-	l := Line{tx("ab"), fg(colRed, "日本"), tx("cd")}
-	cases := []struct {
+// Cut splits only between graphemes: half of a wide rune becomes a space,
+// and a cluster that straddles an edge is never broken.
+func TestLineCutKeepsCellsAndGraphemes(t *testing.T) {
+	for _, tc := range []struct {
+		line     Line
 		from, to int
 		want     string
 	}{
-		{0, 2, "ab"},
-		{2, 6, "日本"},
-		{3, 7, " 本c"}, // half of 日 becomes a space
-		{5, 8, " cd"},
-		{0, 8, "ab日本cd"},
-	}
-	for _, c := range cases {
-		got := l.Cut(c.from, c.to)
-		if got.Plain() != c.want || got.Width() != c.to-c.from {
-			t.Errorf("Cut(%d,%d) = %q (%d cells), want %q", c.from, c.to, got.Plain(), got.Width(), c.want)
+		{Line{tx("abc"), sub("def")}, 1, 5, "bcde"},
+		{Line{tx("a日本b")}, 0, 2, "a "},
+		{Line{tx("a日本b")}, 1, 3, "日"},
+		{Line{tx("a日本b")}, 2, 4, "  "},
+		{Line{tx("👩‍💻x")}, 1, 3, " x"},
+		{Line{tx("x👩‍💻")}, 0, 2, "x "},
+	} {
+		if got := tc.line.Cut(tc.from, tc.to).Plain(); got != tc.want {
+			t.Errorf("Cut(%d, %d) of %q = %q, want %q", tc.from, tc.to, tc.line.Plain(), got, tc.want)
 		}
 	}
 }
 
 func TestOverlayAndBox(t *testing.T) {
-	base := Block{{tx("0123456789")}, {tx("abcdefghij")}}
-	b := box(Line{tx("t")}, Block{{tx("x")}}, 6, colSurface1)
-	if len(b) != 3 || b[0].Width() != 6 || b[1].Plain() != "│ x  │" {
-		t.Fatalf("box = %q %q %q", b[0].Plain(), b[1].Plain(), b[2].Plain())
-	}
-	out := overlay(base, Block{{tx("XY")}}, 3, 1)
-	if out[1].Plain() != "abcXYfghij" || out[0].Plain() != "0123456789" {
-		t.Fatalf("overlay = %q / %q", out[0].Plain(), out[1].Plain())
+	base := Block{{tx("0123456789")}, {tx("abcdefghij")}, {tx("ABCDEFGHIJ")}}
+	dlg := box(Line{tx("t")}, Block{{tx("x")}}, 8, unicode)
+	out := overlay(base, dlg, 1, 0)
+	want := []string{"0╭─ t ──╮9", "a│ x    │j", "A╰──────╯J"}
+	for i, l := range out {
+		if l.Plain() != want[i] || l.Width() != 10 {
+			t.Errorf("row %d = %q (%d cells), want %q", i, l.Plain(), l.Width(), want[i])
+		}
 	}
 }
 
 func TestWrapAndBar(t *testing.T) {
-	got := wrap("one two three four", 9)
-	if len(got) != 3 || got[0] != "one two" || got[1] != "three" || got[2] != "four" {
-		t.Fatalf("wrap = %q", got)
+	if got := wrap("one two three four", 9); strings.Join(got, "|") != "one two|three|four" {
+		t.Errorf("wrap = %q", got)
 	}
-	if b := bar(10, 0.5, 0.2); b.Width() != 10 || b.Plain() != "███████░░░" {
-		t.Fatalf("bar = %q", b.Plain())
+	if got := wrap("abcdefghij", 4); strings.Join(got, "|") != "abcd|efgh|ij" {
+		t.Errorf("a word wider than the line: %q", got)
 	}
-	if b := bar(10, 2, 2); b.Width() != 10 {
-		t.Fatalf("clamped bar = %q", b.Plain())
+	if got := wrap("a\n\nb", 9); strings.Join(got, "|") != "a||b" {
+		t.Errorf("paragraphs: %q", got)
+	}
+	if got := bar(10, 0.5, unicode).Plain(); got != "█████░░░░░" {
+		t.Errorf("bar = %q", got)
+	}
+	if got := bar(4, 2, unicode).Plain(); got != "████" {
+		t.Errorf("bar past 1 = %q", got)
 	}
 }
 
 func TestJoinRight(t *testing.T) {
-	if got := joinRight(Line{tx("ab")}, Line{tx("cd")}, 8); got.Plain() != "ab    cd" {
-		t.Fatalf("joinRight = %q", got.Plain())
+	if got := joinRight(Line{tx("left")}, Line{tx("right")}, 12).Plain(); got != "left   right" {
+		t.Errorf("fits: %q", got)
 	}
-	if got := joinRight(Line{tx("abcdef")}, Line{tx("cd")}, 6); got.Width() != 6 {
-		t.Fatalf("crowded joinRight = %q", got.Plain())
-	}
-}
-
-func TestLineCutKeepsGraphemesWhole(t *testing.T) {
-	coder := "\U0001F469\u200d\U0001F4BB" // woman technologist: one grapheme, two cells
-	l := Line{tx("A" + coder + "B")}
-	if w := l.Width(); w != 4 {
-		t.Fatalf("width = %d, want 4", w)
-	}
-	cases := []struct {
-		from, to int
-		want     string
-	}{
-		{1, 3, coder},
-		{0, 2, "A "}, // the grapheme straddles the right edge
-		{2, 4, " B"}, // and the left edge
-		{0, 4, "A" + coder + "B"},
-	}
-	for _, c := range cases {
-		got := l.Cut(c.from, c.to)
-		if got.Plain() != c.want || got.Width() != c.to-c.from {
-			t.Errorf("Cut(%d,%d) = %q (%d cells), want %q", c.from, c.to, got.Plain(), got.Width(), c.want)
-		}
-	}
-}
-
-func TestWrapSplitsWordsWiderThanTheLine(t *testing.T) {
-	long := strings.Repeat("x", 25)
-	got := wrap("a "+long+" b", 10)
-	joined := strings.Join(got, "")
-	if strings.Count(joined, "x") != 25 {
-		t.Fatalf("wrap lost characters: %q", got)
-	}
-	for _, l := range got {
-		if width(l) > 10 {
-			t.Fatalf("line %q is wider than 10", l)
-		}
+	if got := joinRight(Line{tx("a long left side")}, Line{tx("right")}, 12).Plain(); got != "a lon… right" || width(got) != 12 {
+		t.Errorf("too wide: %q", got)
 	}
 }
 
 func TestSplitCellsKeepsWideCharactersWhole(t *testing.T) {
-	head, rest := splitCells("ab日本語", 3)
-	if head != "ab" || rest != "日本語" {
-		t.Fatalf("splitCells = %q, %q", head, rest)
+	head, rest := splitCells("日本語", 3)
+	if head != "日" || rest != "本語" {
+		t.Errorf("splitCells = %q, %q", head, rest)
 	}
-	got := wrap(strings.Repeat("日", 7), 4)
-	for _, l := range got {
-		if width(l) > 4 || strings.ContainsRune(l, ' ') {
-			t.Fatalf("wrap of wide text = %q", got)
-		}
+	head, rest = splitCells("日", 1)
+	if head != "日" || rest != "" {
+		t.Errorf("one grapheme always fits: %q, %q", head, rest)
 	}
-	if head, _ := splitCells("日", 1); head != "日" {
-		t.Fatal("splitCells must take one grapheme even when it is wider than w")
+}
+
+func TestBlockFitAndHjoin(t *testing.T) {
+	b := Block{{tx("a")}}.fit(3, 2)
+	if len(b) != 2 || b[0].Plain() != "a  " || b[1].Plain() != "   " {
+		t.Errorf("fit = %v", b)
+	}
+	j := hjoin(2, col{Block{{tx("l")}}, 2}, vrule(2, unicode), col{Block{{tx("r")}, {tx("rr")}}, 2})
+	if j[0].Plain() != "l │r " || j[1].Plain() != "  │rr" {
+		t.Errorf("hjoin = %q, %q", j[0].Plain(), j[1].Plain())
+	}
+}
+
+// A frame without color is its plain text, and one with color paints only
+// what has a role.
+func TestRenderWithoutColorIsPlain(t *testing.T) {
+	l := Line{bold(view.RoleAccent, "head"), sp(1), chip("q")}
+	if got := l.Render(newPainter(view.Theme{}), view.RoleBase); got != l.Plain() {
+		t.Errorf("no color: %q", got)
+	}
+	got := l.Render(newPainter(view.Theme{Depth: view.TrueColor}), view.RoleBase)
+	if !strings.Contains(got, "\x1b[38;2;203;166;247m\x1b[48;2;30;30;46m\x1b[1mhead\x1b[0m") || !strings.Contains(got, "\x1b[48;2;49;50;68m q \x1b[0m") {
+		t.Errorf("true color: %q", got)
+	}
+	got = l.Render(newPainter(view.Theme{Depth: view.Color256}), view.RoleBase)
+	if !strings.Contains(got, "\x1b[38;5;") || strings.Contains(got, "38;2;") {
+		t.Errorf("256 colors: %q", got)
 	}
 }

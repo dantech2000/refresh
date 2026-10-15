@@ -1,0 +1,15 @@
+NODEGROUPS  prod, 6
+
+NAME      STATUS        INSTANCE            VERSION   AMI             NODES
+api       [?] unknown   unknown             unknown   [?] unknown   unknown
+batch     [~] UPDATING  m5.large            1.33      [~] Updating       10
+empty     [OK] ACTIVE   m5.large            1.33      [?] unknown         0
+gpu       [OK] ACTIVE   g5.xlarge           1.33      - Custom            1
+old       [OK] ACTIVE   m5.large            [!] 1.32  [?] unknown         2
+web       [OK] ACTIVE   m5.large,m5a.large  1.33      [?] unknown         6
+
+INCOMPLETE DATA
+[?] nodegroup prod/api (us-east-1): AccessDenied (grant eks:DescribeNodegroup): AccessDeniedException: User: arn:aws:iam::123456789012:user/fake is not authorized to perform this action
+[?] nodegroup prod/empty (us-east-1): AccessDenied (grant ssm:GetParameter): AccessDeniedException: User: arn:aws:iam::123456789012:user/fake is not authorized to perform this action
+[?] nodegroup prod/old (us-east-1): AccessDenied (grant ssm:GetParameter): AccessDeniedException: User: arn:aws:iam::123456789012:user/fake is not authorized to perform this action
+[?] nodegroup prod/web (us-east-1): AccessDenied (grant ssm:GetParameter): AccessDeniedException: User: arn:aws:iam::123456789012:user/fake is not authorized to perform this action

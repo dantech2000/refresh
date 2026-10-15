@@ -1,221 +1,136 @@
 # refresh ui (experimental)
 
-A full-screen terminal UI for the fleet: what is stale, readiness checks,
-live nodegroup rolls, and cluster upgrades and rollbacks, with live event
-and log streams.
+`refresh ui` opens a full-screen terminal UI for the fleet. It is experimental:
+its screens and keys can change between releases.
 
 ```bash
 refresh ui [flags]
 ```
 
-!!! warning "Experimental"
-    The UI is new, and its keys and screens can change between releases. It
-    starts read-only: pass `--allow-changes`, or press `ctrl+u` in the UI, to
-    allow changes. Try changes on a non-production cluster first. It is
-    tested on macOS and Linux.
+The UI shows the fleet with what is out of date, each cluster with its
+nodegroups and add-ons, the readiness checks of `cluster upgrade-check` on
+demand, and the changes of the cluster commands: their dry runs, their health
+gates, and their progress while they run. It reads the fleet with the same
+code as `refresh status`, every `--interval` and on ++ctrl+r++.
 
-The UI runs the same code as the CLI. The fleet comes from `refresh status`,
-readiness from `refresh cluster upgrade-check`, and every change from the
-command that makes it: `nodegroup update`, `addon update --all`, `cluster
-upgrade`, and `cluster rollback`. Each dry run shows the CLI command that makes
-the same change, and `c` copies it.
+!!! note "Read-only unless you say otherwise"
+    Without `--allow-changes` the UI starts nothing. The change keys still
+    run the dry run and show the plan with the command that makes the same
+    change, so you can copy it and run it in a shell. With the flag, ++y++ in
+    a dry run starts that plan on a real cluster.
 
 ## Flags
 
-| Flag | Description |
+| Flag | Meaning |
 |---|---|
-| `--all-regions, -A` | Sweep all EKS-supported regions (or the `REFRESH_EKS_REGIONS` list) |
-| `--region, -r` | Region(s) to sweep (repeatable). Without `-A` or `-r`, the UI sweeps the configured region and the region of the kubectl cluster (see [Start on the kubectl cluster](#start-on-the-kubectl-cluster)); with no region configured, the regions of the partition |
-| `--interval` | Time between fleet sweeps (default `1m`). `ctrl+r` sweeps now |
-| `--allow-changes` | Let the UI start changes after their dry runs and gates. Without it, the UI starts read-only, and `ctrl+u` allows changes later |
-| `--wait-timeout` | How long the UI watches a roll it started (default `40m`, `0` = no limit). The EKS update continues either way |
-| `--kubeconfig`, `--kube-context` | The Kubernetes access for the live node view and the health gate's workload and PDB checks, as in `nodegroup update` |
-
-## Start on the kubectl cluster
-
-When the kubectl context (or `--kube-context`) points at an EKS cluster, the
-fleet cursor moves to that cluster when the sweep finds it, and the feed says
-`kubectl cluster <name>`. If you use a key that acts first (move the cursor,
-open a screen, or change a pane), the cursor stays where it is. A key that
-does nothing yet, such as `enter` before the first sweep, does not count. The
-cursor never moves while a dialog is open.
-
-The UI reads the cluster's name and region from the kubeconfig: a cluster ARN
-(as `aws eks update-kubeconfig` writes it), an eksctl cluster name, or the API
-server address and the `aws eks get-token` arguments. Without `-r` or `-A`,
-the UI adds the cluster's region to the sweep, when the region is in the same
-AWS partition as the configured region.
-
-A cluster with the same name and region is the kubectl cluster only when the
-UI can check it:
-
-- If the kubeconfig has a cluster ARN, the account must match.
-- If the kubeconfig's server is an EKS endpoint, the endpoint must match.
-- If the kubeconfig has neither (a proxied API server, for example), the name
-  and region decide.
-
-If the UI cannot read the cluster's ARN or endpoint, it waits for the next
-sweep. The feed tells you when the cluster does not match:
-
-- `kubectl cluster <name> is another cluster`: the sweep found a cluster with
-  that name in a different account, or behind a different endpoint.
-- `kubectl cluster <name> not found`: the sweep read the region and did not
-  find the cluster.
-
-Both usually mean that the AWS credentials are for a different account than
-the kubectl context. Select the profile for that account with `--profile` or a
-refresh context.
+| `-A, --all-regions` | Read every region. |
+| `-r, --region` | The regions to read. |
+| `--interval` | Time between fleet sweeps. Default `1m`, at least `10s`. |
+| `--allow-changes` | Let ++y++ in a dry run start the change. Without it the UI is read-only. |
+| `--wait-timeout` | How long the UI follows a change it starts or watches. Unset means the default of the command that makes the change (`nodegroup update`, `addon update`, `cluster upgrade`, `cluster rollback`); `0` means no limit. |
+| `--kubeconfig`, `--kube-context` | The Kubernetes access of a roll's health gate and node view, as for the commands. The copied command carries them. |
 
 ## Screens
 
-| Key | Screen | Shows |
+| Key | Screen | Content |
 |---|---|---|
-| `1` | Fleet | Every cluster: version, stale nodegroups and add-ons, and status. A card for the selected cluster, and a live event feed |
-| `2` | Cluster | Readiness for the next version (`r` runs `cluster upgrade-check`) |
-| `3` | Rolls | Each nodegroup roll: nodes draining, joining, and terminated, the pods left on a draining node, Kubernetes events, and each node launch Auto Scaling failed (such as the EC2 vCPU quota) |
-| `4` | Upgrade | A cluster upgrade or rollback: its phases, the current step, and its timeline |
-
-`esc` goes back to the fleet. A change in flight keeps running. In a dialog
-(a dry run, the key list, the nodegroup picker), `esc` and `q` close the
-dialog instead, except in a dry run while its change is starting.
+| ++1++ | Fleet | The cluster table and the fleet feed. |
+| ++2++ | Cluster | The nodegroups and add-ons of the selected cluster, and its readiness. |
+| ++3++ | Change | The change on screen: its phases and steps, the nodes of a roll, and its log. ++bracket-left++ ++bracket-right++ move between the changes of the session. |
 
 ## Keys
 
-The key bar at the bottom shows the keys that work on the current screen. `?`
-lists them all. While a dialog is open (a dry run, the key list, the
-nodegroup picker), only the dialog's own keys work.
+Press ++question++ in the UI for the keys of the current screen.
 
-| Key | Where | Action |
-|---|---|---|
-| `↑` `↓`, `g` `G` | Lists | Move through a list, or jump to the first or last item (`g` `G` not in the nodegroup picker) |
-| `enter` | Fleet | Open the selected cluster |
-| `r` | Fleet, Cluster | Run readiness for the next version |
-| `p` | Fleet, Cluster | Dry-run a nodegroup patch (pick the nodegroup, then `enter`). A nodegroup on the control plane's version gets the newest AMI (`nodegroup update`); a nodegroup behind it rolls to the control plane's version (`cluster upgrade --only nodegroups -n`) |
-| `a` | Fleet, Cluster | Dry-run the add-on updates |
-| `U` | Fleet, Cluster | Choose what to upgrade, then dry-run it: the control plane only, the control plane and add-ons, or everything, to the next version. With the control plane on the newest version, catch the nodegroups (and add-ons) up to it. A single choice dry-runs at once |
-| `B` | Fleet, Cluster | Dry-run a rollback one minor version back (only after readiness found a rollback window) |
-| `y` | Dry run | Start the change (once changes are allowed: `--allow-changes` or `ctrl+u`) |
-| `c` | Dry run | Copy the CLI command |
-| `ctrl+u` | Screens, and a read-only dry run | Allow changes for this session (asks first). In a read-only dry run, the dry run then runs again with its live gates. Not in the key list or the nodegroup picker |
-| `S` | Upgrade | Stop an upgrade or rollback this UI started, before its next phase or its next nodegroup roll. An EKS update in flight is never cancelled. Press `S` again to cancel the stop |
-| `P` | Upgrade | Pause an upgrade or rollback this UI started, before its next phase. Press `P` again to go on |
-| `y` / `n` | Upgrade | When the upgrade asks a question: go on, or stop after this step |
-| `f` | Fleet | Feed: all clusters, or the selected one |
-| `w` | Any | Feed: warnings and errors only |
-| `e` | Any | Export a log of this session to a file: the timeline, Kube events, AWS API calls, or all (see [Export a session log](#export-a-session-log)) |
-| `space` | Any | Freeze the live panes, or follow them again |
-| `tab` `←` `→` | Rolls, Upgrade | Switch the log source of a live pane |
-| `[` `]` | Rolls, Upgrade | Page through rolls or upgrades |
-| `ctrl+r` | Any | Sweep the fleet now |
-| `ctrl+l` | Any | Redraw the whole screen |
-| `q` | Any | Quit (in a dialog, close it; a dry run cannot close while its change is starting). Changes in flight keep running in EKS |
-
-## Read-only and allowing changes
-
-Without `--allow-changes`, the UI starts read-only. It reads the fleet and
-dry-runs changes, and each dry run names the CLI command to run. The top bar
-says `READ-ONLY`.
-
-To change a cluster from the UI, allow changes in one of two ways:
-
-- Start the UI with `refresh ui --allow-changes`.
-- Press `ctrl+u` in the UI, then `y`. Changes are allowed until you quit.
-  If a read-only dry run is open, it runs again with its live gates, and
-  `y` then starts the change.
-
-When changes are allowed, the top bar says `CHANGES ON`, and `y` in a dry run
-starts the change. Before the UI starts anything, it checks again:
-
-- The cluster is not changing. The UI reads the control plane, each
-  nodegroup, and each add-on again, and refuses while one is changing, or
-  when it cannot read one of them.
-- **A nodegroup roll** runs the health gate of `nodegroup update` again, and
-  refuses when the gate finds something the dry run did not show. It also
-  refuses when a PodDisruptionBudget would block the drain or cannot be read
-  (the UI has no `--force`), or when the nodegroup's version changed since
-  the dry run. Without Kubernetes access (no kubeconfig context for the
-  cluster), the PDB check is skipped, as in `nodegroup update`, and the dry
-  run says so.
-- **An add-on update** previews again, and refuses when the plan changed.
-- **A cluster upgrade** builds its plan again, for the same parts as the dry
-  run (as `cluster upgrade --only`), and asks (`y`/`n`) when the steps
-  changed or a nodegroup's health gate warns. A PDB drain blocker before a
-  roll stops the run. After each roll, the post-roll verification of
-  `cluster upgrade` runs: an issue fails the run before the next roll. A
-  rollback does the same.
-- **A rollback** follows the rules of [`cluster rollback`](cluster.md): within
-  the rollback window, nodegroups first, then add-ons, then the control plane.
-
-The UI runs one change at a time on a cluster.
-
-## Changes started elsewhere
-
-A nodegroup roll or a control-plane update (an upgrade or a rollback) started
-with the CLI or the AWS console shows up on the next sweep. The UI watches
-it, including the live node view of a roll, and marks it `started elsewhere ·
-watch only`. It cannot stop or pause it. An add-on update started elsewhere
-marks the cluster busy, but the UI does not watch it. The UI shows changes
-in flight, not past ones.
-
-If you quit the UI (or it stops) during a change it started, the EKS update
-in flight keeps running, and the next `refresh ui` watches it the same way.
-The later phases of an upgrade or rollback do not start. To finish them, run
-the CLI command the dry run named (`c` copies it) again: `cluster upgrade`
-with the same `--to`, or the same `cluster rollback`. Each continues from
-the cluster's live state. `U` in the UI plans the next
-version from the version the cluster is on, so after the control plane
-moved it offers the version after that.
-
-## Export a session log
-
-Press `e` to save a log of this session for a later review. Choose what it
-holds, named as the log tabs are:
-
-| Choice | Holds |
+| Key | Action |
 |---|---|
-| Timeline | The changes and checks: upgrade and rollback phases, roll lifecycle, add-on updates, readiness, questions and answers |
-| Kube events | The Kubernetes events of rolls |
-| AWS API | The AWS API calls the UI made |
-| All | Everything |
+| ++up++ ++down++ ++j++ ++k++ ++g++ ++shift+g++ | Move in a list. |
+| ++enter++ | Open the selected cluster. |
+| ++esc++ | Go back to the fleet, close a dialog, or cancel a dry run on its way. |
+| ++r++ | Run the readiness checks of the selected cluster. |
+| ++f++ | Fleet screen: show the feed of all clusters, or of the selected one. |
+| ++p++ | Dry-run a roll of a stale nodegroup of the selected cluster (`nodegroup update`). With several stale nodegroups, a picker asks which. A nodegroup behind the control plane rolls to its version (`cluster upgrade --only nodegroups -n`). |
+| ++a++ | Dry-run the update of the stale add-ons (`addon update --all`). |
+| ++shift+u++ | Dry-run an upgrade: the control plane alone, with its add-ons, or everything, to the next minor; or catch up the nodegroups or the add-ons to the version the control plane runs (`cluster upgrade`). |
+| ++shift+b++ | Dry-run the rollback of the control plane (`cluster rollback`). Offered after a readiness run found a rollback window. |
+| ++ctrl+r++ | Sweep the fleet now. |
+| ++ctrl+l++ | Redraw the screen. |
+| ++q++ ++ctrl+c++ | Quit. |
 
-The UI keeps every event it saw since it started (up to 100,000), so the
-log covers the whole session, also the lines a pane no longer shows. It
-writes a new file in `$XDG_STATE_HOME/refresh/sessions/`
-(`~/.local/state/refresh/sessions/` by default), named
-`refresh-ui-<date>-<time>-<choice>.tsv`, and shows the path. The file is
-readable only by you, because it names accounts and resources.
+In a dry run:
 
-The file starts with two `#` lines (the choice, the time, the profile and
-context, and the event count), then a header row and one tab-separated line
-per event:
+| Key | Action |
+|---|---|
+| ++y++ | Start the change. Needs `--allow-changes`. |
+| ++c++ | Send the command to the terminal clipboard (OSC 52; the terminal decides whether it takes it). |
+| ++esc++ ++n++ | Close. Not while the change is starting. |
 
-```text
-TIME	CLUSTER	SOURCE	LEVEL	SUBJECT	TEXT	DETAIL
-2026-10-02T01:14:27-07:00	prod	upgrade	progress	phase	Control plane 1.36	-
-```
+On the Change screen, while the change offers them:
 
-`SOURCE` is `upgrade`, `roll`, `check`, `addon`, `kube`, or `aws`. An empty
-field is `-`.
+| Key | Action |
+|---|---|
+| ++y++ ++n++ | Answer the open question: go on, or stop. |
+| ++shift+p++ | Pause before the next phase; again to resume. |
+| ++shift+s++ | Stop before the next phase. What has started finishes. |
+| ++space++ | Freeze the log; again to follow. |
+| ++w++ | Show only the warnings and the failures of the log. |
+
+## What a change from the UI does
+
+A change from the UI is the same change as from the command line, with the
+same plan, the same health gate, and the same waits. What differs is how
+consent is given.
+
+- The dry run is the plan the change runs. ++y++ starts that plan and no
+  other: the run reads the cluster again, and asks when the live plan differs
+  from the one you saw, or when the health gate warns. A blocked dry run has
+  no start key.
+- One dry run can start one change. A second ++y++, or a ++y++ on an older
+  dry run, starts nothing.
+- One change per cluster. A cluster that has a change in this UI, or that is
+  changing in AWS, gets no dry run until it is done.
+- A pause or a stop takes effect at the next point between phases of an
+  upgrade or a rollback. A roll or an add-on update has no such point: once
+  started, it runs to its end. A stop requested while a step runs does not
+  turn a failure into a stop.
+- A change started elsewhere, from the command line or the console, shows on
+  the Change screen once the sweep sees its nodegroup or its control plane
+  `UPDATING`. It is marked "started elsewhere · watch only": the UI follows
+  it and never stops, pauses, or answers it. A control-plane update that is
+  not a version change (logging, networking) is not watched.
+- Quitting the UI does not stop a change. On the way out the UI names the
+  changes still running, with their update IDs. The commands can watch them:
+  `refresh nodegroup update` and `refresh cluster upgrade` attach to an
+  update in flight.
+- The UI keeps no record on disk: when it quits, the log of a change is gone.
+  For a record of a change, run the command that its dry run names with
+  `-o json` and keep the document.
 
 ## Terminal
 
-- **Size:** at least 100 × 24. A smaller terminal shows the size it needs.
-- **UTF-8:** the UI draws its borders, bars, and status marks in Unicode.
-- **Color:** truecolor, 256 colors, or 16 colors, from `COLORTERM` and
-  `TERM`. `NO_COLOR`, `--no-color`, and `TERM=dumb` turn color off. The
-  status marks and the selection marker work without color.
-- **Platforms:** tested on macOS and Linux (including tmux). Windows is not
-  tested.
-- **Other output:** while the UI runs, the standard error of `refresh` and
-  of the programs it starts (such as a kubeconfig credential plugin) goes
-  to `/dev/null` on macOS and Linux, so their messages cannot write over
-  the screen. Another program can still write to the same terminal. The UI
-  redraws the whole screen after each fleet sweep (at most every 30
-  seconds), which clears such text. In a terminal with synchronized output
-  (Ghostty, WezTerm, kitty, Alacritty, Windows Terminal), the redraw does
-  not flash. Press `ctrl+l` to redraw at once.
+- The UI needs a terminal of at least 100 by 24 cells. In a smaller terminal
+  it shows one line that says so, and it comes back when you resize.
+- `--no-color`, `NO_COLOR`, and `TERM=dumb` turn the colors off. The marks and
+  labels still carry every status.
+- While the UI runs, the standard error of `refresh` and of the programs that
+  it starts, such as a kubeconfig credential plugin, goes to the null device.
+  So their messages cannot write over the screen.
 
-## Exit codes
+## Trying the UI without an account
 
-`0` when you quit. `1` on an error, with no interactive terminal, or without
-AWS credentials. A change's own result shows in the UI, not in the exit code.
+`tools/fakefleet` serves a fake fleet, with its own clock and a Kubernetes API
+per cluster, and the unchanged binary runs against it. From a checkout:
+
+```bash
+task run:tui:sim                      # refresh ui -A --allow-changes on the fake fleet
+FAKEFLEET_FLAGS="-speed 10" task run:tui:sim
+task run:sim -- status -A             # any command against the same fleet
+```
+
+The fake fleet places scripted situations on its first clusters (a blocked
+drain, a degraded add-on, a roll in flight, a rollback window, a stuck
+drain), and prints which cluster has which on start. `-speed` runs its clock
+faster than the wall clock; `-roll`, `-addon`, and `-upgrade` set how long
+each change takes on that clock. A change started with `task run:sim --
+nodegroup update ...` in another terminal shows up in the UI as a change
+started elsewhere.

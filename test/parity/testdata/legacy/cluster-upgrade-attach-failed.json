@@ -1,0 +1,105 @@
+{
+  "exitCode": 0,
+  "stdout": "{\n  \"apiVersion\": \"refresh.drod.dev/v1\",\n  \"kind\": \"UpgradeRun\",\n  \"plan\": {\n    \"clusterName\": \"prod\",\n    \"currentVersion\": \"1.32\",\n    \"targetVersion\": \"1.33\",\n    \"hops\": [\n      {\n        \"from\": \"1.32\",\n        \"to\": \"1.33\",\n        \"steps\": [\n          {\n            \"type\": \"Readiness\",\n            \"description\": \"readiness for 1.33 (insights + version skew)\",\n            \"version\": \"1.33\",\n            \"status\": \"Pending\",\n            \"reason\": \"1 insight(s) passing; skew OK\"\n          },\n          {\n            \"type\": \"ControlPlane\",\n            \"description\": \"control plane → 1.33\",\n            \"version\": \"1.33\",\n            \"status\": \"Pending\",\n            \"reason\": \"an update is already in progress; the orchestrator will attach and watch\"\n          },\n          {\n            \"type\": \"Addon\",\n            \"description\": \"addon vpc-cni → v1.20.0-eksbuild.1 (compatible with 1.33)\",\n            \"target\": \"vpc-cni\",\n            \"version\": \"v1.20.0-eksbuild.1\",\n            \"status\": \"Manual\",\n            \"reason\": \"left out by --only control-plane\",\n            \"beforeNodegroups\": true\n          },\n          {\n            \"type\": \"Addon\",\n            \"description\": \"addon coredns → v1.12.0-eksbuild.1 (compatible with 1.33)\",\n            \"target\": \"coredns\",\n            \"version\": \"v1.12.0-eksbuild.1\",\n            \"status\": \"Manual\",\n            \"reason\": \"left out by --only control-plane\",\n            \"beforeNodegroups\": true\n          },\n          {\n            \"type\": \"Nodegroup\",\n            \"description\": \"nodegroup ng-a → 1.33\",\n            \"target\": \"ng-a\",\n            \"version\": \"1.33\",\n            \"status\": \"Manual\",\n            \"reason\": \"left out by --only control-plane\"\n          },\n          {\n            \"type\": \"Nodegroup\",\n            \"description\": \"nodegroup ng-b → 1.33\",\n            \"target\": \"ng-b\",\n            \"version\": \"1.33\",\n            \"status\": \"Manual\",\n            \"reason\": \"left out by --only control-plane\"\n          }\n        ]\n      }\n    ],\n    \"notices\": [\n      \"add-on(s) vpc-cni, coredns may not run on Kubernetes 1.33: update them right after the control plane: refresh cluster upgrade -c prod --to 1.33 --only addons\",\n      \"nodegroup(s) ng-a, ng-b stay on their version; roll them later: refresh cluster upgrade -c prod --to 1.33 --only nodegroups\"\n    ],\n    \"failures\": []\n  },\n  \"report\": {\n    \"status\": \"Succeeded\",\n    \"completed\": [\n      \"control plane 1.32 → 1.33\"\n    ],\n    \"remaining\": []\n  },\n  \"failures\": []\n}\n",
+  "stderr": "  refreshing cluster insights for prod (waits up to 5m0s)\n  readiness for 1.33: 1 insight(s) passing; skew OK\n  \u003e control plane 1.32 → 1.33\n  cluster is already UPDATING; attaching to the in-flight update\n  control plane upgrade to 1.33 started (update 00000000-0000-4000-8000-000000000002); this typically takes ~10 minutes\n  control plane is ACTIVE at 1.33\n",
+  "refusedBeforeMutation": false,
+  "changes": [
+    {
+      "mutation": {
+        "operation": "eks:StartInsightsRefresh",
+        "region": "us-east-1",
+        "target": "prod",
+        "payload": {},
+        "outcome": "accepted IN_PROGRESS"
+      },
+      "evidence": [
+        "gate: addon prod/coredns: issues=none",
+        "gate: addon prod/coredns: status=ACTIVE",
+        "gate: addon prod/coredns: version=v1.11.4-eksbuild.2",
+        "gate: addon prod/vpc-cni: issues=none",
+        "gate: addon prod/vpc-cni: status=ACTIVE",
+        "gate: addon prod/vpc-cni: version=v1.18.0-eksbuild.1",
+        "target: cluster prod: issues=none",
+        "target: cluster prod: status=UPDATING",
+        "target: cluster prod: version=1.32",
+        "gate: nodegroup prod/ng-a: issues=none",
+        "gate: nodegroup prod/ng-a: release=1.32.0-20250101",
+        "gate: nodegroup prod/ng-a: size=2/1/3",
+        "gate: nodegroup prod/ng-a: status=ACTIVE",
+        "gate: nodegroup prod/ng-a: version=1.32",
+        "gate: nodegroup prod/ng-b: issues=none",
+        "gate: nodegroup prod/ng-b: release=1.32.0-20260101",
+        "gate: nodegroup prod/ng-b: size=2/1/3",
+        "gate: nodegroup prod/ng-b: status=ACTIVE",
+        "gate: nodegroup prod/ng-b: version=1.32"
+      ]
+    },
+    {
+      "mutation": {
+        "operation": "eks:UpdateClusterVersion",
+        "region": "us-east-1",
+        "target": "prod",
+        "payload": {
+          "clientRequestToken": "token-1",
+          "version": "1.33"
+        },
+        "outcome": "accepted update 00000000-0000-4000-8000-000000000002"
+      },
+      "evidence": [
+        "prerequisite: cluster prod: issues=none",
+        "prerequisite: cluster prod: status=ACTIVE",
+        "prerequisite: cluster prod: version=1.32",
+        "gate: insight prod/insight-prod-skew: status=PASSING",
+        "gate: insights prod: refresh=COMPLETED",
+        "gate: nodegroup prod/ng-a: issues=none",
+        "gate: nodegroup prod/ng-a: release=1.32.0-20250101",
+        "gate: nodegroup prod/ng-a: size=2/1/3",
+        "gate: nodegroup prod/ng-a: status=ACTIVE",
+        "gate: nodegroup prod/ng-a: version=1.32",
+        "gate: nodegroup prod/ng-b: issues=none",
+        "gate: nodegroup prod/ng-b: release=1.32.0-20260101",
+        "gate: nodegroup prod/ng-b: size=2/1/3",
+        "gate: nodegroup prod/ng-b: status=ACTIVE",
+        "gate: nodegroup prod/ng-b: version=1.32"
+      ]
+    }
+  ],
+  "settlement": [
+    "settlement: cluster prod: issues=none",
+    "settlement: cluster prod: status=ACTIVE",
+    "settlement: cluster prod: version=1.33",
+    "settlement: update prod 2: status=Successful"
+  ],
+  "operations": [
+    "eks:DescribeAddon",
+    "eks:DescribeAddonVersions",
+    "eks:DescribeCluster",
+    "eks:DescribeClusterVersions",
+    "eks:DescribeInsightsRefresh",
+    "eks:DescribeNodegroup",
+    "eks:DescribeUpdate",
+    "eks:ListAddons",
+    "eks:ListClusters",
+    "eks:ListInsights",
+    "eks:ListNodegroups",
+    "eks:StartInsightsRefresh",
+    "eks:UpdateClusterVersion"
+  ],
+  "world": {
+    "us-east-1/prod": {
+      "cluster": "1.33 ACTIVE",
+      "nodegroups": {
+        "ng-a": "1.32 1.32.0-20250101 ACTIVE 2/1/3",
+        "ng-b": "1.32 1.32.0-20260101 ACTIVE 2/1/3"
+      },
+      "addons": {
+        "coredns": "v1.11.4-eksbuild.2 ACTIVE",
+        "vpc-cni": "v1.18.0-eksbuild.1 ACTIVE"
+      },
+      "updates": [
+        "cluster VersionUpdate Failed Version=1.33",
+        "cluster VersionUpdate Successful Version=1.33"
+      ]
+    }
+  }
+}

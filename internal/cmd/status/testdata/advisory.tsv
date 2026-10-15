@@ -1,0 +1,7 @@
+CLUSTER	REGION	VERSION	SUPPORT	COMPUTE	STALE AMI	ADDONS	HEALTH
+ancient	eu-west-1	1.29	unsupported*	unknown	n/a	0	ok
+auto	eu-west-1	1.34	standard (62d)*	Auto Mode	n/a	0	ok
+karpenter	eu-west-1	1.34	standard (62d)*	unknown	n/a	0	ok
+legacy	us-east-1	1.31	extended (56d)* +$0.50/hr	1 nodegroup	1 not compared	0	ok
+prod-current	us-east-1	1.34	standard (62d)*	1 nodegroup	1 not compared	0	ok
+prod-stale	us-east-1	1.33	extended (301d)* +$0.50/hr	3 nodegroups	2/3, 1 behind CP	3 (coredns,kube-proxy +1)	1 issue

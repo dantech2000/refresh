@@ -1,0 +1,124 @@
+{
+  "exitCode": 0,
+  "stdout": "{\n  \"apiVersion\": \"refresh.drod.dev/v1\",\n  \"kind\": \"NodegroupUpdate\",\n  \"cluster\": \"prod\",\n  \"nodegroups\": [\n    {\n      \"name\": \"ng-a\",\n      \"status\": \"Succeeded\",\n      \"updateId\": \"00000000-0000-4000-8000-000000000001\"\n    }\n  ],\n  \"verification\": {\n    \"checks\": [\n      \"nodegroup ng-a is ACTIVE\",\n      \"no new Pending pods\"\n    ]\n  },\n  \"health\": {\n    \"results\": [\n      {\n        \"name\": \"Node Health\",\n        \"status\": \"Warn\",\n        \"score\": 75,\n        \"message\": \"3/4 nodes ready (fails below 50% ready), issues: [b-2 (NotReady)]\",\n        \"details\": [\n          \"Nodegroup ng-a: ACTIVE\",\n          \"Nodegroup ng-b: ACTIVE\"\n        ],\n        \"isBlocking\": true\n      },\n      {\n        \"name\": \"Cluster Capacity\",\n        \"status\": \"Pass\",\n        \"score\": 100,\n        \"message\": \"Sufficient CPU capacity (avg 32.5%, peak 32.5%)\",\n        \"details\": [\n          \"Using default EC2 metrics (CPU only)\",\n          \"Memory metrics require Container Insights setup\",\n          \"Average CPU utilization: 32.5% (peak node 32.5%)\",\n          \"Memory utilization: Not available (requires Container Insights)\"\n        ],\n        \"isBlocking\": true\n      },\n      {\n        \"name\": \"Node Utilization\",\n        \"status\": \"Pass\",\n        \"score\": 100,\n        \"message\": \"Healthy headroom (CPU 20.0%, memory 25.0% in use)\",\n        \"details\": [\n          \"Live utilization across 4 node(s): CPU 20.0%, memory 25.0%\"\n        ],\n        \"isBlocking\": false\n      },\n      {\n        \"name\": \"Control Plane\",\n        \"status\": \"Pass\",\n        \"score\": 0,\n        \"message\": \"control-plane metrics unavailable (requires EKS 1.28+ on a supported platform version)\",\n        \"isBlocking\": false,\n        \"skipped\": true\n      },\n      {\n        \"name\": \"Service Quotas\",\n        \"status\": \"Pass\",\n        \"score\": 100,\n        \"message\": \"EC2 vCPU quota headroom healthy (12.5% used)\",\n        \"details\": [\n          \"EC2 On-Demand Standard vCPUs: 8 of 64 used (12.5%, 56 free)\"\n        ],\n        \"isBlocking\": false\n      },\n      {\n        \"name\": \"Critical Workloads\",\n        \"status\": \"Pass\",\n        \"score\": 100,\n        \"message\": \"2/2 critical pods running\",\n        \"details\": [\n          \"kube-system: 2/2 pods running\",\n          \"kube-public: 0/0 pods running\",\n          \"kube-node-lease: 0/0 pods running\"\n        ],\n        \"isBlocking\": true\n      },\n      {\n        \"name\": \"Pod Disruption Budgets\",\n        \"status\": \"Pass\",\n        \"score\": 100,\n        \"message\": \"All 2 deployments have PDB protection\",\n        \"details\": [\n          \"default: 2/2 deployments covered by PDBs\"\n        ],\n        \"isBlocking\": false\n      },\n      {\n        \"name\": \"Resource Balance\",\n        \"status\": \"Pass\",\n        \"score\": 100,\n        \"message\": \"CPU distribution and utilization within acceptable ranges\",\n        \"details\": [\n          \"Analyzed 4 nodes\",\n          \"CPU spread (std dev): 0.0 pts\",\n          \"Memory spread: Not available (requires CloudWatch agent)\",\n          \"Max CPU utilization: 32.5%\",\n          \"Max Memory utilization: Not available (requires CloudWatch agent)\",\n          \"Memory analysis requires Container Insights setup\"\n        ],\n        \"isBlocking\": false\n      }\n    ],\n    \"overallScore\": 96,\n    \"decision\": \"Warn\",\n    \"warnings\": [\n      \"3/4 nodes ready (fails below 50% ready), issues: [b-2 (NotReady)]\"\n    ],\n    \"failures\": []\n  },\n  \"failures\": []\n}\n",
+  "stderr": "\n\u003e CLUSTER HEALTH ASSESSMENT\n\n  [###############-----] Node Health             [!] WARN\n  [####################] Cluster Capacity        [OK] PASS\n  [####################] Node Utilization        [OK] PASS\n  [--------------------] Control Plane           - SKIP\n  [####################] Service Quotas          [OK] PASS\n  [####################] Critical Workloads      [OK] PASS\n  [####################] Pod Disruption Budgets  [OK] PASS\n  [####################] Resource Balance        [OK] PASS\n\nStatus: [!] READY WITH WARNINGS (1 issue found)\n\nWarnings:\n  [!] 3/4 nodes ready (fails below 50% ready), issues: [b-2 (NotReady)]\n[!] Health check reported warnings; proceeding: Node Health: 3/4 nodes ready (fails below 50% ready), issues: [b-2 (NotReady)]\n",
+  "refusedBeforeMutation": false,
+  "changes": [
+    {
+      "mutation": {
+        "operation": "eks:UpdateNodegroupVersion",
+        "region": "us-east-1",
+        "target": "prod/ng-a",
+        "payload": {
+          "clientRequestToken": "token-1",
+          "version": "1.32"
+        },
+        "outcome": "accepted update 00000000-0000-4000-8000-000000000001"
+      },
+      "evidence": [
+        "gate: addon prod/coredns: issues=none",
+        "gate: addon prod/coredns: status=ACTIVE",
+        "gate: addon prod/coredns: version=v1.11.4-eksbuild.2",
+        "gate: addon prod/vpc-cni: issues=none",
+        "gate: addon prod/vpc-cni: status=ACTIVE",
+        "gate: addon prod/vpc-cni: version=v1.18.0-eksbuild.1",
+        "target: cluster prod: issues=none",
+        "target: cluster prod: status=ACTIVE",
+        "target: cluster prod: version=1.32",
+        "gate: deployment prod/default/api: replicas=2",
+        "gate: deployment prod/default/web: replicas=2",
+        "gate: node prod/a-1: condition=Ready",
+        "gate: node prod/a-2: condition=Ready",
+        "gate: node prod/b-1: condition=Ready",
+        "gate: node prod/b-2: condition=NotReady",
+        "target: nodegroup prod/ng-a: issues=none",
+        "target: nodegroup prod/ng-a: release=1.32.0-20250101",
+        "target: nodegroup prod/ng-a: size=2/1/3",
+        "target: nodegroup prod/ng-a: status=ACTIVE",
+        "target: nodegroup prod/ng-a: version=1.32",
+        "gate: nodegroup prod/ng-b: issues=none",
+        "gate: nodegroup prod/ng-b: release=1.32.0-20260101",
+        "gate: nodegroup prod/ng-b: size=2/1/3",
+        "gate: nodegroup prod/ng-b: status=ACTIVE",
+        "gate: nodegroup prod/ng-b: version=1.32",
+        "gate: pdb prod/default/api: allowed=1",
+        "gate: pdb prod/default/web: allowed=1",
+        "gate: pod prod/default/api-1: phase=Running",
+        "gate: pod prod/default/api-2: phase=Running",
+        "gate: pod prod/default/web-1: phase=Running",
+        "gate: pod prod/default/web-2: phase=Running",
+        "gate: pod prod/kube-system/coredns-1: phase=Running",
+        "gate: pod prod/kube-system/coredns-2: phase=Running",
+        "gate: pods prod: pending=none"
+      ]
+    }
+  ],
+  "settlement": [
+    "settlement: nodegroup prod/ng-a: issues=none",
+    "settlement: nodegroup prod/ng-a: release=1.32.0-20260101",
+    "settlement: nodegroup prod/ng-a: size=2/1/3",
+    "settlement: nodegroup prod/ng-a: status=ACTIVE",
+    "settlement: nodegroup prod/ng-a: version=1.32",
+    "settlement: update prod/ng-a 1: status=Successful"
+  ],
+  "verification": [
+    "verification: node prod/b-1: condition=Ready",
+    "verification: node prod/b-2: condition=NotReady",
+    "verification: node prod/ng-a-u1-1: condition=Ready",
+    "verification: node prod/ng-a-u1-2: condition=Ready",
+    "verification: pods prod: pending=none"
+  ],
+  "operations": [
+    "autoscaling:DescribeAutoScalingGroups",
+    "cloudwatch:GetMetricData",
+    "ec2:DescribeInstanceTypeOfferings",
+    "ec2:DescribeInstances",
+    "ec2:DescribeSubnets",
+    "eks:DescribeAddon",
+    "eks:DescribeCluster",
+    "eks:DescribeNodegroup",
+    "eks:DescribeUpdate",
+    "eks:ListAddons",
+    "eks:ListClusters",
+    "eks:ListNodegroups",
+    "eks:UpdateNodegroupVersion",
+    "kube:ListDeployments",
+    "kube:ListNamespaces",
+    "kube:ListNodeMetrics",
+    "kube:ListNodes",
+    "kube:ListPodDisruptionBudgets",
+    "kube:ListPods",
+    "servicequotas:GetServiceQuota",
+    "ssm:GetParameter"
+  ],
+  "world": {
+    "us-east-1/prod": {
+      "cluster": "1.32 ACTIVE",
+      "nodegroups": {
+        "ng-a": "1.32 1.32.0-20260101 ACTIVE 2/1/3",
+        "ng-b": "1.32 1.32.0-20260101 ACTIVE 2/1/3"
+      },
+      "addons": {
+        "coredns": "v1.11.4-eksbuild.2 ACTIVE",
+        "vpc-cni": "v1.18.0-eksbuild.1 ACTIVE"
+      },
+      "nodes": {
+        "b-1": "ng-b Ready",
+        "b-2": "ng-b NotReady",
+        "ng-a-u1-1": "ng-a Ready",
+        "ng-a-u1-2": "ng-a Ready"
+      },
+      "pods": {
+        "default/api-1": "Running@b-1",
+        "default/api-2": "Running@b-2",
+        "default/web-1-u1": "Running@ng-a-u1-2",
+        "default/web-2-u1": "Running@ng-a-u1-1",
+        "kube-system/coredns-1-u1": "Running@ng-a-u1-1",
+        "kube-system/coredns-2": "Running@b-1"
+      },
+      "updates": [
+        "ng-a VersionUpdate Successful Version=1.32,ReleaseVersion=1.32.0-20260101"
+      ]
+    }
+  }
+}

@@ -1,0 +1,118 @@
+package awsx
+
+import (
+	"context"
+	"errors"
+	"fmt"
+
+	"github.com/aws/smithy-go/middleware"
+)
+
+// ErrNotSent is in the chain of the error of a call whose first attempt
+// never left: the context ended while the call waited for a slot of the
+// region's request limit. Nothing reached AWS.
+var ErrNotSent = errors.New("request not sent")
+
+// limiter bounds the requests in flight for one region. The provider keeps
+// one for each region, and every client set of the region shares it.
+type limiter struct {
+	slots chan struct{}
+}
+
+func newLimiter(n int) *limiter {
+	return &limiter{slots: make(chan struct{}, n)}
+}
+
+// callState is what the limiter remembers about one call between its
+// steps.
+type callState struct {
+	// held is true while the call holds the slot that it got before its
+	// first attempt.
+	held bool
+}
+
+type callStateKey struct{}
+
+// add puts the two steps of the limiter on the stack of a call.
+//
+// The first step runs once, before anything else of the call. It waits for
+// the slot of the first attempt. A sweep has many more calls waiting than
+// in flight, and each waits here, where the stack of its goroutine is still
+// small. A wait at the attempt itself would park every goroutine below the
+// whole SDK stack, and the stacks of some thousand waiting calls were half
+// the memory of a sweep.
+//
+// The second step runs once for each attempt. It sits after the retry step
+// and before signing, so a slot covers the credentials, the signature, the
+// round trip, and the read of the answer.
+//
+// The credentials are in a cache, so getting them takes no time, except
+// when they have expired: then one refresh runs for the whole provider and
+// every call waits for it, each with its slot. That starves nothing. Every
+// call of every region needs the same credentials, so no call that could
+// use a free slot can run before the refresh ends. A refresh that fails is
+// not retried by the calls that waited (see markIdentityFailures), so the
+// slots are held for the attempts of the credential client and no longer. The slot is given back after
+// each attempt: it is free during a backoff and between the pages of a
+// paged call. A retry waits for a new slot at this step.
+func (l *limiter) add(stack *middleware.Stack) error {
+	err := stack.Initialize.Add(middleware.InitializeMiddlewareFunc("refresh:RequestLimitFirst", l.first), middleware.Before)
+	if err != nil {
+		return err
+	}
+	return stack.Finalize.Insert(middleware.FinalizeMiddlewareFunc("refresh:RequestLimit", l.attempt), "Retry", middleware.After)
+}
+
+// acquire takes a slot, or returns the error of ctx when it ends first. A
+// context that has ended never gets a slot: when a slot is free at the
+// moment that the context ends, select may pick either case, so the context
+// is checked before the wait and again after it.
+func (l *limiter) acquire(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	select {
+	case l.slots <- struct{}{}:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	if err := ctx.Err(); err != nil {
+		<-l.slots
+		return err
+	}
+	return nil
+}
+
+// first waits for the slot of the first attempt and runs the call. A call
+// that gets no slot before the context ends was never sent.
+func (l *limiter) first(ctx context.Context, in middleware.InitializeInput, next middleware.InitializeHandler) (middleware.InitializeOutput, middleware.Metadata, error) {
+	if err := l.acquire(ctx); err != nil {
+		return middleware.InitializeOutput{}, middleware.Metadata{}, fmt.Errorf("%w: %w", ErrNotSent, err)
+	}
+	state := &callState{held: true}
+	// A call that fails before its first attempt, such as one whose input
+	// does not serialize, still gives the slot back.
+	defer func() {
+		if state.held {
+			<-l.slots
+		}
+	}()
+	return next.HandleInitialize(context.WithValue(ctx, callStateKey{}, state), in)
+}
+
+// attempt runs one attempt of a call inside a slot: the one that the call
+// already holds for its first attempt, or a new one for a retry.
+func (l *limiter) attempt(ctx context.Context, in middleware.FinalizeInput, next middleware.FinalizeHandler) (middleware.FinalizeOutput, middleware.Metadata, error) {
+	// The attempts of one call run one after another, so the state needs
+	// no lock.
+	state, _ := ctx.Value(callStateKey{}).(*callState)
+	if state != nil && state.held {
+		state.held = false
+	} else if err := l.acquire(ctx); err != nil {
+		// The first attempt did reach AWS, so this is not a call that was
+		// never sent: it ends with the error of the context.
+		return middleware.FinalizeOutput{}, middleware.Metadata{}, err
+	}
+	defer func() { <-l.slots }()
+	return next.HandleFinalize(ctx, in)
+}

@@ -1,0 +1,109 @@
+{
+  "exitCode": 0,
+  "stdout": "",
+  "stderr": "",
+  "refusedBeforeMutation": false,
+  "changes": [
+    {
+      "mutation": {
+        "operation": "eks:UpdateNodegroupVersion",
+        "region": "us-east-1",
+        "target": "prod/ng-a",
+        "payload": {
+          "clientRequestToken": "token-1",
+          "version": "1.32"
+        },
+        "outcome": "accepted update 00000000-0000-4000-8000-000000000001"
+      },
+      "evidence": [
+        "gate: addon prod/coredns: issues=none",
+        "gate: addon prod/coredns: status=ACTIVE",
+        "gate: addon prod/coredns: version=v1.11.4-eksbuild.2",
+        "gate: addon prod/vpc-cni: issues=none",
+        "gate: addon prod/vpc-cni: status=ACTIVE",
+        "gate: addon prod/vpc-cni: version=v1.18.0-eksbuild.1",
+        "target: cluster prod: issues=none",
+        "target: cluster prod: status=ACTIVE",
+        "target: cluster prod: version=1.32",
+        "gate: deployment prod/default/api: replicas=2",
+        "gate: deployment prod/default/web: replicas=2",
+        "target: nodegroup prod/ng-a: issues=none",
+        "target: nodegroup prod/ng-a: release=1.32.0-20250101",
+        "target: nodegroup prod/ng-a: size=2/1/3",
+        "target: nodegroup prod/ng-a: status=ACTIVE",
+        "target: nodegroup prod/ng-a: version=1.32",
+        "gate: nodegroup prod/ng-b: issues=none",
+        "gate: nodegroup prod/ng-b: release=1.32.0-20260101",
+        "gate: nodegroup prod/ng-b: size=2/1/3",
+        "gate: nodegroup prod/ng-b: status=ACTIVE",
+        "gate: nodegroup prod/ng-b: version=1.32",
+        "gate: pdb prod/default/api: allowed=1",
+        "gate: pdb prod/default/web: allowed=1"
+      ]
+    }
+  ],
+  "settlement": [
+    "settlement: nodegroup prod/ng-a: issues=none",
+    "settlement: nodegroup prod/ng-a: release=1.32.0-20260101",
+    "settlement: nodegroup prod/ng-a: size=2/1/3",
+    "settlement: nodegroup prod/ng-a: status=ACTIVE",
+    "settlement: nodegroup prod/ng-a: version=1.32",
+    "settlement: update prod/ng-a 1: status=Successful"
+  ],
+  "operations": [
+    "autoscaling:DescribeAutoScalingGroups",
+    "autoscaling:DescribeScalingActivities",
+    "cloudwatch:GetMetricData",
+    "ec2:DescribeInstanceTypeOfferings",
+    "ec2:DescribeInstances",
+    "ec2:DescribeSubnets",
+    "eks:DescribeAddon",
+    "eks:DescribeCluster",
+    "eks:DescribeNodegroup",
+    "eks:DescribeUpdate",
+    "eks:ListAddons",
+    "eks:ListClusters",
+    "eks:ListNodegroups",
+    "eks:UpdateNodegroupVersion",
+    "kube:ListDeployments",
+    "kube:ListNamespaces",
+    "kube:ListNodeMetrics",
+    "kube:ListNodes",
+    "kube:ListPodDisruptionBudgets",
+    "kube:ListPods",
+    "kube:WatchEvents",
+    "kube:WatchNodes",
+    "servicequotas:GetServiceQuota",
+    "ssm:GetParameter"
+  ],
+  "world": {
+    "us-east-1/prod": {
+      "cluster": "1.32 ACTIVE",
+      "nodegroups": {
+        "ng-a": "1.32 1.32.0-20260101 ACTIVE 2/1/3",
+        "ng-b": "1.32 1.32.0-20260101 ACTIVE 2/1/3"
+      },
+      "addons": {
+        "coredns": "v1.11.4-eksbuild.2 ACTIVE",
+        "vpc-cni": "v1.18.0-eksbuild.1 ACTIVE"
+      },
+      "nodes": {
+        "b-1": "ng-b Ready",
+        "b-2": "ng-b Ready",
+        "ng-a-u1-1": "ng-a Ready",
+        "ng-a-u1-2": "ng-a Ready"
+      },
+      "pods": {
+        "default/api-1": "Running@b-1",
+        "default/api-2": "Running@b-2",
+        "default/web-1-u1": "Running@ng-a-u1-2",
+        "default/web-2-u1": "Running@ng-a-u1-1",
+        "kube-system/coredns-1-u1": "Running@ng-a-u1-1",
+        "kube-system/coredns-2": "Running@b-1"
+      },
+      "updates": [
+        "ng-a VersionUpdate Successful Version=1.32,ReleaseVersion=1.32.0-20260101"
+      ]
+    }
+  }
+}

@@ -1,21 +1,23 @@
 package tui
 
 import (
-	"image/color"
 	"strings"
 
-	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/rivo/uniseg"
+
+	"github.com/dantech2000/refresh/internal/view"
 )
 
-// Seg is a run of text with one style. Screens build Lines of Segs and render
-// them last, so widths, truncation, and backgrounds are computed on plain
-// text and every cell gets an explicit background.
+// Seg is a run of text with one role. Screens build Lines of Segs and
+// render them last, so widths, truncation, and backgrounds are computed on
+// plain text and every cell gets an explicit background.
 type Seg struct {
 	Text string
-	FG   color.Color
-	BG   color.Color
+	Role view.Role
+	// BG is the background role. The zero value takes the background of
+	// the row.
+	BG   view.Role
 	Bold bool
 }
 
@@ -25,20 +27,21 @@ type Line []Seg
 // Block is a rectangle of rows.
 type Block []Line
 
-// seg helpers keep screen code short.
-func tx(s string) Seg                  { return Seg{Text: s, FG: colText} }
-func fg(c color.Color, s string) Seg   { return Seg{Text: s, FG: c} }
-func bold(c color.Color, s string) Seg { return Seg{Text: s, FG: c, Bold: true} }
-func dimS(s string) Seg                { return Seg{Text: s, FG: colDim} }
-func sub(s string) Seg                 { return Seg{Text: s, FG: colSubtext} }
-func sp(n int) Seg                     { return Seg{Text: strings.Repeat(" ", max(0, n))} }
+// Segment helpers keep screen code short.
+func tx(s string) Seg                       { return Seg{Text: s, Role: view.RoleText} }
+func role(r view.Role, s string) Seg        { return Seg{Text: s, Role: r} }
+func bold(r view.Role, s string) Seg        { return Seg{Text: s, Role: r, Bold: true} }
+func dim(s string) Seg                      { return Seg{Text: s, Role: view.RoleDim} }
+func sub(s string) Seg                      { return Seg{Text: s, Role: view.RoleSubtext} }
+func sp(n int) Seg                          { return Seg{Text: strings.Repeat(" ", max(0, n))} }
+func statusSeg(s view.Status, t string) Seg { return Seg{Text: t, Role: view.RoleOf(s)} }
 
 // chip is a key hint: the key on a raised background.
-func chip(k string) Seg { return Seg{Text: " " + k + " ", FG: colText, BG: colSurface0} }
+func chip(k string) Seg { return Seg{Text: " " + k + " ", Role: view.RoleText, BG: view.RoleSurface} }
 
 // badge is a label on a solid color.
-func badge(c color.Color, s string) Seg {
-	return Seg{Text: " " + s + " ", FG: colCrust, BG: c, Bold: true}
+func badge(r view.Role, s string) Seg {
+	return Seg{Text: " " + s + " ", Role: view.RoleCrust, BG: r, Bold: true}
 }
 
 func width(s string) int { return ansi.StringWidth(s) }
@@ -52,9 +55,13 @@ func (l Line) Width() int {
 	return n
 }
 
-// Fit truncates the line to w cells (ending in "…" when cut) or pads it
-// with spaces to exactly w.
+// Fit truncates the line to w cells, ending in an ellipsis when cut, or
+// pads it with spaces to exactly w.
 func (l Line) Fit(w int) Line {
+	return l.fit(w, "…")
+}
+
+func (l Line) fit(w int, ellipsis string) Line {
 	if w <= 0 {
 		return nil
 	}
@@ -64,17 +71,21 @@ func (l Line) Fit(w int) Line {
 		}
 		return append(append(Line(nil), l...), sp(w-lw))
 	}
-	out := l.Cut(0, w-1)
-	last := Seg{Text: "…", FG: colDim}
+	ew := width(ellipsis)
+	if w <= ew {
+		return l.Cut(0, w)
+	}
+	out := l.Cut(0, w-ew)
+	last := Seg{Text: ellipsis, Role: view.RoleDim}
 	if len(out) > 0 {
 		last.BG = out[len(out)-1].BG
 	}
-	return append(out, last).Fit(w)
+	return append(out, last).fit(w, ellipsis)
 }
 
-// Cut returns the cells [from, to) of the line. It splits text only between
-// graphemes (a user-perceived character such as 👩‍💻), so it never breaks one
-// apart; a wide grapheme that straddles an edge becomes spaces.
+// Cut returns the cells [from, to) of the line. It splits text only
+// between graphemes, so it never breaks one apart; a wide grapheme that
+// straddles an edge becomes spaces.
 func (l Line) Cut(from, to int) Line {
 	var out Line
 	pos := 0
@@ -112,10 +123,10 @@ func (l Line) Cut(from, to int) Line {
 }
 
 // WithBG sets the background of every segment that has none.
-func (l Line) WithBG(bg color.Color) Line {
+func (l Line) WithBG(bg view.Role) Line {
 	out := make(Line, len(l))
 	for i, s := range l {
-		if s.BG == nil {
+		if s.BG == view.RoleNone {
 			s.BG = bg
 		}
 		out[i] = s
@@ -123,24 +134,45 @@ func (l Line) WithBG(bg color.Color) Line {
 	return out
 }
 
-// Render styles the line; segments with no background get bg.
-func (l Line) Render(bg color.Color) string {
+// painter holds the escape codes of every role of a theme, computed once:
+// a frame renders thousands of segments.
+type painter struct {
+	fg, bg [view.RoleSurface + 1]string
+	color  bool
+}
+
+func newPainter(th view.Theme) *painter {
+	p := &painter{color: th.Depth != view.NoColor}
+	for r := view.RoleNone; r <= view.RoleSurface; r++ {
+		p.fg[r], p.bg[r] = th.SGR(r)
+	}
+	return p
+}
+
+// Render styles the line with p; segments with no background get bg.
+// Without color nothing is styled, so a frame without color is its plain
+// text.
+func (l Line) Render(p *painter, bg view.Role) string {
 	var b strings.Builder
 	for _, s := range l {
 		if s.Text == "" {
 			continue
 		}
-		st := lipgloss.NewStyle().Foreground(colText).Background(bg)
-		if s.FG != nil {
-			st = st.Foreground(s.FG)
+		if !p.color {
+			b.WriteString(s.Text)
+			continue
 		}
-		if s.BG != nil {
-			st = st.Background(s.BG)
+		segBG := s.BG
+		if segBG == view.RoleNone {
+			segBG = bg
 		}
+		b.WriteString(p.fg[s.Role])
+		b.WriteString(p.bg[segBG])
 		if s.Bold {
-			st = st.Bold(true)
+			b.WriteString("\x1b[1m")
 		}
-		b.WriteString(st.Render(s.Text))
+		b.WriteString(s.Text)
+		b.WriteString("\x1b[0m")
 	}
 	return b.String()
 }
@@ -154,7 +186,7 @@ func (l Line) Plain() string {
 	return b.String()
 }
 
-// fit pads or cuts the block to exactly w×h.
+// fit pads or cuts the block to exactly w by h.
 func (b Block) fit(w, h int) Block {
 	out := make(Block, h)
 	for i := range out {
@@ -168,7 +200,7 @@ func (b Block) fit(w, h int) Block {
 }
 
 // withBG sets a background on every unset segment of every row.
-func (b Block) withBG(bg color.Color) Block {
+func (b Block) withBG(bg view.Role) Block {
 	out := make(Block, len(b))
 	for i, l := range b {
 		out[i] = l.WithBG(bg)
@@ -200,16 +232,18 @@ func hjoin(h int, cols ...col) Block {
 }
 
 // vrule is a one-cell-wide vertical rule h rows tall.
-func vrule(h int) col {
+func vrule(h int, bd view.Border) col {
 	b := make(Block, h)
 	for i := range b {
-		b[i] = Line{fg(colSurface1, "│")}
+		b[i] = Line{role(view.RoleRule, bd.Vertical)}
 	}
 	return col{b, 1}
 }
 
 // hrule is a horizontal rule w cells wide.
-func hrule(w int) Line { return Line{fg(colSurface1, strings.Repeat("─", max(0, w)))} }
+func hrule(w int, bd view.Border) Line {
+	return Line{role(view.RoleRule, strings.Repeat(bd.Horizontal, max(0, w)))}
+}
 
 // indent shifts every row right by n cells.
 func (b Block) indent(n int) Block {
@@ -220,29 +254,29 @@ func (b Block) indent(n int) Block {
 	return out
 }
 
-// box draws a rounded border around body, w wide (border included). title,
-// when set, sits on the top border.
-func box(title Line, body Block, w int, border color.Color) Block {
+// box draws a border around body, w wide (border included). title, when
+// set, sits on the top border.
+func box(title Line, body Block, w int, bd view.Border) Block {
 	inner := w - 4
 	rows := body.fit(inner, len(body))
-	top := Line{fg(border, "╭─")}
+	top := Line{role(view.RoleRule, bd.TopLeft+bd.Horizontal)}
 	if len(title) > 0 {
 		t := append(Line{sp(1)}, title...)
 		t = append(t, sp(1))
 		t = t.Fit(min(t.Width(), inner))
 		top = append(top, t...)
-		top = append(top, fg(border, strings.Repeat("─", max(0, w-3-t.Width()))+"╮"))
+		top = append(top, role(view.RoleRule, strings.Repeat(bd.Horizontal, max(0, w-3-t.Width()))+bd.TopRight))
 	} else {
-		top = append(top, fg(border, strings.Repeat("─", w-3)+"╮"))
+		top = append(top, role(view.RoleRule, strings.Repeat(bd.Horizontal, w-3)+bd.TopRight))
 	}
 	out := Block{top}
 	for _, r := range rows {
-		l := Line{fg(border, "│ ")}
+		l := Line{role(view.RoleRule, bd.Vertical+" ")}
 		l = append(l, r...)
-		l = append(l, fg(border, " │"))
+		l = append(l, role(view.RoleRule, " "+bd.Vertical))
 		out = append(out, l)
 	}
-	out = append(out, Line{fg(border, "╰"+strings.Repeat("─", w-2)+"╯")})
+	out = append(out, Line{role(view.RoleRule, bd.BottomLeft+strings.Repeat(bd.Horizontal, w-2)+bd.BottomRight)})
 	return out
 }
 
@@ -253,7 +287,7 @@ func (b Block) dimmed() Block {
 	for i, l := range b {
 		nl := make(Line, len(l))
 		for j, s := range l {
-			nl[j] = Seg{Text: s.Text, FG: colSurface1, BG: colCrust}
+			nl[j] = Seg{Text: s.Text, Role: view.RoleRule, BG: view.RoleCrust}
 		}
 		out[i] = nl
 	}
@@ -278,80 +312,8 @@ func overlay(base, top Block, x, y int) Block {
 	return out
 }
 
-// wrap breaks text into lines at most w cells wide, on spaces.
-// wrapExact breaks text into lines of at most w cells and keeps every
-// character as it is: it breaks only at a space outside single or double
-// quotes (dropping that one space), so a shell command keeps the spaces
-// inside its quoted values. A part with no such space is split by cells,
-// and the quoting carries over to the next line.
-func wrapExact(text string, w int) []string {
-	if w <= 0 {
-		return nil
-	}
-	var out []string
-	var q shellQuote
-	rest := text
-	for width(rest) > w {
-		cut, cells, scan := -1, 0, q
-		for i, st, r := 0, -1, rest; r != ""; {
-			var g string
-			g, r, _, st = uniseg.FirstGraphemeClusterInString(r, st)
-			if cells > w {
-				break
-			}
-			if g == " " && i > 0 && scan.outside() {
-				cut = i
-			}
-			scan.step(g)
-			cells += width(g)
-			i += len(g)
-		}
-		if cut <= 0 {
-			head, tail := splitCells(rest, w)
-			for st, r := -1, head; r != ""; {
-				var g string
-				g, r, _, st = uniseg.FirstGraphemeClusterInString(r, st)
-				q.step(g)
-			}
-			out = append(out, head)
-			rest = tail
-			continue
-		}
-		// A break is outside quotes, after an unescaped space.
-		q = shellQuote{}
-		out = append(out, rest[:cut])
-		rest = rest[cut+1:]
-	}
-	return append(out, rest)
-}
-
-// shellQuote follows POSIX shell quoting one grapheme at a time: a
-// backslash escapes the next character outside single quotes, and nothing
-// is special inside them.
-type shellQuote struct {
-	quote   rune
-	escaped bool
-}
-
-func (s shellQuote) outside() bool { return s.quote == 0 && !s.escaped }
-
-// step takes a grapheme rune by rune: a quote can share one with a
-// combining mark.
-func (s *shellQuote) step(g string) {
-	for _, r := range g {
-		switch {
-		case s.escaped:
-			s.escaped = false
-		case r == '\\' && s.quote != '\'':
-			s.escaped = true
-		case s.quote == 0 && (r == '\'' || r == '"'):
-			s.quote = r
-		case s.quote != 0 && r == s.quote:
-			s.quote = 0
-		}
-	}
-}
-
+// wrap breaks text into lines at most w cells wide, on spaces. A word
+// wider than the line is split by cells, never clipped.
 func wrap(text string, w int) []string {
 	if w <= 0 {
 		return nil
@@ -360,7 +322,6 @@ func wrap(text string, w int) []string {
 	for _, para := range strings.Split(text, "\n") {
 		var words []string
 		for _, word := range strings.Fields(para) {
-			// A word wider than the line is split by cells, never clipped.
 			for width(word) > w {
 				head, rest := splitCells(word, w)
 				words = append(words, head)
@@ -385,34 +346,17 @@ func wrap(text string, w int) []string {
 	return out
 }
 
-// bar is a block-glyph progress bar: done in green, active in teal, the
-// rest faint.
-func bar(w int, done, active float64) Line {
-	done = clamp01(done)
-	active = clamp01(active)
+// bar is a progress bar: done cells full, the rest empty.
+func bar(w int, done float64, bd view.Border) Line {
+	done = min(max(done, 0), 1)
 	d := int(done*float64(w) + 0.5)
-	a := int((done+active)*float64(w)+0.5) - d
-	if d+a > w {
-		a = w - d
-	}
 	return Line{
-		fg(colGreen, strings.Repeat("█", d)),
-		fg(colTeal, strings.Repeat("█", max(0, a))),
-		fg(colSurface1, strings.Repeat("░", max(0, w-d-a))),
+		role(view.RoleHealthy, strings.Repeat(bd.Full, d)),
+		role(view.RoleRule, strings.Repeat(bd.Empty, max(0, w-d))),
 	}
 }
 
-func clamp01(f float64) float64 {
-	switch {
-	case f < 0:
-		return 0
-	case f > 1:
-		return 1
-	}
-	return f
-}
-
-// padRight pads s with spaces to w cells (no truncation).
+// padRight pads s with spaces to w cells, without truncation.
 func padRight(s string, w int) string {
 	if n := w - width(s); n > 0 {
 		return s + strings.Repeat(" ", n)

@@ -1,0 +1,28 @@
+exit: 0
+error: 
+--- stdout ---
+FIELD	VALUE
+run.operation	AddonUpdate
+run.cluster	prod
+run.region	us-east-1
+run.version	1.33
+run.status	Succeeded
+results.vpc-cni.kind	Addon
+results.vpc-cni.status	Succeeded
+results.vpc-cni.from	v1.20.0-eksbuild.1
+results.vpc-cni.to	v1.20.0-eksbuild.1
+results.vpc-cni.update	-
+results.vpc-cni.note	attached
+results.vpc-cni.started	2026-01-01 00:00:00 UTC
+results.vpc-cni.finished	2026-01-01 00:04:00 UTC
+results.vpc-cni.failure	-
+verification.AddonHealth/vpc-cni.outcome	Pass
+verification.AddonHealth/vpc-cni.message	vpc-cni is ACTIVE at v1.20.0-eksbuild.1
+--- stderr ---
+PLAN  AddonUpdate, prod in us-east-1
+  vpc-cni  wait for the update to v1.20.0-eksbuild.1 that is running (InFlight)
+vpc-cni: UPDATING
+vpc-cni: still UPDATING
+vpc-cni: still UPDATING
+vpc-cni: still UPDATING
+[OK] vpc-cni: Succeeded

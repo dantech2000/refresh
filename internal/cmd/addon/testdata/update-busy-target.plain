@@ -1,0 +1,50 @@
+exit: 4
+error: add-on vpc-cni is UPDATING to v1.19.5-eksbuild.1 (AddonUpdate); it was not changed. Run the command again once that finishes
+--- stdout ---
+FIELD	VALUE
+run.operation	AddonUpdate
+run.cluster	prod
+run.region	us-east-1
+run.version	1.33
+run.status	Incomplete
+results.vpc-cni.kind	Addon
+results.vpc-cni.status	Busy
+results.vpc-cni.from	v1.19.5-eksbuild.1
+results.vpc-cni.to	v1.20.0-eksbuild.1
+results.vpc-cni.update	-
+results.vpc-cni.note	AddonUpdate in flight
+results.vpc-cni.started	-
+results.vpc-cni.finished	-
+results.vpc-cni.failure	Busy: add-on vpc-cni is UPDATING to v1.19.5-eksbuild.1 (AddonUpdate); it was not changed. Run the command again once that finishes
+results.coredns.kind	Addon
+results.coredns.status	Succeeded
+results.coredns.from	v1.11.3-eksbuild.2
+results.coredns.to	v1.11.4-eksbuild.2
+results.coredns.update	00000000-0000-4000-8000-000000000002
+results.coredns.note	-
+results.coredns.started	2026-01-01 00:00:00 UTC
+results.coredns.finished	2026-01-01 00:00:15 UTC
+results.coredns.failure	-
+results.kube-proxy.kind	Addon
+results.kube-proxy.status	Skipped
+results.kube-proxy.from	v1.33.0-eksbuild.2
+results.kube-proxy.to	v1.33.0-eksbuild.2
+results.kube-proxy.update	-
+results.kube-proxy.note	-
+results.kube-proxy.started	-
+results.kube-proxy.finished	-
+results.kube-proxy.failure	-
+verification.AddonHealth/coredns.outcome	Pass
+verification.AddonHealth/coredns.message	coredns is ACTIVE at v1.11.4-eksbuild.2
+health_gate.decision	Go
+checks.Addons.outcome	Pass
+checks.Addons.message	1 add-on ACTIVE
+--- stderr ---
+PLAN  AddonUpdate, prod in us-east-1
+  vpc-cni     skip, at v1.19.5-eksbuild.1 (InFlight: AddonUpdate)
+  coredns     update v1.11.3-eksbuild.2 to v1.11.4-eksbuild.2 (VersionBehind)
+  kube-proxy  skip, at v1.33.0-eksbuild.2 (AlreadyAtTarget)
+[!] vpc-cni: Busy: add-on vpc-cni is UPDATING to v1.19.5-eksbuild.1 (AddonUpdate); it was not changed. Run the command again once that finishes
+[~] coredns: Started (update 00000000-0000-4000-8000-000000000002)
+[OK] coredns: Succeeded
+warning: addon prod/vpc-cni (us-east-1): Busy: add-on vpc-cni is UPDATING to v1.19.5-eksbuild.1 (AddonUpdate); it was not changed. Run the command again once that finishes

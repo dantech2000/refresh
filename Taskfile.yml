@@ -29,14 +29,14 @@ tasks:
   build:
     desc: Build the binary
     cmds:
-      - go build -o {{.BUILD_DIR}}/{{.BINARY_NAME}} .
+      - go build -trimpath -o {{.BUILD_DIR}}/{{.BINARY_NAME}} ./cmd/refresh
     generates:
       - "{{.BUILD_DIR}}/{{.BINARY_NAME}}"
 
   build:release:
-    desc: Build release binary with optimizations
+    desc: Build a release-style binary (stripped, with version, commit, and build date)
     cmds:
-      - go build -ldflags="-s -w -X github.com/dantech2000/refresh/internal/commands.version={{.VERSION}} -X github.com/dantech2000/refresh/internal/commands.commit={{.COMMIT}} -X github.com/dantech2000/refresh/internal/commands.buildDate={{.DATE}}" -o {{.BUILD_DIR}}/{{.BINARY_NAME}} .
+      - go build -trimpath -ldflags="-s -w -X github.com/dantech2000/refresh/internal/build.version={{.VERSION}} -X github.com/dantech2000/refresh/internal/build.commit={{.COMMIT}} -X github.com/dantech2000/refresh/internal/build.buildDate={{.DATE}}" -o {{.BUILD_DIR}}/{{.BINARY_NAME}} ./cmd/refresh
     vars:
       VERSION:
         sh: git describe --tags --always --dirty
@@ -115,8 +115,10 @@ tasks:
   test:live:
     desc: Read-only checks against a real AWS account (AWS_PROFILE); free, never changes anything
     cmds:
-      - task: build
-      - go test -tags livecheck -count=1 -v -run TestLive ./internal/aws/ ./internal/services/status/ ./internal/services/addons/ ./internal/services/nodegroup/ ./internal/tools/livecheck/
+      # Every package: a livecheck is a TestLive<Name> function behind the build
+      # tag. The pattern leaves out the unit tests of internal/view named
+      # TestLive and TestLive_*. The schema check builds ./cmd/refresh itself.
+      - go test -tags livecheck -count=1 -v -run '^TestLive[A-Z]' ./internal/... ./tools/...
 
   test:coverage:
     desc: Run tests with coverage
@@ -138,15 +140,15 @@ tasks:
           done
         done
 
-  test:integration:
-    desc: Run opt-in integration tests (needs REFRESH_INTEGRATION=1 + AWS creds)
+  test:parity:
+    desc: Run the parity suite (the new binary against the recorded traces of the old one)
     cmds:
-      - go test -tags integration -run Integration ./internal/integration/... -v
+      - go test -count=1 ./test/parity/...
 
   bench:
-    desc: Run service-layer benchmarks (offline, mock-driven)
+    desc: Run the benchmarks (offline, on the fake world)
     cmds:
-      - go test -bench=. -benchmem -run=^$ ./internal/services/...
+      - go test -bench=. -benchmem -run=^$ ./internal/...
 
   # Documentation site (Material for MkDocs via a uv-managed, hash-locked venv)
   docs:serve:
@@ -157,8 +159,8 @@ tasks:
   docs:gen:
     desc: Regenerate the Markdown command reference and the JSON schemas
     cmds:
-      - go run . gen-docs --out docs/reference
-      - go run ./internal/tools/genschema --out docs/schema/v1 --ref docs/reference
+      - go run ./cmd/refresh gen-docs --out docs/reference
+      - go run ./tools/genschema --out api/schema/v2
 
   docs:check:
     desc: Fail if the committed command reference or JSON schemas are stale (mirrors CI)
@@ -167,18 +169,24 @@ tasks:
       # `git status --porcelain` also catches new, untracked reference pages
       # and schemas.
       - |
-        if [ -n "$(git status --porcelain -- docs/reference docs/schema)" ]; then
-          echo "docs/reference or docs/schema is stale vs the CLI tree and the Go types. Commit the regenerated files:"
-          git status --short -- docs/reference docs/schema
+        if [ -n "$(git status --porcelain -- docs/reference api/schema)" ]; then
+          echo "docs/reference or api/schema is stale vs the CLI tree and the Go types. Commit the regenerated files:"
+          git status --short -- docs/reference api/schema
           exit 1
         fi
-        echo "docs/reference and docs/schema are up to date."
+        echo "docs/reference and api/schema are up to date."
 
   docs:build:
     desc: Build the documentation site (strict — fails on broken links/nav)
     deps: [docs:gen]
     cmds:
       - uv run --frozen mkdocs build --strict
+
+  docs:man:
+    desc: Generate the man pages to dist/man/man1 (GoReleaser does this in a before-hook)
+    cmds:
+      - mkdir -p {{.BUILD_DIR}}/man/man1
+      - go run ./cmd/refresh gen-docs --format man --out {{.BUILD_DIR}}/man/man1
 
   # Dependency management
   deps:
@@ -205,12 +213,31 @@ tasks:
     cmds:
       - ./{{.BUILD_DIR}}/{{.BINARY_NAME}} version
 
-  run:tui:sim:
-    desc: Open the experimental TUI on the simulated fleet (no AWS; SPEED=n sets sim seconds per second)
-    deps: [build]
+  build:fakefleet:
+    desc: Build the fake fleet server (no AWS) to dist/fakefleet
+    cmds:
+      - go build -o {{.BUILD_DIR}}/fakefleet ./tools/fakefleet
+    sources:
+      - tools/fakefleet/*.go
+      - internal/awsx/awsxtest/*.go
+      - internal/fleet/fleettest/*.go
+      - internal/kube/kubetest/*.go
+    generates:
+      - "{{.BUILD_DIR}}/fakefleet"
+
+  run:sim:
+    desc: "Run the binary against the fake fleet: task run:sim -- status -A (FAKEFLEET_FLAGS adds flags, such as -speed 10)"
+    deps: [build, build:fakefleet]
     interactive: true
     cmds:
-      - REFRESH_DEV_SIMULATE=1 REFRESH_DEV_SIM_SPEED={{.SPEED | default "8"}} ./{{.BUILD_DIR}}/{{.BINARY_NAME}} ui
+      - tools/fakefleet/run.sh {{.BUILD_DIR}}/fakefleet {{.BUILD_DIR}}/{{.BINARY_NAME}} {{.CLI_ARGS}}
+
+  run:tui:sim:
+    desc: Open the experimental TUI on the fake fleet (no AWS; FAKEFLEET_FLAGS adds flags, such as -speed 10)
+    deps: [build, build:fakefleet]
+    interactive: true
+    cmds:
+      - tools/fakefleet/run.sh {{.BUILD_DIR}}/fakefleet {{.BUILD_DIR}}/{{.BINARY_NAME}} ui -A --allow-changes
 
   run:help:
     desc: Show help
@@ -228,13 +255,13 @@ tasks:
     desc: Test nodegroup list command (requires AWS credentials and cluster)
     deps: [build]
     cmds:
-      - ./{{.BUILD_DIR}}/{{.BINARY_NAME}} ng list -c {{.DEFAULT_CLUSTER}}
+      - ./{{.BUILD_DIR}}/{{.BINARY_NAME}} nodegroup list -c {{.DEFAULT_CLUSTER}}
 
   run:ng:update:dry:
-    desc: Test nodegroup update-ami dry run (requires AWS credentials and cluster)
+    desc: Test a nodegroup update dry run (requires AWS credentials and cluster)
     deps: [build]
     cmds:
-      - ./{{.BUILD_DIR}}/{{.BINARY_NAME}} ng update-ami -c {{.DEFAULT_CLUSTER}} --dry-run
+      - ./{{.BUILD_DIR}}/{{.BINARY_NAME}} nodegroup update -c {{.DEFAULT_CLUSTER}} --dry-run
 
   # Development workflow shortcuts
   dev:quick:
@@ -282,14 +309,20 @@ tasks:
     cmds:
       - goreleaser check
       - goreleaser build --snapshot --clean
+      - task: release:verify
+
+  release:verify:
+    desc: Check that a release-style build prints its version, commit, and build date
+    deps: [build:release]
+    cmds:
+      - |
+        out="$(./{{.BUILD_DIR}}/{{.BINARY_NAME}} version)"
+        echo "$out"
+        echo "$out" | grep -q '^refresh version: v' || { echo "no version"; exit 1; }
+        echo "$out" | grep -Eq '^commit: [0-9a-f]{7,}' || { echo "no commit"; exit 1; }
+        echo "$out" | grep -Eq '^built: [0-9]{4}-[0-9]{2}-[0-9]{2}T' || { echo "no build date"; exit 1; }
 
   release:dry:
     desc: Dry run of the full release process
     cmds:
       - goreleaser release --snapshot --clean
-
-  install:man:
-    desc: Install man page using the built-in command (no sudo required)
-    deps: [build]
-    cmds:
-      - ./{{.BUILD_DIR}}/{{.BINARY_NAME}} install-man

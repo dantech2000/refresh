@@ -1,579 +1,352 @@
 # nodegroup
 
-Inspect and operate on a cluster's managed nodegroups: list them with AMI
-freshness, describe one in depth, scale desired/min/max size (with optional PDB
-and health gating), and roll nodegroups to the latest recommended AMI with
-pre-flight health checks and live monitoring.
+| Command | Use |
+|---|---|
+| [`nodegroup list`](#list) | List the managed nodegroups of a cluster. |
+| [`nodegroup describe`](#describe) | Describe one nodegroup. |
+| [`nodegroup update`](#update) | Roll nodegroups onto the latest AMI. |
+| [`nodegroup scale`](#scale) | Change the sizes of a nodegroup. |
 
-```bash
-refresh nodegroup <list|describe|scale|update> [args] [flags]
-```
+The cluster comes from `-c/--cluster`, then `REFRESH_CLUSTER`, then the active
+context. `list` and `describe` also take the cluster of the current kubeconfig
+context. `update` and `scale` never do.
 
-The group has the alias `ng`. The cluster is a positional on most subcommands,
-or `--cluster/-c`, falling back to the
-[active context](../concepts/contexts.md). `list` and `describe` also fall back
-to the kubeconfig's current cluster; `scale` and `update` never do. See
-[Cluster resolution](../concepts/configuration.md#cluster-resolution).
-
----
+`refresh ng` is short for `refresh nodegroup`.
 
 ## list
 
-List the managed nodegroups in a cluster with their status, instance type, node
-counts, and AMI freshness (whether each is on the latest recommended AMI).
-
-The `NODES` column shows the desired node count by default. Add
-`--check-readiness` to measure real Kubernetes node readiness (`Ready/desired`)
-via the cluster API; when the cluster is unreachable it degrades to the desired
-count rather than reporting a fabricated ready figure.
-
-AMI freshness is judged against each nodegroup's own Kubernetes version, not
-the control plane's. A nodegroup on an older minor than the control plane
-shows a warning in the `VERSION` column (`(behind)` in `-o plain`).
-
-If the latest-AMI lookup fails (for example, a missing `ssm:GetParameter`),
-the AMI column shows `unknown (lookup failed)` and one warning goes to stderr.
-The lookup is advisory: the row has an `amiLookupFailure` object with the
-same keys as a failure, and the exit code does not change (see
-[Advisory AMI lookup](../concepts/output.md#advisory-ami-lookup)).
-
-If some nodegroups can't be described, the command prints the rest, lists
-each one under `failures` with `-o json`/`-o yaml`, names it on stderr (or
-under `INCOMPLETE DATA` in the table), and exits `4` (incomplete data):
-
-```json
-{
-  "apiVersion": "refresh.drod.dev/v1",
-  "kind": "NodegroupList",
-  "cluster": "prod",
-  "nodegroups": [
-    {
-      "name": "api",
-      "amiStatus": "Unknown",
-      "amiLookupFailure": {
-        "kind": "Nodegroup",
-        "name": "api",
-        "cluster": "prod",
-        "region": "us-east-1",
-        "operation": "ssm:GetParameter",
-        "reason": "AccessDenied",
-        "retryable": false,
-        "error": "AccessDeniedException: ... not authorized to perform: ssm:GetParameter",
-        "awsErrorCode": "AccessDeniedException"
-      },
-      "...": "..."
-    }
-  ],
-  "count": 1,
-  "failures": [
-    {
-      "kind": "Nodegroup",
-      "name": "web",
-      "cluster": "prod",
-      "region": "us-east-1",
-      "operation": "eks:DescribeNodegroup",
-      "reason": "Throttled",
-      "retryable": true,
-      "error": "ThrottlingException: Rate exceeded",
-      "awsErrorCode": "ThrottlingException"
-    }
-  ]
-}
-```
-
 ```bash
-refresh nodegroup list [cluster] [flags]
+refresh nodegroup list -c <cluster> [flags]
 ```
 
-### Flags
+```text
+NODEGROUPS  prod-payments-00, 3
 
-| Flag | Description |
+NAME      STATUS    INSTANCE    VERSION  AMI         NODES
+ng-a      ● ACTIVE  m5.large    1.34     ▲ Outdated      4
+ng-b      ● ACTIVE  m5.large    1.34     ● Latest        5
+ng-c      ● ACTIVE  m5.large    1.34     ● Latest        4
+```
+
+The `AMI` column compares the AMI that the nodes run with the latest
+recommended AMI for the version and the AMI type of the nodegroup:
+
+| Value | Meaning |
 |---|---|
-| `--cluster, -c` | EKS cluster name or pattern (or pass as positional) |
-| `--filter, -f` | Filter, `key=value` (keys: `name`, `status`, `instanceType`, `amiStatus`); repeatable |
-| `--check-readiness, -R` | Measure real Kubernetes node readiness (`Ready/desired`) via the cluster API |
-| `--kubeconfig` | Path to the kubeconfig for `--check-readiness` (defaults to `$KUBECONFIG`, then `~/.kube/config`) |
-| `--kube-context` | Kubeconfig context to use, even if its server does not match the cluster endpoint (see [kubeconfig matching](../concepts/configuration.md#matching-the-kubeconfig-to-the-target-cluster)) |
-| `--sort` | Sort by field: `name` (default), `status`, `instance`, `nodes` |
-| `--desc` | Sort descending |
-| `--format, -o` | `table` (default), `json`, `yaml`, `plain` |
-| `--watch, -w` | Re-run and redraw every `--watch-interval` until interrupted (not with `-o json`/`-o yaml`) |
-| `--watch-interval` | Refresh interval for `--watch` (default `10s`) |
-| `--timeout, -t` | Global operation timeout (env `REFRESH_TIMEOUT`) |
+| `Latest` | The nodes run the latest AMI. |
+| `Outdated` | A newer AMI exists. |
+| `Updating` | A roll is running. |
+| `Custom` | A launch template sets the AMI. `refresh` does not roll it. |
+| `Unknown` | The nodegroup has no instance. |
 
-### Examples
+A version with a warning mark is behind the control plane.
+
+| Flag | Meaning |
+|---|---|
+| `-f, --filter` | Select by `key=value`. Keys: `name`, `status`, `instanceType`, `amiStatus`, `version`. |
+| `--sort` | `name` (default), `status`, `instanceType`, `nodes`, `version`, or `amiStatus`. |
+| `--desc` | Sort in descending order. |
+| `--check-readiness` | Read the `Ready` nodes of each nodegroup from the Kubernetes API. `NODES` then shows ready/desired. |
+| `-w, --watch` | Read again and redraw every `--watch-interval`, until Ctrl+C. |
+
+A nodegroup that could not be read, or whose AMI could not be looked up, is
+listed under `INCOMPLETE DATA` or in `failures`, and the command exits `4`.
 
 ```bash
-# Only nodegroups on a stale AMI
-refresh nodegroup list my-cluster --filter amiStatus=outdated
+# The nodegroups with an outdated AMI
+refresh nodegroup list -c prod -f amiStatus=Outdated
 
-# Plain TSV for scripting
-refresh nodegroup list my-cluster -o plain | awk -F'\t' 'NR>1 {print $1}'
-
-# Watch a roll progress live
-refresh nodegroup list my-cluster --watch
+# The largest nodegroups first
+refresh nodegroup list -c prod --sort nodes --desc
 ```
-
----
 
 ## describe
 
-Detailed information for one nodegroup: scaling config, instance type(s),
-AMI/release version and freshness, and optional per-instance and workload
-placement details.
-
 ```bash
-refresh nodegroup describe [cluster] [nodegroup] [flags]
+refresh nodegroup describe <nodegroup> -c <cluster> [flags]
 ```
 
-`describe` has the alias `get`. The nodegroup name may be the second positional
-or `--nodegroup/-n`. If a `refresh` context is active and you pass one
-positional argument without `--cluster` or `--nodegroup`, that argument is the
-nodegroup name, and the cluster comes from the context.
+```text
+ng-a   ● ACTIVE   prod-payments-00 in us-east-1
 
-### Flags
+OVERVIEW
+  status          ● ACTIVE
+  version         1.34
+  instance types  m5.large
+  capacity        ON_DEMAND
 
-| Flag | Description |
+AMI
+  type     BOTTLEROCKET_x86_64
+  release  1.34.0-20260101
+  status   ▲ Outdated
+  current  ami-old134
+  latest   ami-latest134
+
+SCALING
+  desired  4
+  min      1
+  max      12
+
+INSTANCES  4
+  NAME                       STATE      TYPE      LIFECYCLE  ZONE        AMI         LAUNCHED
+  i-prod-payments-00-ng-a-1  ● running  m5.large  on-demand  us-east-1a  ami-old134  2026-09-18 01:18 UTC
+  i-prod-payments-00-ng-a-2  ● running  m5.large  on-demand  us-east-1b  ami-old134  2026-09-04 01:18 UTC
+```
+
+| Flag | Meaning |
 |---|---|
-| `--cluster, -c` | EKS cluster name |
-| `--nodegroup, -n` | Nodegroup name (or pass as second positional) |
-| `--show-instances, -I` | Include EC2 instance details (`instances` with `-o json`; left out without this flag) |
-| `--show-workloads, -W` | Include workload/pod placement info |
-| `--kubeconfig` | Path to the kubeconfig for `--show-workloads` (defaults to `$KUBECONFIG`, then `~/.kube/config`) |
-| `--kube-context` | Kubeconfig context to use, even if its server does not match the cluster endpoint (see [kubeconfig matching](../concepts/configuration.md#matching-the-kubeconfig-to-the-target-cluster)) |
-| `--format, -o` | `table` (default), `json`, `yaml`, `plain` |
-| `--timeout, -t` | Global operation timeout (env `REFRESH_TIMEOUT`) |
+| `--show-instances` | List the EC2 instances of the nodegroup. |
+| `--show-workloads` | Count the pods on the nodes of the nodegroup, from the Kubernetes API. |
 
-`--show-workloads` reads the cluster through the kubeconfig context whose
-server matches the cluster endpoint, or through the context that you name with
-`--kube-context`. If no context is usable, the workloads show as unavailable.
-
-### Examples
-
-```bash
-refresh nodegroup describe my-cluster ng-default
-refresh nodegroup describe my-cluster ng-default --show-instances --show-workloads
-refresh nodegroup describe ng-default   # in the active context's cluster
-```
-
----
-
-## scale
-
-Change a managed nodegroup's desired/min/max size. Any subset of
-`--desired/--min/--max` may be set, and at least one is required (exit `1`
-before any AWS call without one). Unspecified bounds are left unchanged.
-Only `--desired` changes the node count. If you omit `--desired`, a `--max`
-below the current desired size, or a `--min` above it, fails before any change
-(exit `1`). Pass `--desired` with the new bounds to scale and change the
-bounds together.
-
-```bash
-refresh nodegroup scale [cluster] -n <nodegroup> [flags]
-```
-
-### Flags
-
-| Flag | Description |
-|---|---|
-| `--cluster, -c` | EKS cluster name (or pass as positional) |
-| `--nodegroup, -n` | **Required.** Nodegroup name |
-| `--desired` | Desired node count |
-| `--min` | Minimum node count |
-| `--max` | Maximum node count |
-| `--health-check` | Validate cluster health before and after scaling |
-| `--check-pdbs` | Refuse a scale-down that could remove more of a Pod Disruption Budget's pods than it allows |
-| `--force` | With `--check-pdbs`, scale down anyway and print the blocking PDBs as a warning |
-| `--wait` | Wait for the EKS update to finish, then check that the nodegroup has the requested sizes |
-| `--wait-timeout` | How long to wait for the scaling to finish with `--wait` (default `5m`; added on top of `--timeout`; `0` = no limit). Replaces `--op-timeout`, which still works in 0.11 with a deprecation warning |
-| `--kubeconfig` | Kubeconfig for workload/PDB checks (defaults to `$KUBECONFIG`, then `~/.kube/config`) |
-| `--kube-context` | Kubeconfig context to use, even if its server does not match the cluster endpoint |
-| `--dry-run, -d` | Preview the scaling impact without executing. Never prompts |
-| `--yes, -y` | Scale without the confirmation prompt (required without a terminal) |
-| `--format, -o` | `table` (default), `json`, or `yaml`: one document on stdout (see below), with notices on stderr. `json` and `yaml` need `--yes` or `--dry-run` |
-| `--timeout, -t` | Global operation timeout (env `REFRESH_TIMEOUT`). With `--wait`, `--wait-timeout` is added on top |
-
-!!! warning "Confirmation (new in 0.11)"
-    Before it changes a size, `scale` asks for confirmation, for example
-    `Scale prod/ng-default desired 3 → 1? [y/N]`. Only `y` or `yes`
-    continues. `--yes` skips the prompt. Without a terminal, a run without
-    `--yes` or `--dry-run` fails before any AWS call. Add `--yes` to scripts.
-
-!!! warning "A scale-down does not honor PDBs"
-    When a scaling change lowers the desired size, EKS terminates the removed
-    nodes without waiting for Pod Disruption Budgets. With `--check-pdbs`,
-    `refresh` refuses the scale-down (exit 3, before any change) if it could
-    remove more of a PDB's pods than the PDB allows, and lists those PDBs. The
-    Auto Scaling group picks which nodes go, so the gate assumes the removed
-    nodes are the ones that hold the most of the PDB's pods. The gate fails
-    closed: if it can't read the PDBs or pods (for example, no Kubernetes
-    access), it refuses the scale-down too. Pass `--force` to scale down
-    anyway. Combine `--dry-run --check-pdbs` to see the verdict and the
-    blocking PDBs before you touch anything. The preview exits with the code
-    the real run would: `3` if the gate refuses, `1` if it can't read the
-    PDBs. A PDB check that can't read what it needs is a
-    [failure](../concepts/output.md#failures), listed under
-    `INCOMPLETE DATA`. With `--force`, the scale goes ahead without the
-    check, and the command exits `4`. See
-    [Scale-down PDB gate](../concepts/health-checks.md#scale-down-pdb-gate).
-
-!!! note "Busy clusters"
-    EKS runs one update at a time on a cluster. Before the prompt, `scale`
-    reads what EKS is changing (the control plane, each nodegroup, each
-    add-on). If something is changing, it exits `3` and names it. Nothing
-    changed. With `-o json|yaml`, the document has the outcome `Busy` and
-    `changesInProgress`; when refresh could not read the cluster to check,
-    the outcome `Blocked` and the failed call in `failures`. `--dry-run`
-    does not check.
-
-    A roll of another nodegroup can wait for capacity, for example when
-    the EC2 vCPU quota stops the surge nodes. The roll does not free
-    capacity itself, and `scale` refuses until the roll ends. EKS accepts
-    a scaling change on a different nodegroup during a roll, so the
-    refusal then prints that change as an AWS CLI command:
-
-    ```bash
-    aws eks update-nodegroup-config --cluster-name prod --nodegroup-name ng-a --scaling-config desiredSize=1 --region us-east-1
-    ```
-
-With `--wait`, `refresh` follows the EKS update that the scaling request
-starts. If the update fails or is cancelled, the command exits non-zero with
-the update's error details. When the update succeeds, `refresh` reads the
-nodegroup and fails if a requested size (`--desired`, `--min`, `--max`) does
-not match. With `--desired`, it also waits for the nodegroup to be `ACTIVE`.
-Throttling and network errors during the wait are retried. A permanent error,
-such as a missing `eks:DescribeUpdate` permission, stops the wait at once.
-
-With `-o json` or `-o yaml`, `scale` prints one `NodegroupScale` document:
-
-```json
-{
-  "apiVersion": "refresh.drod.dev/v1",
-  "kind": "NodegroupScale",
-  "cluster": "prod",
-  "nodegroup": "ng-default",
-  "region": "us-east-1",
-  "outcome": "Completed",
-  "dryRun": false,
-  "before": {"desired": 3, "min": 1, "max": 5},
-  "after": {"desired": 2, "min": 1, "max": 5},
-  "waited": true,
-  "nodegroupStatus": "ACTIVE",
-  "pdbGate": {"result": "Passed", "blockers": [], "scoped": true},
-  "failures": []
-}
-```
-
-`after` is `before` with the requested sizes. `nodegroupStatus` is the EKS
-status after a `--wait`. `pdbGate` is there with `--check-pdbs`.
-
-| `outcome` | Meaning | Exit |
-|---|---|---|
-| `Planned` | `--dry-run`: nothing changed | `0`, or the code the real run would give |
-| `Requested` | EKS accepted the request; the run did not wait (no `--wait`) | `0` |
-| `Completed` | With `--wait`, the nodegroup settled at the requested sizes | `0` |
-| `Blocked` | `--check-pdbs` or the pre-scaling health check refused the scale, or refresh could not read the cluster to check that EKS is not changing it (`failures` names the call); nothing changed | `3` |
-| `CompletedWithIssues` | The scale was applied, but the post-scaling health check found blocking issues | `5` |
-| `Busy` | EKS was already changing the cluster (`changesInProgress` says what); nothing changed | `3` |
-
-| `pdbGate.result` | Meaning |
-|---|---|
-| `NotScaleDown` | The desired size does not go down, so there was nothing to check |
-| `Passed` | No PDB blocks the scale-down |
-| `Refused` | PDBs in `blockers` refuse the scale-down |
-| `Overridden` | PDBs in `blockers` would refuse it, and `--force` scales anyway |
-| `Unchecked` | The PDBs could not be read, and `--force` scaled without the check (see `failures`, exit `4`) |
-
-A run that fails with exit `1` (an AWS error, a failed wait, or a
-`--check-pdbs` gate that fails closed) prints no document.
-
-### Examples
-
-```bash
-# Scale up to 5 nodes
-refresh nodegroup scale my-cluster -n ng-default --desired 5
-
-# Safe scale-down: preview the PDB gate's verdict and any blocking PDBs
-refresh nodegroup scale my-cluster -n ng-default --desired 2 --check-pdbs --dry-run
-
-# Scale down for real, refused if a PDB blocks it, and wait for it to settle
-refresh nodegroup scale my-cluster -n ng-default --desired 2 --check-pdbs --wait
-
-# Scale down even though a PDB blocks it (the blockers print as a warning)
-refresh nodegroup scale my-cluster -n ng-default --desired 2 --check-pdbs --force --yes
-```
-
----
+If the AMI or the instances cannot be read, the command prints what it has,
+names the failure, and exits `4`.
 
 ## update
 
-Roll managed nodegroups to the latest recommended AMI, with pre-flight health
-gates and live monitoring. This is the flagship patch command.
-
 ```bash
-refresh nodegroup update [cluster] [nodegroup] [flags]
+refresh nodegroup update [nodegroup...] -c <cluster> [flags]
 ```
 
-`update` has the alias `update-ami`. Omitting the nodegroup updates all
-nodegroups in the cluster.
+The command rolls managed nodegroups onto the latest recommended AMI of their
+own Kubernetes version. EKS replaces the nodes: it drains each one and honours
+PodDisruptionBudgets. The Kubernetes version of a nodegroup never changes
+here. `cluster upgrade` does that.
 
-Each nodegroup rolls to the latest AMI for its own Kubernetes version. The
-roll keeps the nodegroup on its minor version; use
-[`cluster upgrade`](cluster.md#upgrade) to move it to a newer one. The latest
-AMI comes from the SSM path of the nodegroup's AMI family (Amazon Linux,
-Bottlerocket, or Windows). The nodegroup pattern rules, including the
-confirmation for a name that is not exact, are in
-[Nodegroup patterns](../concepts/configuration.md#nodegroup-patterns).
+### Targets
 
-Before the roll, `refresh` runs the
-[pre-flight health checks](../concepts/health-checks.md), scoped to the
-nodegroups that match. `--quiet` does not skip them.
+- With no name, every nodegroup of the cluster is a target.
+- A name is exact.
+- `-f` selects by pattern, such as `-f name=web-*`. The confirmation lists the
+  matches.
+- A nodegroup that is on the latest AMI is left alone. `--reroll` rolls it
+  anyway.
+- A nodegroup with a custom AMI is never rolled. Publish a new launch template
+  version for it.
 
-!!! warning "PDB drain gate (breaking change)"
-    A PodDisruptionBudget that allows 0 disruptions, or a pod that more than
-    one PDB selects, stops EKS draining a node, so the roll stalls after EKS
-    has started it. `update` now checks each nodegroup it would roll after
-    the health checks and refuses the run (exit `3`, nothing started) when it
-    finds such a blocker. Before, it only warned. The error names each
-    blocker. To go on, let the workloads recover, relax the PDB (or narrow
-    its selector so each pod matches one PDB), or pass `--force`, which rolls
-    anyway with a warning on stderr. `--dry-run` shows the blockers and exits
-    `3` where the real run would refuse. PDBs that cannot be read (for
-    example, no RBAC access to them) count as a blocker: the run refuses,
-    and `--force` rolls anyway with a warning. The failed read is in
-    `failures` in both cases: the refused run exits `3`, and the forced run
-    exits `4`. The gate needs Kubernetes
-    access: without it, the gate is skipped with the usual notice.
-    `--skip-health-check` skips it too. In fleet mode each cluster is gated on its own, and a
-    refused cluster has the status `DrainBlocked`.
+### What a run does
 
-!!! note "Busy clusters"
-    EKS runs one update at a time on a cluster. Before the health checks and
-    any prompt, `update` reads what EKS is changing: the control plane, each
-    nodegroup, and each add-on. If something is changing, the run exits `3`
-    and names it, for example `prod is busy (add-on vpc-cni UPDATING);
-    nothing was started`. A selected nodegroup that is already `UPDATING`
-    does not count: the run skips it (`AlreadyUpdating`). If refresh cannot
-    read one of them, it cannot tell whether EKS is changing it, so the run
-    also exits `3`, and the error names the call that failed. With `-o
-    json|yaml`, the run's document has no nodegroups and either
-    `changesInProgress` or the failed call in `failures`. `--dry-run` and
-    `--health-only` do not check. In fleet mode, a busy cluster is skipped
-    with the status `Busy`, a cluster that cannot be read fails, and the rest
-    of the fleet goes on.
-
-!!! note "Custom-AMI nodegroups are skipped"
-    Nodegroups whose AMI is managed via a launch template (`AmiType=CUSTOM`)
-    are detected and **skipped** with guidance: their AMI rolls when you publish
-    a new launch-template version and point the nodegroup at it, not via this
-    command. `--force` and `--reroll` do not change this. `--dry-run` shows
-    them with the action `SkipCustom`.
-
-!!! note "Re-roll a nodegroup that is already on the latest AMI"
-    A nodegroup already on the latest AMI is skipped. To roll it anyway, pass
-    `--reroll`. `--force` also rolls it, but EKS then evicts pods even when a
-    PodDisruptionBudget blocks the drain.
-
-    EKS can end an update to the release a nodegroup already runs without
-    replacing any node: on a test cluster, the update ended `Successful`
-    after 15 seconds and the old node still served. Before such a roll,
-    `nodegroup update` warns that the nodegroup already runs the latest
-    release. To replace nodes on the same release, publish a new
-    launch-template version, or drain and terminate the nodes yourself.
-
-### Fleet mode
-
-`--all-clusters` discovers clusters across regions (scope with `-r`) and rolls
-them serially with one batch confirmation, an aggregate summary, and a
-**worst-outcome** exit code.
+1. It reads the whole cluster and builds the plan.
+2. It refuses while the cluster or anything else in it is changing. It leaves
+   a target alone that is already changing: that target is listed in
+   `failures`, the other targets go on, and the run exits `4`. If no other
+   target changes, nothing changed, and the run exits `3`.
+3. It runs the [health gate](../concepts/health-checks.md) for all the targets
+   together, before the first roll starts.
+4. It asks once. `--yes` skips the question.
+5. It starts every roll and waits for all of them.
+6. It verifies: the nodegroups are `ACTIVE`, the new nodes are `Ready`, and no
+   pod is newly `Pending`.
 
 ```bash
-refresh nodegroup update --all-clusters --dry-run            # fleet-wide plan
-refresh nodegroup update --all-clusters -r us-east-1 --yes   # execute in one region
+refresh nodegroup update -c dev-orders-32 --yes
 ```
 
-Fleet mode selects nodegroups only with `-n`. It rejects positional
-arguments, `--cluster`, and `--kube-context`, because it matches each cluster
-to a kubeconfig context by endpoint. An exported `EKS_CLUSTER_NAME` is
-ignored. `--wait-timeout` applies to each cluster separately. `--health-only`
-asks for no batch confirmation, because it changes nothing.
+Progress, on stderr:
 
-Discovery uses the same region rules as `status -A`: `-r`, then
-`REFRESH_EKS_REGIONS`, then every EKS region in the partition. A global
-`--region` before the subcommand only picks the partition. See
-[Regions](../concepts/configuration.md#regions).
+```text
+PLAN  NodegroupUpdate, dev-orders-32 in us-east-1
+  ng-a  skip, at 1.34 (AlreadyLatest)
+  ng-b  skip, at 1.34 (AlreadyLatest)
+  ng-c  roll onto the latest AMI of 1.34 (ami-latest134) (AMIOutdated)
+◷ ng-c: Started (update 00000000-0000-4000-8000-000000000002)
+● ng-c: Succeeded
+```
 
-In the default region sweep (no `-r`, no `REFRESH_EKS_REGIONS`), regions your
-credentials can't use are skipped with one stderr note. Examples are regions
-an SCP denies and opt-in regions that are not enabled. Skipped regions don't
-change the exit code; `-o json` lists them under `skippedRegions`. Any other
-listing failure (throttling, a server error, a timeout), or any failure in a
-region you named, is a `Region` failure: listed under `INCOMPLETE DATA` (a
-`warning:` line on stderr with `-o json|yaml`), an entry in `failures`, and
-exit `4`. If no region can be listed, or discovery
-does not finish within `--wait-timeout`, the run fails at once with exit `1`:
-nothing was gathered.
+The result, on stdout:
+
+```text
+Run   ● Succeeded   NodegroupUpdate
+
+RESULTS  3
+  NAME  KIND       STATUS       FROM                                            TO                        UPDATE
+  ng-a  Nodegroup  • Skipped    1.34                                            1.34                      -
+  ng-b  Nodegroup  • Skipped    1.34                                            1.34                      -
+  ng-c  Nodegroup  ● Succeeded  1.34 (release 1.34.0-20260101, AMI ami-old134)  1.34 (AMI ami-latest134)  00000000-0000-4000-8000-000000000002
+
+VERIFICATION  3
+  NAME             OUTCOME  MESSAGE
+  NodegroupActive  ● Pass   ng-c ACTIVE
+  NodesReady       ● Pass   5 new nodes ready
+  NewPendingPods   ● Pass   no new Pending pods
+```
+
+### If the gate blocks
+
+```bash
+refresh nodegroup update -c prod-payments-00 --dry-run
+```
+
+```text
+dry run: a real run would be blocked
+Plan   ✗ Blocked   NodegroupUpdate
+
+HEALTH GATE
+  decision  ✗ Block
+  reasons   DrainBlockers: PDB app/web allows 0 disruptions on the target nodegroups; the roll would stall on eviction
+```
+
+The command exits `3` and changes nothing. Fix the blocker and run the command
+again. `--force` goes past a drain blocker, with a warning, and tells EKS to
+force the drain. It also goes past a vCPU quota surge that does not fit, with
+a warning. `--force` does nothing else: it does not roll a nodegroup that is on
+the latest AMI.
+
+### Every cluster: `--all-clusters`
+
+`--all-clusters` rolls every cluster of the regions of `-r`, one cluster after
+another.
+
+1. The command lists the clusters of the regions.
+2. It plans every cluster. A dry run stops here.
+3. It asks once, for all the clusters.
+4. It runs the clusters one after another. Each cluster has its own
+   `--wait-timeout`. The plan of a cluster is computed again when its turn
+   comes.
+
+A cluster that is blocked or fails does not stop the next one. An interrupt
+does.
+
+`--all-clusters` ignores `-c`, `REFRESH_CLUSTER`, and the active context. It
+cannot be used with `-c`, with nodegroup names, or with `--kube-context`.
 
 ### Flags
 
-| Flag | Description |
+| Flag | Meaning |
 |---|---|
-| `--cluster, -c` | EKS cluster name or partial pattern (overrides the active context; the kubeconfig is not used). Falls back to `EKS_CLUSTER_NAME` unless a positional is clearly the cluster (with `--nodegroup`, or two positionals). See [cluster resolution](../concepts/configuration.md#cluster-resolution) |
-| `--nodegroup, -n` | Nodegroup name or partial pattern (if unset, update all). An exact name selects only that nodegroup. A pattern that is not an exact name needs confirmation, or `--yes` without a terminal (see [nodegroup patterns](../concepts/configuration.md#nodegroup-patterns)) |
-| `--all-clusters` | Fleet mode: roll matching nodegroups across all discovered clusters (serial); scope with `-r` |
-| `--region, -r` | Region(s) for `--all-clusters` discovery (default: partition EKS regions / `REFRESH_EKS_REGIONS`) |
-| `--dry-run, -d` | Preview changes without executing |
-| `--changelog` | In dry-run, print the `amazon-eks-ami` release notes between the current and target AMI for AL2/AL2023 nodegroups. Bottlerocket and Windows nodegroups get a link to their own release notes |
-| `--force` | Force the roll: pass the PDB drain gate with a warning, and EKS evicts pods even when a PodDisruptionBudget blocks the drain (PDBs are bypassed). Also rolls nodegroups already on the latest AMI. To re-roll without bypassing PDBs, use `--reroll` |
-| `--reroll` | Roll nodegroups that are already on the latest AMI instead of skipping them (for example, to replace nodes). PodDisruptionBudgets are honored |
-| `--no-wait` | Don't wait for update completion (start-and-return) |
-| `--quiet, -q` | Minimal output. `--quiet` does not prompt. A run that needs a confirmation (warn-level health findings, a nodegroup pattern that is not an exact name, the fleet batch) stops unless you pass `--yes` |
-| `--skip-health-check` | Skip pre-flight health validation |
-| `--health-only` | Run the health check only, don't update (exit `0`=pass / `2`=warn / `3`=block) |
-| `--yes, -y` | Assume yes: skip confirmation prompts (a nodegroup pattern that is not an exact name, warn-level health) for CI |
-| `--require-healthy` | Treat warn-level health findings as a hard stop (exit `2`) instead of prompting |
-| `--skip-verify` | Skip post-roll verification (nodes ACTIVE, no new stuck pods) |
-| `--live` | Force the live per-node roll panel, also when stdout is not a color terminal (a snapshot at most every 15s, only on change) |
-| `--kubeconfig` | Kubeconfig for workload/PDB checks (defaults to `$KUBECONFIG`, then `~/.kube/config`) |
-| `--kube-context` | Kubeconfig context to use, even if its server does not match the cluster endpoint (not with `--all-clusters`) |
-| `--poll-interval` | Polling interval for update status (default `15s`; must be greater than `0`) |
-| `--wait-timeout` | How long to wait for the update to finish (default `40m`; applies per cluster with `--all-clusters`; `0` = no limit; not read from `REFRESH_TIMEOUT`) |
-| `--timeout, -t` | Global API timeout when given before the subcommand. After the subcommand it is a deprecated alias of `--wait-timeout` in 0.11 and prints a warning |
-| `--format, -o` | `table` (default), `json`, or `yaml`: one document on stdout (the run summary, the `--dry-run` preview, or the `--health-only` verdict), with notices on stderr |
+| `-f, --filter` | Select the targets by `key=value`. |
+| `--all-clusters` | Roll every cluster of the regions of `-r`. |
+| `--reroll` | Also roll a nodegroup that is on the latest AMI. |
+| `--changelog` | With `--dry-run`, show the AMI release notes of each roll. |
+| `--live` | Show the nodes of the roll as they drain and join, also without a terminal. |
+| `--skip-verify` | Skip the verification after the rolls. |
+| `--wait-timeout` | How long to wait for the rolls of a cluster. Default `40m`. |
 
-!!! warning "Unattended / CI"
-    Without a TTY, with `--quiet`, or with `-o json`/`-o yaml`, a run that
-    would otherwise prompt fails fast unless you pass `--yes`. For cron, pair `--yes` with
-    `--require-healthy` and `-o json`. See
-    [stdout and stderr](../concepts/output.md#stdout-and-stderr).
+The [shared flags](../concepts/configuration.md#flags-of-every-changing-command)
+apply.
 
-!!! note "Kubernetes access for the live roll view"
-    During a roll, `refresh` renders a live per-node panel (draining / joining /
-    Ready, pod-eviction progress, Warning events) read from the Kubernetes API
-    via `--kubeconfig`. It needs the `list` verb on nodes, pods, and events;
-    granting `watch` as well upgrades it to streaming, so node transitions
-    appear as they happen instead of on the next poll. Access is optional and
-    degrades gracefully: without `watch` the panel polls, and without any
-    Kubernetes access the roll still runs — you just get the coarse EKS update
-    status instead of per-node detail. The panel is on by default only when
-    stdout is a color terminal. When output is piped, in CI, or with
-    `NO_COLOR`, you get the standard progress lines instead. `--live` forces
-    the panel there too, as a snapshot at most every 15s and only when
-    something changed.
-
-!!! note "A roll that waits for capacity"
-    EKS reports a roll that waits on Auto Scaling only as an update in
-    progress. While it watches a roll, `refresh` reads the Auto Scaling
-    group's activities (`autoscaling:DescribeScalingActivities`) every
-    `--poll-interval`. It reports each failed node launch once, for example
-    `Auto Scaling could not launch a node for ng-a: ... VcpuLimitExceeded
-    ...` when the EC2 vCPU quota is too low for the surge nodes. The report
-    goes in the live panel when it draws, else on its own line. Without the
-    permission, there is no report and the roll goes on.
-
-### JSON document
-
-With `-o json` or `-o yaml`, a run prints one document. `nodegroups` has one
-entry per selected nodegroup, with its `status`. A nodegroup that failed also
-has a `failure`, and the top-level `failures` lists every failure of the run.
-See [Failures](../concepts/output.md#failures) for the failure object.
-
-```json
-{
-  "apiVersion": "refresh.drod.dev/v1",
-  "kind": "NodegroupUpdate",
-  "cluster": "prod",
-  "nodegroups": [
-    {"name": "ng-1", "status": "Succeeded", "updateId": "5e6f7a8b-..."},
-    {"name": "ng-2", "status": "Failed", "updateId": "0a1b2c3d-...",
-     "failure": {"kind": "Update", "name": "ng-2", "cluster": "prod", "region": "us-east-1",
-                 "reason": "UpdateFailed", "retryable": false,
-                 "error": "NodeCreationFailure: instances failed to join", "updateId": "0a1b2c3d-..."}},
-    {"name": "ng-3", "status": "Skipped", "reason": "AlreadyLatest"}
-  ],
-  "failures": [
-    {"kind": "Update", "name": "ng-2", "cluster": "prod", "region": "us-east-1",
-     "reason": "UpdateFailed", "retryable": false,
-     "error": "NodeCreationFailure: instances failed to join", "updateId": "0a1b2c3d-..."}
-  ]
-}
-```
-
-| `status` | Meaning |
-|---|---|
-| `Started` | The update started, and the run did not wait for it (`--no-wait`) |
-| `Succeeded` | The EKS update ended `Successful` |
-| `Skipped` | The run did not roll the nodegroup. `reason` is `AlreadyUpdating`, `AlreadyLatest`, or `CustomAMI` |
-| `Failed` | The nodegroup could not be read, its update could not start, or EKS ended the update `Failed` |
-| `Cancelled` | EKS ended the update `Cancelled` |
-| `InProgress` | The update started, but the run stopped watching it: `--wait-timeout` passed (`Timeout`), Ctrl+C (`Interrupted`), or its status could not be polled (`NotMonitored`). The EKS update may still be running |
-| `NotAttempted` | The run stopped before it reached this nodegroup |
-| `DrainBlocked` | The run would roll the nodegroup, but the PDB drain gate refused the run, so nothing started. `drainBlockers` names this nodegroup's blockers |
-
-The document also has `verification` (the post-roll checks and issues) and
-`health` (the pre-flight verdict), when they ran. A nodegroup that
-post-roll verification can't describe is a failure (exit `4`), not a
-verification issue. The `--dry-run` preview has an `action` per nodegroup
-instead of a status: `Update`, `ForceUpdate`, `SkipUpdating`, `SkipLatest`,
-or `SkipCustom`. A nodegroup it can't describe has the action `Unknown`
-and a `failure` (exit `4`). A nodegroup to roll that a PDB would block has
-`drainBlockers`, and the preview exits `3` unless `--force` is set.
-
-With `--all-clusters`, `clusters` has one entry per cluster: `cluster`,
-`region`, `status`, and the cluster's `nodegroups`, `verification`, and
-`health`. A cluster that could not be processed has a `failure` of its own.
-The top-level `failures` lists every failure of the fleet, including the
-regions discovery could not list.
-
-| Cluster `status` | Meaning | Exit |
-|---|---|---|
-| `Succeeded` | The cluster did what the run asked, with no failure | `0` |
-| `Incomplete` | The run finished, but some data could not be read (also a `--health-only` pass whose checks could not read everything) | `4` |
-| `Failed` | An update could not start or did not succeed, the nodegroups could not be selected, or the health check could not run | `4` |
-| `HealthBlocked` | The pre-flight health check blocked the cluster | `3` |
-| `HealthWarned` | Health warnings stopped the cluster (`--health-only`, `--require-healthy`) | `2` |
-| `VerifyFailed` | The updates succeeded, but post-roll verification found issues | `5` |
-| `Interrupted`, `TimedOut` | Ctrl+C, or the cluster's `--wait-timeout`. Started updates keep running | `1` |
-| `NotAttempted` | The run stopped before it reached the cluster | `1` |
-| `Busy` | EKS was already changing the cluster, so the run skipped it; `changesInProgress` names what was changing | `3` |
-| `DrainBlocked` | The PDB drain gate refused the cluster's roll; nothing started | `3` |
-
-A fleet `--dry-run` entry has `status` `Planned`, `Incomplete` (the `plan`
-has nodegroups it could not read), `DrainBlocked` (the real run's drain gate
-would refuse the plan), or `Failed` (no `plan`; see `failure`).
-
-### Exit-code contract
-
-`nodegroup update` returns a meaningful exit code so unattended runs can branch:
+### Exit codes
 
 | Code | Meaning |
 |---|---|
-| `0` | Success — updates started/completed as expected |
-| `1` | An error, an interrupt, a monitoring timeout, or an EKS update that ended `Failed` or `Cancelled` or could not be monitored |
-| `2` | Health **warnings** (with `--health-only` or `--require-healthy`) |
-| `3` | **Blocked**: a pre-flight check failed, a PodDisruptionBudget would block the drain (without `--force`), or EKS is already changing the cluster; nothing was rolled. A `--dry-run` exits `3` where the drain gate would refuse |
-| `4` | A **failure**: a nodegroup that could not be read, an update that could not start, a `--dry-run` preview with a nodegroup it could not read, or PodDisruptionBudgets that could not be read and that `--force` rolled past |
-| `5` | Post-roll **verification** found issues (nodes not Ready / newly-stuck pods) |
-
-See [Exit codes](../concepts/exit-codes.md) for the full reference and a CI
-`case` example.
+| `0` | Done, or nothing to do. |
+| `1` | An error, a question answered no, or an interrupt. Every roll that was sent failed. |
+| `2` | With `--dry-run` only: a real run would ask about warnings. |
+| `3` | Blocked: the cluster is busy, every target is already changing, a gate stops the change, or `--require-healthy` and a warning. Nothing changed, or nothing more when the gate stops a later step. |
+| `4` | Incomplete: a target was already changing beside targets that changed, a wait timed out, something could not be read, or a roll failed beside one that was started. |
+| `5` | The rolls were applied and the verification found an issue. |
 
 ### Examples
 
 ```bash
-# Preview a single nodegroup roll with the AMI release notes
-refresh nodegroup update my-cluster ng-default --dry-run --changelog
+# See what would be rolled, with the AMI release notes
+refresh nodegroup update -c prod --dry-run --changelog
 
-# Roll one nodegroup, requiring a clean health gate
-refresh nodegroup update -c prod -n ng-default --require-healthy
+# Roll two nodegroups without a prompt
+refresh nodegroup update web api -c prod --yes
 
-# Health gate only — no roll (CI readiness check)
-refresh nodegroup update -c prod --health-only -o json
+# Roll every cluster of two regions
+refresh nodegroup update --all-clusters -r us-east-1,us-west-2 --yes
 
-# Unattended cron patch with a JSON summary
-refresh nodegroup update -c prod --yes --require-healthy -o json
+# In a nightly job: stop on any warning, and keep the document
+refresh nodegroup update -c prod --yes --require-healthy -o json > run.json
+```
 
-# Fleet-wide dry-run, then execute
-refresh nodegroup update --all-clusters -r us-east-1 -r us-west-2 --dry-run
-refresh nodegroup update --all-clusters -r us-east-1 -r us-west-2 --yes
+## scale
+
+```bash
+refresh nodegroup scale <nodegroup> -c <cluster> [--desired N] [--min N] [--max N] [flags]
+```
+
+The command changes the desired, minimum, and maximum size of one managed
+nodegroup. A size that is not given keeps its value.
+
+### Size checks
+
+The command checks the sizes before it sends anything: `0 <= min <= desired
+<= max`, and `max` is at least 1. It checks against the current sizes of the
+nodegroup for the sizes that were not given.
+
+- If the sizes cannot hold, the command fails with exit `1` and sends nothing.
+- If a lone `--min` or `--max` excludes the current desired size, the error
+  says to pass `--desired` too.
+- A scale to the sizes that the nodegroup already has sends nothing and exits
+  `0`.
+
+### The health gate
+
+A scale that lowers the desired size removes nodes, and EKS does not wait for
+PodDisruptionBudgets when it does. So the gate reads the nodes and the budgets
+from the Kubernetes API, and stops a scale-down that can take a budget below
+what it allows.
+
+```bash
+refresh nodegroup scale ng-b -c dev-orders-32 --desired 2 --dry-run
+```
+
+```text
+dry run: a real run would be blocked
+Plan   ✗ Blocked   NodegroupScale
+
+STEPS  1
+  NAME  KIND   ACTION  REASON  FROM                      TO                        NOTE
+  ng-b  Scale  Submit  -       desired 4, min 1, max 12  desired 2, min 1, max 12  -
+
+HEALTH GATE
+  decision  ✗ Block
+  reasons   DrainBlockers: removing 2 nodes from ng-b could evict more pods than PDB default/api allows
+```
+
+- `--force` goes past that, with a warning.
+- Without Kubernetes access, the command asks before it goes on.
+- Any other scale checks the EC2 vCPU quota, with the vCPUs of the nodes that
+  it adds. If they do not fit, the scale is blocked, exit `3`. `--force` goes
+  past that, with a warning. A scale-up warns when an availability zone of the nodegroup does not
+  offer one of its instance types.
+
+### What a run does
+
+The command refuses while the cluster or anything else in it is changing. It
+asks once. Then it waits until EKS reports the update done and the nodegroup is
+`ACTIVE` at the new sizes. `--no-wait` returns once AWS accepts the change.
+
+```text
+PLAN  NodegroupScale, dev-orders-32 in us-east-1
+  ng-b  scale from desired 4, min 1, max 12 to desired 6, min 1, max 12
+◷ ng-b: Started (update 00000000-0000-4000-8000-000000000002)
+● ng-b: Succeeded
+```
+
+### Flags
+
+| Flag | Meaning |
+|---|---|
+| `--desired` | Desired number of nodes. |
+| `--min` | Minimum number of nodes. |
+| `--max` | Maximum number of nodes. |
+| `--wait-timeout` | How long to wait for the scale. Default `5m`. |
+
+The [shared flags](../concepts/configuration.md#flags-of-every-changing-command)
+apply.
+
+### Exit codes
+
+| Code | Meaning |
+|---|---|
+| `0` | Done, or nothing to do. |
+| `1` | An error, a question answered no, or an interrupt. The update failed, or the sizes cannot hold. |
+| `2` | With `--dry-run` only: a real run would ask about warnings. |
+| `3` | Blocked: the cluster is busy, the nodegroup is already changing, a gate stops the change, or `--require-healthy` and a warning. Nothing changed. |
+| `4` | Incomplete: the wait timed out, or something could not be read. |
+
+### Examples
+
+```bash
+# Add a node
+refresh nodegroup scale web -c prod --desired 4
+
+# Raise the limit and the node count together, without a prompt
+refresh nodegroup scale web -c prod --desired 8 --max 10 --yes
+
+# Change only the bounds, and do not wait
+refresh nodegroup scale web -c prod --min 2 --max 12 --yes --no-wait
 ```

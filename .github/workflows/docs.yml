@@ -17,6 +17,8 @@ on:
     branches: [main]
     paths:
       - "docs/**"
+      - "api/schema/**"
+      - "tools/mkdocs/**"
       - "mkdocs.yml"
       - "pyproject.toml"
       - "uv.lock"
@@ -24,6 +26,8 @@ on:
   pull_request:
     paths:
       - "docs/**"
+      - "api/schema/**"
+      - "tools/mkdocs/**"
       - "mkdocs.yml"
       - "pyproject.toml"
       - "uv.lock"

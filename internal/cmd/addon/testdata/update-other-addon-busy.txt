@@ -1,0 +1,22 @@
+exit: 3
+error: prod is busy (add-on kube-proxy UPDATING); nothing was started. Run it again once that finishes
+--- stdout ---
+Plan   [X] Blocked   AddonUpdate
+
+PLAN
+  operation  AddonUpdate
+  cluster    prod
+  region     us-east-1
+  version    1.33
+  decision   [X] Blocked
+
+STEPS  1
+  NAME     KIND   ACTION  REASON         FROM                TO                  NOTE
+  vpc-cni  Addon  Submit  VersionBehind  v1.19.0-eksbuild.1  v1.20.0-eksbuild.1  -
+
+BLOCKERS  1
+  NAME  KIND      STEP  MESSAGE
+  prod  [X] Busy  -     prod is busy (add-on kube-proxy UPDATING); nothing was started. Run it again once that finishes
+--- stderr ---
+PLAN  AddonUpdate, prod in us-east-1
+  vpc-cni  update v1.19.0-eksbuild.1 to v1.20.0-eksbuild.1 (VersionBehind)

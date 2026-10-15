@@ -1,0 +1,46 @@
+exit: 0
+error: 
+--- stdout ---
+Run   [OK] Succeeded   ClusterUpgrade
+
+RUN
+  operation       ClusterUpgrade
+  cluster         prod
+  region          us-east-1
+  version         1.33
+  target version  1.33
+  status          [OK] Succeeded
+
+RESULTS  5
+  NAME                KIND          STATUS          FROM                TO                  UPDATE  NOTE      STARTED                  FINISHED                 FAILURE
+  control-plane@1.33  ControlPlane  - Skipped       1.33                1.33                -       -         -                        -                        -
+  api@1.33            Nodegroup     - Skipped       1.33                1.33                -       -         -                        -                        -
+  web@1.33            Nodegroup     [OK] Succeeded  1.33                1.33                -       attached  2026-01-01 00:00:00 UTC  2026-01-01 00:10:00 UTC  -
+  vpc-cni@1.33        Addon         - Skipped       v1.20.0-eksbuild.1  v1.20.0-eksbuild.1  -       -         -                        -                        -
+  kube-proxy@1.33     Addon         - Skipped       v1.33.0-eksbuild.1  v1.33.0-eksbuild.1  -       -         -                        -                        -
+
+VERIFICATION  3
+  NAME                      OUTCOME    MESSAGE
+  NodegroupActive/web@1.33  [OK] Pass  web ACTIVE
+  NodesReady/web@1.33       Skipped    no baseline of the nodes before the roll
+  NewPendingPods/web@1.33   Skipped    no baseline of the Pending pods before the roll
+--- stderr ---
+PLAN  ClusterUpgrade, prod in us-east-1
+  control-plane@1.33  skip, at 1.33 (AlreadyAtTarget)
+  api@1.33            skip, at 1.33 (AlreadyAtTarget)
+  web@1.33            verify at 1.33 (Unsettled)
+  vpc-cni@1.33        skip, at v1.20.0-eksbuild.1 (AlreadyAtTarget)
+  kube-proxy@1.33     skip, at v1.33.0-eksbuild.1 (AlreadyAtTarget)
+phase: nodegroups, 1.33
+warning: nodegroup web is UPDATING at 1.33; waiting for it to settle
+web: UPDATING
+web: still UPDATING
+web: still UPDATING
+web: still UPDATING
+web: still UPDATING
+web: still UPDATING
+web: still UPDATING
+web: still UPDATING
+web: still UPDATING
+web: still UPDATING
+[OK] web@1.33: Succeeded

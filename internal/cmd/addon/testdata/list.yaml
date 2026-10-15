@@ -1,0 +1,51 @@
+apiVersion: refresh.drod.dev/v2
+kind: AddonList
+cluster: prod
+region: us-east-1
+addons:
+  - name: coredns
+    version: v1.11.3-eksbuild.2
+    status: DEGRADED
+    health: Failed
+    arn: arn:aws:eks:us-east-1:123456789012:addon/prod/coredns/fake
+    issues:
+      - code: InsufficientNumberOfReplicas
+        message: The add-on is unhealthy because it has no replicas
+        resourceIds:
+          - kube-system/coredns
+    createdAt: "2026-01-01T00:00:00Z"
+    modifiedAt: "2026-01-01T00:00:00Z"
+  - name: kube-proxy
+    version: v1.33.0-eksbuild.2
+    status: UPDATING
+    health: InProgress
+    arn: arn:aws:eks:us-east-1:123456789012:addon/prod/kube-proxy/fake
+    issues: []
+    createdAt: "2026-01-01T00:00:00Z"
+    modifiedAt: "2026-01-01T00:00:00Z"
+  - name: metrics-server
+    version: v0.7.2-eksbuild.1
+    status: ACTIVE
+    health: Failed
+    arn: arn:aws:eks:us-east-1:123456789012:addon/prod/metrics-server/fake
+    issues:
+      - code: InsufficientNumberOfReplicas
+        message: The add-on has fewer replicas than it needs
+        resourceIds:
+          - kube-system/metrics-server
+    createdAt: "2026-01-01T00:00:00Z"
+    modifiedAt: "2026-01-01T00:00:00Z"
+  - name: vpc-cni
+    version: v1.19.0-eksbuild.1
+    status: ACTIVE
+    health: Healthy
+    arn: arn:aws:eks:us-east-1:123456789012:addon/prod/vpc-cni/fake
+    serviceAccountRoleArn: arn:aws:iam::123456789012:role/vpc-cni
+    configuration: |
+      env:
+        ENABLE_PREFIX_DELEGATION: "true"
+        WARM_PREFIX_TARGET: "1"
+    issues: []
+    createdAt: "2026-01-01T00:00:00Z"
+    modifiedAt: "2026-01-01T00:00:00Z"
+failures: []

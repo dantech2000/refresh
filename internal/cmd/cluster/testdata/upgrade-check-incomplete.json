@@ -1,0 +1,94 @@
+{
+  "apiVersion": "refresh.drod.dev/v2",
+  "kind": "UpgradeCheck",
+  "cluster": "prod",
+  "region": "us-east-1",
+  "version": "1.32",
+  "readiness": "Incomplete",
+  "reasons": [
+    "VersionSkew: not read: nodegroup ng-legacy"
+  ],
+  "support": {
+    "tier": "Standard",
+    "standardUntil": "2027-03-23T00:00:00Z",
+    "extendedUntil": "2028-03-23T00:00:00Z",
+    "daysRemaining": 173,
+    "autoUpgrade": true,
+    "builtIn": false
+  },
+  "insights": [],
+  "insightsEvaluated": true,
+  "checks": [
+    {
+      "name": "Insights",
+      "outcome": "Pass",
+      "blocking": true,
+      "message": "3 insights passing",
+      "details": [],
+      "findings": []
+    },
+    {
+      "name": "VersionSkew",
+      "outcome": "Unreadable",
+      "blocking": true,
+      "message": "not read: nodegroup ng-legacy",
+      "details": [],
+      "findings": []
+    },
+    {
+      "name": "ControlPlane",
+      "outcome": "Pass",
+      "blocking": true,
+      "message": "etcd 12% of 8 GiB",
+      "details": [
+        "etcd database 12.5% of the 8 GiB limit (1.00 GiB in use)",
+        "API server 5xx rate 0.01% (5 of 48210 requests)"
+      ],
+      "findings": []
+    }
+  ],
+  "skew": {
+    "controlPlaneVersion": "1.32",
+    "nodegroups": [
+      {
+        "name": "ng-a",
+        "version": "1.32",
+        "minorsBehind": 0,
+        "atSkewLimit": false
+      },
+      {
+        "name": "ng-legacy",
+        "minorsBehind": 0,
+        "atSkewLimit": false,
+        "incomplete": true
+      }
+    ],
+    "addons": [
+      {
+        "name": "coredns",
+        "version": "v1.11.4-eksbuild.2",
+        "latest": "v1.11.4-eksbuild.2",
+        "behind": false
+      },
+      {
+        "name": "vpc-cni",
+        "version": "v1.19.0-eksbuild.1",
+        "latest": "v1.19.0-eksbuild.1",
+        "behind": false
+      }
+    ]
+  },
+  "failures": [
+    {
+      "kind": "Nodegroup",
+      "name": "ng-legacy",
+      "cluster": "prod",
+      "region": "us-east-1",
+      "operation": "eks:DescribeNodegroup",
+      "reason": "AccessDenied",
+      "retryable": false,
+      "error": "AccessDeniedException: User: arn:aws:iam::123456789012:user/fake is not authorized to perform this action",
+      "awsErrorCode": "AccessDeniedException"
+    }
+  ]
+}

@@ -1,72 +1,111 @@
 # Quickstart
 
-This walks through one full pass of the upgrade loop against a real account.
-Everything here is read-only or dry-run until you opt in.
+This page takes one cluster through the four steps. The examples use a cluster
+named `prod` in `us-east-1`.
 
-!!! note "Prerequisites"
-    Working AWS credentials (`aws sts get-caller-identity` succeeds) and — for
-    the workload/PDB health checks — a kubeconfig context for the cluster
-    (`aws eks update-kubeconfig --name prod`). It does not need to be the
-    current context: `refresh` picks the context whose server matches the
-    cluster endpoint. The AWS permissions are listed in
-    [Required IAM permissions](../concepts/configuration.md#required-iam-permissions).
+Before you start, log in to AWS. See
+[Logging in to AWS](../concepts/logging-in.md).
 
-## 1. See what's stale
+## 1. Find what is out of date
 
 ```bash
-refresh status -A
+refresh status -r us-east-1
 ```
 
-`status` fans out across regions and reports, per cluster: Kubernetes version,
-EKS support window (and extended-support cost exposure), stale AMIs, add-ons
-that are behind, and control-plane health issues. It exits non-zero when
-something needs attention, so it doubles as a CI gate.
+```text
+FLEET  8
 
-## 2. Check upgrade readiness
+CLUSTER                REGION     VERSION  SUPPORT           COMPUTE       STALE AMI                ADDONS                      HEALTH
+▲ dev-orders-32        us-east-1  1.34     standard (49d)*   3 nodegroups  1/3 (130d)               1 (vpc-cni)                 ok
+▲ dev-orders-56        us-east-1  1.31     extended (43d)*   4 nodegroups  1/4 (130d)               0                           ok
+▲ prod-data-48         us-east-1  1.32     extended (160d)*  4 nodegroups  1/4 (130d), 1 behind CP  1 (eks-pod-identity-agent)  ok
+▲ staging-checkout-16  us-east-1  1.35     standard (164d)*  2 nodegroups  0                        2 (coredns,vpc-cni)         ok
+
+● 0 current   ▲ 8 need attention
+```
+
+`STALE AMI` reads "1/3 (130d)": one of three nodegroups does not run the latest
+AMI, and that AMI is 130 days old. Use `-A` to read every region. See
+[`refresh status`](../commands/status.md) for the columns.
+
+## 2. Check that the cluster is ready to upgrade
 
 ```bash
-refresh cluster upgrade-check -c prod
+refresh cluster upgrade-check prod
 ```
 
-This pulls **EKS Cluster Insights** (the same checks the AWS console runs) plus a
-local version-skew analysis, and tells you whether the control plane is safe to
-bump. It's read-only.
+The command reports the EKS upgrade insights, the version skew of the
+nodegroups and add-ons, and the support window. Its exit code is the verdict:
+`0` ready, `2` review, `3` blocked, `4` incomplete.
 
-## 3. Preview a nodegroup patch
+## 3. Patch the nodegroups
+
+1. Run a dry run. It prints the plan and the verdict of the health gate, and
+   it changes nothing.
+
+    ```bash
+    refresh nodegroup update -c prod --dry-run
+    ```
+
+    ```text
+    Plan   ● Proceed   NodegroupUpdate
+
+    STEPS  3
+      NAME  KIND       ACTION  REASON         FROM                                            TO                        NOTE
+      ng-a  Nodegroup  Skip    AlreadyLatest  1.34                                            1.34                      -
+      ng-b  Nodegroup  Skip    AlreadyLatest  1.34                                            1.34                      -
+      ng-c  Nodegroup  Submit  AMIOutdated    1.34 (release 1.34.0-20260101, AMI ami-old134)  1.34 (AMI ami-latest134)  -
+
+    HEALTH GATE
+      decision  ● Go
+    ```
+
+2. Run the roll. The command asks once, starts the rolls, waits for them, and
+   verifies the result.
+
+    ```bash
+    refresh nodegroup update -c prod
+    ```
+
+If the health gate blocks the roll, the command exits `3` and changes nothing.
+The `HEALTH GATE` section names the check that blocked. See
+[Health checks](../concepts/health-checks.md).
+
+## 4. Patch the add-ons
 
 ```bash
-# What would change? Include the AMI release notes between current and target.
-refresh nodegroup update -c prod --dry-run --changelog
+refresh addon update --all -c prod --dry-run
+refresh addon update --all -c prod
 ```
 
-Dry-run shows the planned action per nodegroup without touching anything.
-With `-o json`, the `action` is `Update`, `ForceUpdate`, `SkipUpdating`,
-`SkipLatest`, or `SkipCustom`.
+`--all` updates every installed add-on in dependency order.
 
-## 4. Patch with health gates
+## 5. Upgrade the cluster
 
 ```bash
-refresh nodegroup update -c prod
+refresh cluster upgrade prod --to 1.35 --dry-run
+refresh cluster upgrade prod --to 1.35
 ```
 
-Before rolling, `refresh` runs [pre-flight health checks](../concepts/health-checks.md)
-(capacity, node readiness, PDBs that would block the drain, critical
-workloads). It rolls the managed nodegroups to the latest recommended AMI,
-streams live progress, and then verifies nodes came back Ready with no
-newly-stuck pods.
+The command moves the control plane, then the add-ons that the new version
+needs, then each nodegroup, then the other add-ons. On a terminal it asks
+before each phase. If the run stops, run the same command again. It goes on
+with what is left.
 
-## 5. Patch the add-ons
+## Save the cluster in a context
+
+A context saves the cluster, the region, and the AWS profile under a name, so
+you do not repeat the flags.
 
 ```bash
-refresh addon update -c prod --all --dependency-order --wait
+refresh context add prod --cluster prod --region us-east-1 --profile prod --use
+refresh nodegroup list
 ```
 
-Updates every add-on to its latest compatible version, in a dependency-safe
-order (vpc-cni → coredns/kube-proxy → others).
+See [Contexts](../concepts/contexts.md).
 
-## Where to go next
+## Next
 
-- [The upgrade lifecycle](../concepts/lifecycle.md) — how the four stages fit together.
-- [Configuration & AWS auth](../concepts/configuration.md) — profiles, regions, contexts, env vars.
-- [Cookbook](../usage/cookbook.md) — fleet mode, unattended/CI runs, scaling, and more.
-- [Command reference](../commands/index.md) — every command and flag.
+- [The upgrade lifecycle](../concepts/lifecycle.md): how the steps fit.
+- [Cookbook](../usage/cookbook.md): recipes for scripts and CI.
+- [Exit codes](../concepts/exit-codes.md): what each code means.

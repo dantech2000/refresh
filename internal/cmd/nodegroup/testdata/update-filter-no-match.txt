@@ -1,0 +1,4 @@
+exit: 1
+error: no nodegroup of cluster prod matches -f name=zz*; its nodegroups are api, web
+--- stdout ---
+--- stderr ---

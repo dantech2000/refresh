@@ -1,0 +1,24 @@
+prod   [!] REVIEW   us-east-1 · 1.32 · standard (173d)
+
+READINESS
+  reason 1  [!] Insights: 1 WARNING insight (Kubelet version skew)
+
+INSIGHTS  1
+  NAME      INSIGHT               STATUS       VERSION
+  1a9f0c21  Kubelet version skew  [!] WARNING  1.33
+
+NODEGROUP SKEW  2
+  NAME       VERSION  BEHIND
+  ng-a       1.32     0
+  ng-legacy  1.32     0
+
+ADD-ON SKEW  2
+  NAME     INSTALLED           LATEST              STATE
+  coredns  v1.11.4-eksbuild.2  v1.11.4-eksbuild.2  current
+  vpc-cni  v1.19.0-eksbuild.1  v1.19.0-eksbuild.1  current
+
+CHECKS  3
+  NAME          OUTCOME    MESSAGE
+  Insights      [!] Warn   1 WARNING insight (Kubelet version skew)
+  VersionSkew   [OK] Pass  every nodegroup on 1.32 and every add-on at its latest
+  ControlPlane  [OK] Pass  etcd 12% of 8 GiB

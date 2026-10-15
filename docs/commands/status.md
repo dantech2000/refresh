@@ -1,128 +1,101 @@
 # refresh status
 
-Fleet patch posture across clusters and regions — the front door.
+`refresh status` shows every cluster with what is out of date: the Kubernetes
+version and its EKS support window, the nodegroups whose AMI is not the latest,
+and the add-ons that have a newer version.
 
 ```bash
-refresh status [name-pattern] [flags]
+refresh status [flags]
 ```
 
-Reports, per cluster: Kubernetes version, EKS support window (standard vs.
-extended support, with extended-support cost exposure), stale AMIs, and add-ons
-behind their latest compatible version. Exits non-zero when something needs
-attention, so it doubles as a CI gate.
+Without a region flag, the command reads the configured region. `-r` names one
+or more regions. `-A` reads every region. See
+[Regions](../concepts/configuration.md#regions).
 
-## Flags
-
-| Flag | Description |
-|---|---|
-| `--all-regions, -A` | Query all EKS-supported regions (or the `REFRESH_EKS_REGIONS` list) |
-| `--region, -r` | Specific region(s) to query (repeatable) |
-| `--sort` | Sort by field: `cluster` (default), `region`, `version`, `support`, `stale`. Any other value is an error |
-| `--desc` | Sort descending |
-| `--format, -o` | `table` (default), `json`, `yaml`, `plain` |
-
-Global flags that matter here: `--max-concurrency, -C` sets how many clusters
-`status` evaluates at once in each region. It sweeps `min(4, -C)` regions at
-once. `--timeout, -t` bounds the whole sweep.
-
-Without `-A` or `-r`, `status` reads the configured region. See
-[Regions](../concepts/configuration.md#regions) for how `-r`, the global
-`--region`, and `REFRESH_EKS_REGIONS` combine.
-
-With `--all-regions` and no `-r` or `REFRESH_EKS_REGIONS`, regions these
-credentials can't use (an SCP denial, a region not enabled for the account)
-are skipped with one note on stderr and don't count as failed regions. A
-region you name with `-r` still fails if it's denied. Other region failures
-are `Region` failures in `failures` (see [Incomplete data](#incomplete-data)).
-
-## Columns
-
-| Column | Shows |
-|---|---|
-| `CLUSTER`, `REGION`, `VERSION` | The cluster and its control-plane version |
-| `SUPPORT` | `standard`, `extended`, or `unsupported`, with the end date and the days left (a partial day counts as a whole day). An extended cluster shows the extra cost per hour. A cluster whose upgrade policy is `STANDARD` shows "auto-upgrades at end of standard support" instead: EKS upgrades it and it never pays for extended support |
-| `COMPUTE` | Managed nodegroups (with a count), `Auto Mode` (with a count of any managed nodegroups it also runs), `Karpenter`, or `none` |
-| `STALE AMI` | Nodegroups not on the latest AMI for their own Kubernetes version. `· N behind CP` counts nodegroups on an older minor than the control plane. `n/a` for a cluster with no managed nodegroups (Auto Mode without nodegroups, Karpenter, or none) |
-| `ADDONS` | Add-ons behind their latest compatible version |
-| `HEALTH` | Control-plane health issues that AWS reports for the cluster |
-
-`-o plain` has the same columns. The `--sort stale` key counts both stale
-AMIs and nodegroups behind the control plane.
-
-The support dates come from `DescribeClusterVersions`. If that call fails,
-`status` uses a built-in calendar, and `-o plain` marks the `SUPPORT` cell
-with a trailing `*`. Karpenter is detected per cluster from the instance tags
-(`kubernetes.io/cluster/<name>=owned` or `eks:eks-cluster-name=<name>`, plus
-the Karpenter nodepool tag).
-
-## Incomplete data
-
-A row whose data `refresh` could not read is never shown as current. Examples
-are a failed `DescribeCluster`, a nodegroup or add-on that could not be read,
-a failed latest-AMI lookup (for example, a missing `ssm:GetParameter`), and a
-cluster that a timed-out sweep never reached. Such a row gets the unknown
-marker (`○`) and an "N incomplete" count, and the table lists each failure
-under `INCOMPLETE DATA`. The command then exits `4`, unless a higher-priority
-code applies.
-
-With `-o json` or `-o yaml`, the row has `"incomplete": true` and each
-failure is an entry of the top-level `failures` (see
-[Failures](../concepts/output.md#failures)). With `-o json`, `-o yaml`, or
-`-o plain`, stderr names each failure on one line:
-
-```json
-{
-  "apiVersion": "refresh.drod.dev/v1",
-  "kind": "FleetStatus",
-  "clusters": [
-    {"name": "prod", "region": "us-east-1", "version": "1.33", "incomplete": true, "...": "..."}
-  ],
-  "failures": [
-    {
-      "kind": "Nodegroup",
-      "name": "web",
-      "cluster": "prod",
-      "region": "us-east-1",
-      "operation": "eks:DescribeNodegroup",
-      "reason": "AccessDenied",
-      "retryable": false,
-      "error": "AccessDeniedException: User: arn:aws:iam::123456789012:user/ci is not authorized to perform: eks:DescribeNodegroup",
-      "awsErrorCode": "AccessDeniedException"
-    }
-  ]
-}
+```bash
+refresh status -r us-east-1
 ```
 
 ```text
-warning: nodegroup prod/web (us-east-1): AccessDenied: AccessDeniedException: User: ... is not authorized to perform: eks:DescribeNodegroup
+FLEET  8
+
+CLUSTER                REGION     VERSION  SUPPORT                     COMPUTE       STALE AMI                ADDONS                      HEALTH
+▲ dev-orders-32        us-east-1  1.34     standard (49d)*             3 nodegroups  1/3 (130d)               1 (vpc-cni)                 ok
+▲ dev-orders-56        us-east-1  1.31     extended (43d)* +$0.50/hr   4 nodegroups  1/4 (130d)               0                           ok
+▲ dev-platform-08      us-east-1  1.34     standard (49d)*             2 nodegroups  1/2 (130d)               0                           ok
+▲ prod-billing-24      us-east-1  1.33     extended (288d)* +$0.50/hr  1 nodegroup   0                        1 (vpc-cni)                 ok
+▲ prod-data-48         us-east-1  1.32     extended (160d)* +$0.50/hr  4 nodegroups  1/4 (130d), 1 behind CP  1 (eks-pod-identity-agent)  ok
+▲ prod-payments-00     us-east-1  1.34     standard (49d)*             3 nodegroups  1/3 (130d)               0                           ok
+▲ staging-checkout-16  us-east-1  1.35     standard (164d)*            2 nodegroups  0                        2 (coredns,vpc-cni)         ok
+▲ staging-data-40      us-east-1  1.32     extended (160d)* +$0.50/hr  1 nodegroup   0                        0                           ok
+
+● 0 current   ▲ 8 need attention
+5 stale AMIs · 5 add-ons behind · 1 nodegroup behind the control plane · 4 clusters out of standard support (+$1460/mo)
+
+▲ dev-orders-32 has stale AMIs or add-ons: refresh cluster upgrade-check dev-orders-32 -r us-east-1
 ```
+
+Under the table, the first line counts the clusters by what they need, and
+the second line adds up what is out of date. When clusters pay for extended
+support, the second line also gives what that costs the fleet per month on
+top of standard support, at 730 hours a month. The last line names the most
+urgent cluster, an unsupported one first, with the command that checks
+whether it is ready to upgrade.
+
+The premium is the price on the [EKS pricing page](https://aws.amazon.com/eks/pricing/)
+when `refresh` was released: $0.50 per cluster per hour. The JSON and YAML
+documents have it as `support.extendedSupportPremiumUsdPerHour`.
+
+## Columns
+
+| Column | Content |
+|---|---|
+| `SUPPORT` | `standard`, `extended`, or `unsupported`, with the days left. A `*` marks dates that `refresh` ships with, because EKS did not report them. A cluster in extended support also shows the premium over standard support, `+$0.50/hr`, unless its upgrade policy is `STANDARD`. |
+| `COMPUTE` | The managed nodegroups, Auto Mode, Karpenter, or none. |
+| `STALE AMI` | "1/3 (130d)": one of three nodegroups does not run the latest AMI for its own Kubernetes version, and the oldest such AMI is 130 days old. "1 behind CP": one nodegroup is on an older Kubernetes version than the control plane. |
+| `ADDONS` | The add-ons that have a newer compatible version. |
+| `HEALTH` | The health issues that EKS reports for the control plane, the nodegroups, and the add-ons, as one count, such as `2 issues`. An add-on that is `DEGRADED` with no issue listed counts as one. The JSON has each part: `healthIssues` of the cluster and of each nodegroup, and `issues` and `status` of each add-on. |
+
+## Flags
+
+| Flag | Meaning |
+|---|---|
+| `-A, --all-regions` | Read every region. |
+| `-f, --filter` | Select by `key=value`. Keys: `name`, `region`, `version`, `support`. |
+| `--sort` | `name` (default), `region`, `version`, `support`, or `stale`. |
+| `--desc` | Sort in descending order. |
+| `-o, --output` | `table`, `json`, `yaml`, or `plain`. |
+
+## Incomplete data
+
+A cluster or a region that could not be read is listed under `INCOMPLETE DATA`,
+or in `failures` with `-o json` and `-o yaml`. The command then exits `4`. See
+[Failures](../concepts/output.md#failures).
 
 ## Exit codes
 
+When several apply, the highest wins.
+
 | Code | Meaning |
 |---|---|
-| `0` | Every cluster is current and in standard support |
-| `2` | Something needs attention: a stale AMI, an add-on behind, a nodegroup behind the control plane, or a control-plane health issue |
-| `3` | A cluster is on extended support or unsupported |
-| `4` | Incomplete data, or a region could not be listed |
-| `1` | An error, or nothing could be gathered: every region failed or was skipped |
-
-Precedence is `3`, then `2`, then `4`. `4` means some data is missing. If
-nothing could be gathered, `status` fails with `1` instead. See
-[Exit codes](../concepts/exit-codes.md#status).
+| `0` | Every cluster is current and in standard support. |
+| `2` | Something needs attention: an AMI, an add-on, or a nodegroup behind the control plane, or a health issue of the control plane, a nodegroup, or an add-on. |
+| `3` | A cluster is in extended support, or unsupported. |
+| `4` | A part of the fleet could not be read. |
+| `1` | An error, or no region answered. |
 
 ## Examples
 
 ```bash
-# Everything, everywhere
-refresh status -A
+# Every region, the clusters with the most to do first
+refresh status -A --sort stale --desc
 
-# Only clusters whose name contains "prod", in two regions
-refresh status prod -r us-east-1 -r us-west-2
+# The clusters that left standard support
+refresh status -A -f support=extended
 
-# Worst support posture first
-refresh status -A --sort support --desc
+# The production clusters of two regions
+refresh status -r us-east-1,eu-west-1 -f name=prod-*
 
-# Machine-readable for a dashboard / CI gate
-refresh status -A -o json
+# The names of the clusters with a stale AMI
+refresh status -o json | jq -r '.clusters[] | select(any(.nodegroups[]?; .ami.status == "Outdated")) | .name'
 ```

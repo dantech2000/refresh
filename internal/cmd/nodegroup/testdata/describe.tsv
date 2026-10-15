@@ -1,0 +1,16 @@
+FIELD	VALUE
+overview.status	ACTIVE
+overview.version	1.33
+overview.instance_types	m5.large, m5a.large
+overview.capacity	ON_DEMAND
+overview.created	2026-01-01 00:00 UTC
+overview.modified	2026-01-01 00:00 UTC
+ami.type	AL2023_x86_64_STANDARD
+ami.release	1.33.0-20260101
+ami.status	Outdated
+ami.current	ami-stale
+ami.latest	ami-latest133
+scaling.desired	6
+scaling.min	2
+scaling.max	12
+issues.AsgInstanceLaunchFailures.message	Could not launch an instance

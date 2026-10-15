@@ -3,329 +3,170 @@ package health
 import (
 	"context"
 	"fmt"
-	"sync"
+	"math"
+	"slices"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/autoscaling"
-	asgtypes "github.com/aws/aws-sdk-go-v2/service/autoscaling/types"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
-	"github.com/aws/aws-sdk-go-v2/service/cloudwatch/types"
+	cwtypes "github.com/aws/aws-sdk-go-v2/service/cloudwatch/types"
 
-	"github.com/dantech2000/refresh/internal/aws/awserr"
-	"github.com/dantech2000/refresh/internal/common"
+	"github.com/dantech2000/refresh/internal/apidoc"
+	"github.com/dantech2000/refresh/internal/awsx"
+	"github.com/dantech2000/refresh/internal/fanout"
+	"github.com/dantech2000/refresh/internal/fleet"
 )
 
-// CPU headroom thresholds for safe rolling updates: at least
-// minSafeCPUHeadroomPercent free is a pass, at least
-// minWarnCPUHeadroomPercent is a warning, anything less is a failure.
+// The CPU thresholds. The mean headroom of the cluster decides, and the
+// busiest instance can only make the verdict worse: one saturated node is
+// a bottleneck for a roll whatever the mean says.
 const (
-	minSafeCPUHeadroomPercent = 30.0
-	minWarnCPUHeadroomPercent = 15.0
+	cpuSafeHeadroomPercent = 30.0
+	cpuWarnHeadroomPercent = 15.0
+	cpuPeakFailPercent     = 95.0
+	cpuPeakWarnPercent     = 85.0
+	cpuWindow              = 10 * time.Minute
+	cpuPeriod              = 5 * time.Minute
+	// metricQueriesPerCall is the most queries CloudWatch takes in one
+	// GetMetricData call.
+	metricQueriesPerCall = 500
 )
 
-// Per-node peak-CPU thresholds. The cluster mean can hide a single saturated
-// node (one busy large instance averaged with idle small ones), so the peak
-// node degrades — never upgrades — the mean-based verdict: a node at or above
-// peakFailCPUPercent fails the check, and one at or above peakWarnCPUPercent
-// downgrades a pass to a warning.
-const (
-	peakWarnCPUPercent = 85.0
-	peakFailCPUPercent = 95.0
-)
-
-// CheckClusterCapacity validates that the cluster has sufficient capacity for rolling updates
-func (hc *HealthChecker) CheckClusterCapacity(ctx context.Context, clusterName string) HealthResult {
-	return hc.checkClusterCapacityWith(ctx, hc.newCPUSnapshot(clusterName))
+// Capacity checks that the nodes have the CPU headroom to take the pods
+// of the nodes that a roll drains, from the EC2 CPU of every instance of
+// the managed nodegroups over the last 10 minutes.
+func Capacity() Check {
+	return Check{Name: "Capacity", Blocking: true, Run: runCapacity}
 }
 
-// checkClusterCapacityWith is CheckClusterCapacity against a (possibly
-// shared) CPU snapshot, so RunAllChecks fetches metrics once for both the
-// capacity and balance checks.
-func (hc *HealthChecker) checkClusterCapacityWith(ctx context.Context, snap *cpuSnapshot) HealthResult {
-	result := HealthResult{
-		Name:       "Cluster Capacity",
-		IsBlocking: true, // Capacity is blocking
-		Details:    []string{},
+func runCapacity(ctx context.Context, in *Input) Result {
+	ids, unread := instanceIDs(in.Snapshot)
+	if len(unread) > 0 {
+		return Result{Outcome: Unreadable, Message: "the instances of " + plural(len(unread), "nodegroup") + " could not be read: " + joinNames(unread)}
 	}
-
-	// Use default EC2 metrics (no prerequisites required)
-	cpuByInstance, err := snap.get(ctx)
+	if len(ids) == 0 {
+		return Result{Outcome: Skipped, Message: "no managed nodegroup instances"}
+	}
+	byInstance, err := instanceCPU(ctx, in, ids)
 	if err != nil {
-		result.Status = StatusWarn
-		result.Score = 70 // Default score when metrics unavailable
-		result.Message = fmt.Sprintf("Unable to fetch CPU metrics: %s", awserr.Summary(err))
-		result.Details = append(result.Details, "EC2 CPU metrics unavailable - check EKS nodegroup status")
-		return result
+		f := fleet.FailureFromError(apidoc.FailureCluster, in.Snapshot.Cluster.Name, err)
+		return Result{Outcome: Unreadable, Message: "could not read the CPU metrics: " + f.Error + failureAction(f), Failures: []apidoc.Failure{f}}
 	}
-
-	result.Details = append(result.Details, "Using default EC2 metrics (CPU only)")
-	result.Details = append(result.Details, "Memory metrics require Container Insights setup")
-
-	// Calculate average and peak CPU utilization
-	cpuMetrics := make([]float64, 0, len(cpuByInstance))
-	for _, v := range cpuByInstance {
-		cpuMetrics = append(cpuMetrics, v)
-	}
-	avgCPU := calculateAverage(cpuMetrics)
-	maxCPU := maxFloat(cpuMetrics)
-
-	result.Details = append(result.Details, fmt.Sprintf("Average CPU utilization: %.1f%% (peak node %.1f%%)", avgCPU, maxCPU))
-	result.Details = append(result.Details, "Memory utilization: Not available (requires Container Insights)")
-
-	// Mean-based verdict from cluster-wide CPU headroom.
-	headroom := 100 - avgCPU
-	switch {
-	case headroom >= minSafeCPUHeadroomPercent:
-		result.Status = StatusPass
-		result.Score = 100
-		result.Message = fmt.Sprintf("Sufficient CPU capacity (avg %.1f%%, peak %.1f%%)", avgCPU, maxCPU)
-	case headroom >= minWarnCPUHeadroomPercent:
-		result.Status = StatusWarn
-		result.Score = 70
-		result.Message = fmt.Sprintf("Limited CPU capacity (avg %.1f%%, peak %.1f%%)", avgCPU, maxCPU)
-		result.Details = append(result.Details, "Consider scaling up nodes before update")
-	default:
-		result.Status = StatusFail
-		result.Score = 30
-		result.Message = fmt.Sprintf("Insufficient CPU capacity (avg %.1f%%, peak %.1f%%)", avgCPU, maxCPU)
-		result.Details = append(result.Details, "Insufficient CPU headroom for safe rolling update")
-	}
-
-	// Peak-node guard: a single near-saturated node is a real bottleneck for a
-	// rolling update even when the cluster mean looks healthy. Only ever
-	// degrade the mean-based verdict, never improve it.
-	switch {
-	case maxCPU >= peakFailCPUPercent && result.Status != StatusFail:
-		result.Status = StatusFail
-		result.Score = 30
-		result.Message = fmt.Sprintf("A node is near CPU saturation (peak %.1f%%, avg %.1f%%)", maxCPU, avgCPU)
-		result.Details = append(result.Details, fmt.Sprintf("At least one node at/above %.0f%% CPU — rolling it could overload its peers", peakFailCPUPercent))
-	case maxCPU >= peakWarnCPUPercent && result.Status == StatusPass:
-		result.Status = StatusWarn
-		result.Score = 70
-		result.Message = fmt.Sprintf("Uneven CPU capacity (peak %.1f%%, avg %.1f%%)", maxCPU, avgCPU)
-		result.Details = append(result.Details, fmt.Sprintf("At least one node at/above %.0f%% CPU despite a low cluster average", peakWarnCPUPercent))
-	}
-
-	return result
+	return evaluateCapacity(byInstance, len(ids))
 }
 
-// cpuSnapshot lazily computes per-instance average CPU once, so the capacity
-// and balance checks running in the same RunAllChecks pass share a single
-// nodegroup discovery + CloudWatch fetch instead of issuing one
-// GetMetricStatistics call per instance each.
-type cpuSnapshot struct {
-	hc          *HealthChecker
-	clusterName string
-	once        sync.Once
-	byInstance  map[string]float64
-	err         error
+// instanceIDs returns the instance IDs of every nodegroup of the
+// snapshot, and the names of the nodegroups whose IDs could not be read.
+func instanceIDs(snap *fleet.Snapshot) (ids, unread []string) {
+	for _, n := range snap.Nodegroups {
+		switch {
+		case n.State != fleet.Collected:
+			unread = append(unread, n.Name)
+		case n.InstanceIDsState == fleet.Collected:
+			ids = append(ids, n.InstanceIDs...)
+		case n.InstanceIDsState != fleet.NotRequested:
+			unread = append(unread, n.Name)
+		}
+	}
+	return ids, unread
 }
 
-func (hc *HealthChecker) newCPUSnapshot(clusterName string) *cpuSnapshot {
-	return &cpuSnapshot{hc: hc, clusterName: clusterName}
-}
-
-func (s *cpuSnapshot) get(ctx context.Context) (map[string]float64, error) {
-	s.once.Do(func() {
-		s.byInstance, s.err = s.hc.clusterCPUByInstance(ctx, s.clusterName)
-	})
-	return s.byInstance, s.err
-}
-
-// maxMetricDataQueries is the GetMetricData per-request limit.
-const maxMetricDataQueries = 500
-
-// clusterCPUByInstance returns the average CPUUtilization over the last 10
-// minutes for every instance backing the cluster's nodegroups, fetched in
-// batched GetMetricData calls (500 queries per request) instead of one
-// GetMetricStatistics call per instance.
-func (hc *HealthChecker) clusterCPUByInstance(ctx context.Context, clusterName string) (map[string]float64, error) {
-	if hc.cwClient == nil {
-		return nil, fmt.Errorf("CloudWatch client not available")
+// instanceCPU returns the mean CPU of each instance over the window, from
+// one GetMetricData call per 500 instances. An instance with no
+// datapoint is left out.
+func instanceCPU(ctx context.Context, in *Input, ids []string) (map[string]float64, error) {
+	end := in.Now
+	start := end.Add(-cpuWindow)
+	chunks := slices.Collect(slices.Chunk(ids, metricQueriesPerCall))
+	type answer struct {
+		ran bool
+		cpu map[string]float64
+		err error
 	}
-
-	instanceIDs, err := hc.getClusterInstanceIDs(ctx, clusterName)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get cluster instances: %w", err)
-	}
-	if len(instanceIDs) == 0 {
-		return nil, fmt.Errorf("no instances found in cluster")
-	}
-
-	endTime := time.Now()
-	startTime := endTime.Add(-10 * time.Minute)
-
-	sums := make(map[string]float64, len(instanceIDs))
-	counts := make(map[string]int, len(instanceIDs))
-
-	for offset := 0; offset < len(instanceIDs); offset += maxMetricDataQueries {
-		chunk := instanceIDs[offset:min(offset+maxMetricDataQueries, len(instanceIDs))]
-		queries := make([]types.MetricDataQuery, 0, len(chunk))
+	answers := fanout.ForEach(ctx, chunks, len(chunks), func(ctx context.Context, chunk []string) answer {
+		queries := make([]cwtypes.MetricDataQuery, len(chunk))
 		for i, id := range chunk {
-			queries = append(queries, types.MetricDataQuery{
+			queries[i] = cwtypes.MetricDataQuery{
 				Id: aws.String(fmt.Sprintf("cpu%d", i)),
-				MetricStat: &types.MetricStat{
-					Metric: &types.Metric{
+				MetricStat: &cwtypes.MetricStat{
+					Metric: &cwtypes.Metric{
 						Namespace:  aws.String("AWS/EC2"),
 						MetricName: aws.String("CPUUtilization"),
-						Dimensions: []types.Dimension{{Name: aws.String("InstanceId"), Value: aws.String(id)}},
+						Dimensions: []cwtypes.Dimension{{Name: aws.String("InstanceId"), Value: aws.String(id)}},
 					},
-					Period: aws.Int32(300), // 5 minute periods
+					Period: aws.Int32(int32(cpuPeriod.Seconds())),
 					Stat:   aws.String("Average"),
 				},
-			})
-		}
-
-		var nextToken *string
-		for {
-			out, err := common.WithRetry(ctx, common.DefaultRetryConfig, func(rc context.Context) (*cloudwatch.GetMetricDataOutput, error) {
-				return hc.cwClient.GetMetricData(rc, &cloudwatch.GetMetricDataInput{
-					StartTime:         aws.Time(startTime),
-					EndTime:           aws.Time(endTime),
-					MetricDataQueries: queries,
-					NextToken:         nextToken,
-				})
-			})
-			if err != nil {
-				return nil, awserr.FormatAWSError(err, "fetching CPU metrics")
 			}
-			for _, r := range out.MetricDataResults {
-				var idx int
-				if r.Id == nil {
-					continue
-				}
-				if _, err := fmt.Sscanf(*r.Id, "cpu%d", &idx); err != nil || idx < 0 || idx >= len(chunk) {
-					continue
-				}
-				id := chunk[idx]
-				for _, v := range r.Values {
-					sums[id] += v
-					counts[id]++
-				}
-			}
-			if out.NextToken == nil {
-				break
-			}
-			nextToken = out.NextToken
 		}
-	}
-
-	byInstance := make(map[string]float64, len(counts))
-	for id, c := range counts {
-		if c > 0 {
-			byInstance[id] = sums[id] / float64(c)
+		results, err := metricData(ctx, in.Clients.CloudWatch, &cloudwatch.GetMetricDataInput{
+			StartTime: aws.Time(start), EndTime: aws.Time(end), MetricDataQueries: queries,
+		})
+		if err != nil {
+			return answer{ran: true, err: err}
 		}
-	}
-	if len(byInstance) == 0 {
-		return nil, fmt.Errorf("no CPU metrics available from EC2 instances")
+		cpu := map[string]float64{}
+		for _, r := range results {
+			var i int
+			if _, err := fmt.Sscanf(aws.ToString(r.Id), "cpu%d", &i); err != nil || i < 0 || i >= len(chunk) || len(r.Values) == 0 {
+				continue
+			}
+			cpu[chunk[i]] = sumOf(r.Values) / float64(len(r.Values))
+		}
+		return answer{ran: true, cpu: cpu}
+	})
+	byInstance := map[string]float64{}
+	for _, a := range answers {
+		if !a.ran {
+			// The context ended before the chunk was sent.
+			return nil, fmt.Errorf("%w: %w", awsx.ErrNotSent, ctx.Err())
+		}
+		if a.err != nil {
+			return nil, a.err
+		}
+		for id, v := range a.cpu {
+			byInstance[id] = v
+		}
 	}
 	return byInstance, nil
 }
 
-// calculateAverage calculates the average of a slice of float64 values
-func calculateAverage(values []float64) float64 {
-	if len(values) == 0 {
-		return 0
+// evaluateCapacity is the rule, apart from the read.
+func evaluateCapacity(byInstance map[string]float64, instances int) Result {
+	if len(byInstance) == 0 {
+		return Result{Outcome: Warn, Message: fmt.Sprintf("no CPU metrics reported for the %s in the last 10 minutes", plural(instances, "instance"))}
 	}
-
-	sum := 0.0
-	for _, value := range values {
-		sum += value
-	}
-	return sum / float64(len(values))
-}
-
-// maxFloat returns the largest value in the slice, or 0 for an empty slice.
-func maxFloat(values []float64) float64 {
-	if len(values) == 0 {
-		return 0
-	}
-	m := values[0]
-	for _, v := range values[1:] {
-		if v > m {
-			m = v
-		}
-	}
-	return m
-}
-
-// getClusterInstanceIDs retrieves all EC2 instance IDs for the cluster
-func (hc *HealthChecker) getClusterInstanceIDs(ctx context.Context, clusterName string) ([]string, error) {
-	// List all nodegroups in the cluster (with pagination)
-	nodegroupNames, err := hc.listNodegroupNames(ctx, clusterName)
-	if err != nil {
-		return nil, err
-	}
-
-	// Collect every ASG name across nodegroups (concurrent describe), then
-	// resolve their instances in chunked batch calls — one DescribeASG per ~100
-	// ASGs instead of one per ASG, which on big fleets multiplied calls and
-	// invited throttling. (REF-50)
-	asgNamesPerNG := common.ForEachParallel(ctx, nodegroupNames, common.DefaultItemConcurrency,
-		func(fctx context.Context, ngName string) []string {
-			ng, err := hc.describeNodegroup(fctx, clusterName, ngName)
-			if err != nil || ng == nil || ng.Resources == nil {
-				return nil // Skip failed nodegroups
-			}
-			var names []string
-			for _, asg := range ng.Resources.AutoScalingGroups {
-				if asg.Name != nil {
-					names = append(names, *asg.Name)
-				}
-			}
-			return names
-		})
-
-	var asgNames []string
-	for _, names := range asgNamesPerNG {
-		asgNames = append(asgNames, names...)
-	}
-
-	return hc.instanceIDsForASGs(ctx, asgNames)
-}
-
-// instanceIDsForASGs resolves EC2 instance IDs for the given ASG names using
-// chunked DescribeAutoScalingGroups calls (the API accepts up to 100 names per
-// request), instead of one describe per ASG. (REF-50)
-func (hc *HealthChecker) instanceIDsForASGs(ctx context.Context, asgNames []string) ([]string, error) {
-	if len(asgNames) == 0 {
-		return nil, nil
-	}
-	if hc.asgClient == nil {
-		return nil, fmt.Errorf("auto Scaling client not available")
-	}
-
-	// The API accepts up to 100 names per request but returns at most
-	// MaxRecords groups per page (default 50), so set MaxRecords to the chunk
-	// size and follow NextToken; otherwise groups 51-100 of a chunk are lost.
-	const maxNamesPerCall = 100
-	var instanceIDs []string
-	for start := 0; start < len(asgNames); start += maxNamesPerCall {
-		chunk := asgNames[start:min(start+maxNamesPerCall, len(asgNames))]
-		groups, err := awserr.ListAllPages(ctx, "describing Auto Scaling groups",
-			func(rc context.Context, token *string) (*autoscaling.DescribeAutoScalingGroupsOutput, error) {
-				return hc.asgClient.DescribeAutoScalingGroups(rc, &autoscaling.DescribeAutoScalingGroupsInput{
-					AutoScalingGroupNames: chunk,
-					MaxRecords:            aws.Int32(maxNamesPerCall),
-					NextToken:             token,
-				})
-			},
-			func(out *autoscaling.DescribeAutoScalingGroupsOutput) ([]asgtypes.AutoScalingGroup, *string) {
-				return out.AutoScalingGroups, out.NextToken
-			},
-		)
-		if err != nil {
-			return nil, err
-		}
-		for _, asg := range groups {
-			for _, instance := range asg.Instances {
-				if instance.InstanceId != nil {
-					instanceIDs = append(instanceIDs, *instance.InstanceId)
-				}
+	values := slices.Sorted(func(yield func(float64) bool) {
+		for _, v := range byInstance {
+			if !yield(v) {
+				return
 			}
 		}
+	})
+	mean := sumOf(values) / float64(len(values))
+	peak := values[len(values)-1]
+	spread := 0.0
+	for _, v := range values {
+		spread += (v - mean) * (v - mean)
 	}
-	return instanceIDs, nil
+	spread = math.Sqrt(spread / float64(len(values)))
+
+	r := Result{Details: []string{
+		fmt.Sprintf("CPU mean %.1f%%, peak %.1f%%, spread %.1f points, over %d of %s", mean, peak, spread, len(values), plural(instances, "instance")),
+	}}
+	switch headroom := 100 - mean; {
+	case headroom >= cpuSafeHeadroomPercent:
+		r.Outcome, r.Message = Pass, fmt.Sprintf("CPU mean %.0f%%, peak %.0f%%, %d instances", mean, peak, len(values))
+	case headroom >= cpuWarnHeadroomPercent:
+		r.Outcome, r.Message = Warn, fmt.Sprintf("limited CPU headroom (mean %.0f%%, peak %.0f%%)", mean, peak)
+	default:
+		r.Outcome, r.Message = Fail, fmt.Sprintf("insufficient CPU headroom for a roll (mean %.0f%%, peak %.0f%%)", mean, peak)
+	}
+	switch {
+	case peak >= cpuPeakFailPercent && r.Outcome != Fail:
+		r.Outcome, r.Message = Fail, fmt.Sprintf("an instance is near CPU saturation (peak %.0f%%, mean %.0f%%)", peak, mean)
+	case peak >= cpuPeakWarnPercent && r.Outcome == Pass:
+		r.Outcome, r.Message = Warn, fmt.Sprintf("uneven CPU load (peak %.0f%%, mean %.0f%%)", peak, mean)
+	}
+	return r
 }

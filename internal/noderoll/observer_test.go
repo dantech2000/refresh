@@ -1,164 +1,20 @@
 package noderoll
 
 import (
-	"context"
-	"reflect"
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 )
 
-func TestScopeWarnings(t *testing.T) {
-	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
-	recent := metav1.NewTime(now.Add(-2 * time.Minute))
-	stale := metav1.NewTime(now.Add(-30 * time.Minute))
-	nodeSet := map[string]bool{"ip-1": true, "ip-2": true}
-
-	events := []corev1.Event{
-		// Node-involved warning on a nodegroup node — kept.
-		{Type: "Warning", Reason: "NodeNotReady", Message: "kubelet stopped posting status",
-			InvolvedObject: corev1.ObjectReference{Kind: "Node", Name: "ip-1"}, LastTimestamp: recent},
-		// Kubelet-emitted (Source.Host) pod warning on a nodegroup node — kept.
-		{Type: "Warning", Reason: "FailedCreatePodSandbox", Message: "network plugin not ready",
-			InvolvedObject: corev1.ObjectReference{Kind: "Pod", Name: "web-x", Namespace: "default"},
-			Source:         corev1.EventSource{Host: "ip-2"}, LastTimestamp: recent},
-		// Warning on a node NOT in the nodegroup — dropped.
-		{Type: "Warning", Reason: "DiskPressure", InvolvedObject: corev1.ObjectReference{Kind: "Node", Name: "other"}, LastTimestamp: recent},
-		// Normal event — dropped.
-		{Type: "Normal", Reason: "Starting", InvolvedObject: corev1.ObjectReference{Kind: "Node", Name: "ip-1"}, LastTimestamp: recent},
-		// Stale warning — dropped.
-		{Type: "Warning", Reason: "OldNews", InvolvedObject: corev1.ObjectReference{Kind: "Node", Name: "ip-1"}, LastTimestamp: stale},
-	}
-
-	got := scopeWarnings(events, nodeSet, now, 10*time.Minute)
-	if len(got) != 2 {
-		t.Fatalf("got %d scoped warnings, want 2: %+v", len(got), got)
-	}
-	// Sorted by node: ip-1 (NodeNotReady) then ip-2 (FailedCreatePodSandbox).
-	if got[0].Node != "ip-1" || got[0].Reason != "NodeNotReady" {
-		t.Errorf("first = %+v, want ip-1/NodeNotReady", got[0])
-	}
-	if got[1].Node != "ip-2" || got[1].Reason != "FailedCreatePodSandbox" || got[1].Object != "Pod/web-x" {
-		t.Errorf("second = %+v, want ip-2/FailedCreatePodSandbox/Pod/web-x", got[1])
-	}
-}
-
-func TestScopeWarnings_DedupKeepsLatest(t *testing.T) {
-	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
-	nodeSet := map[string]bool{"ip-1": true}
-	older := metav1.NewTime(now.Add(-5 * time.Minute))
-	newer := metav1.NewTime(now.Add(-1 * time.Minute))
-	obj := corev1.ObjectReference{Kind: "Node", Name: "ip-1"}
-
-	got := scopeWarnings([]corev1.Event{
-		{Type: "Warning", Reason: "FailedDraining", Message: "older", InvolvedObject: obj, LastTimestamp: older},
-		{Type: "Warning", Reason: "FailedDraining", Message: "newer", InvolvedObject: obj, LastTimestamp: newer},
-	}, nodeSet, now, 10*time.Minute)
-
-	if len(got) != 1 || got[0].Message != "newer" {
-		t.Errorf("dedup should keep the latest message, got %+v", got)
-	}
-}
-
-// TestClassify_PressureAdvisory verifies node-pressure conditions are reported
-// in a stable order, that False conditions are ignored, and that pressure is
-// advisory — it never changes a Ready node's phase.
-func TestClassify_PressureAdvisory(t *testing.T) {
-	n := mkNode("ip-hot", newAMI, true, false)
-	// Out-of-order + a False condition that must be ignored.
-	n.Status.Conditions = append(n.Status.Conditions,
-		corev1.NodeCondition{Type: corev1.NodeDiskPressure, Status: corev1.ConditionTrue},
-		corev1.NodeCondition{Type: corev1.NodePIDPressure, Status: corev1.ConditionFalse},
-		corev1.NodeCondition{Type: corev1.NodeMemoryPressure, Status: corev1.ConditionTrue},
-	)
-	v := classify(n, newAMI, nil)
-	if v.Phase != PhaseReady || !v.Ready {
-		t.Fatalf("pressure must not change phase: got phase=%s ready=%v", v.Phase, v.Ready)
-	}
-	// Canonical order (Memory, Disk, PID, Network); the False PIDPressure is dropped.
-	want := []string{"MemoryPressure", "DiskPressure"}
-	if !reflect.DeepEqual(v.Pressure, want) {
-		t.Errorf("pressure = %v, want %v", v.Pressure, want)
-	}
-	// Unstressed node reports no pressure.
-	if got := classify(mkNode("ip-cool", newAMI, true, false), newAMI, nil).Pressure; got != nil {
-		t.Errorf("healthy node should report no pressure, got %v", got)
-	}
-}
-
-const (
-	oldAMI = "ami-0a1b"
-	newAMI = "ami-0f9e"
-	ng     = "spot-burst"
-)
-
-func mkNode(name, ami string, ready, cordoned bool) *corev1.Node {
-	cond := corev1.ConditionFalse
-	if ready {
-		cond = corev1.ConditionTrue
-	}
-	return &corev1.Node{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: name,
-			Labels: map[string]string{
-				LabelNodegroup: ng,
-				LabelImage:     ami,
-			},
-		},
-		Spec: corev1.NodeSpec{Unschedulable: cordoned},
-		Status: corev1.NodeStatus{
-			Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: cond}},
-		},
-	}
-}
-
-// TestKubeObserver_ScopesWarningEvents drives the observer against a fake
-// cluster with Warning events and asserts only the ones concerning the
-// nodegroup's nodes surface on the snapshot.
-func TestKubeObserver_ScopesWarningEvents(t *testing.T) {
-	now := metav1.NewTime(time.Now())
-	client := fake.NewClientset(
-		mkNode("ip-1", oldAMI, true, false),
-		&corev1.Event{
-			ObjectMeta:     metav1.ObjectMeta{Name: "e1", Namespace: "default"},
-			Type:           "Warning",
-			Reason:         "FailedDraining",
-			Message:        "Cannot evict pod as it would violate the pod's disruption budget",
-			InvolvedObject: corev1.ObjectReference{Kind: "Node", Name: "ip-1"},
-			LastTimestamp:  now,
-		},
-		&corev1.Event{
-			ObjectMeta:     metav1.ObjectMeta{Name: "e2", Namespace: "default"},
-			Type:           "Warning",
-			Reason:         "DiskPressure",
-			InvolvedObject: corev1.ObjectReference{Kind: "Node", Name: "ip-elsewhere"},
-			LastTimestamp:  now,
-		},
-	)
-	obs := NewKubeObserver(client, ng, newAMI)
-	s, err := obs.Snapshot(context.Background())
-	if err != nil {
-		t.Fatalf("snapshot: %v", err)
-	}
-	if len(s.Warnings) != 1 {
-		t.Fatalf("got %d warnings, want 1 (only the nodegroup node): %+v", len(s.Warnings), s.Warnings)
-	}
-	if s.Warnings[0].Node != "ip-1" || s.Warnings[0].Reason != "FailedDraining" {
-		t.Errorf("warning = %+v, want ip-1/FailedDraining", s.Warnings[0])
-	}
-}
-
-// Drives a fake cluster through a managed-nodegroup AMI roll — no AWS, no live
-// cluster — and asserts the observer reports the per-node transitions
-// (old → draining → gone, joining → ready) the live panel renders.
-func TestKubeObserver_RollTransitions(t *testing.T) {
-	ctx := context.Background()
-
-	// Start: 3 old-AMI nodes serving, plus one node from a DIFFERENT nodegroup
-	// that must be excluded by the label selector.
+// A fake cluster goes through the roll of a managed nodegroup, and the
+// observer reports each node on its way: an old node drains and is gone,
+// a new node joins and is Ready.
+func TestObserver_RollTransitions(t *testing.T) {
+	// Three old nodes, and one node of another nodegroup, which the label
+	// selector leaves out.
 	other := mkNode("ip-other", newAMI, true, false)
 	other.Labels[LabelNodegroup] = "general"
 	client := fake.NewClientset(
@@ -167,219 +23,235 @@ func TestKubeObserver_RollTransitions(t *testing.T) {
 		mkNode("ip-3", oldAMI, true, false),
 		other,
 	)
-	obs := NewKubeObserver(client, ng, newAMI)
+	obs := listing(t, client, Identity{TargetAMI: newAMI}, newClock())
 
-	// --- t0: steady state ---------------------------------------------------
-	s, err := obs.Snapshot(ctx)
-	if err != nil {
-		t.Fatalf("snapshot: %v", err)
-	}
+	// Before the roll.
+	s := snapshot(t, obs)
 	if s.Total != 3 {
-		t.Fatalf("Total = %d, want 3 (ip-other excluded by nodegroup label)", s.Total)
+		t.Fatalf("Total = %d, want 3: ip-other is of another nodegroup", s.Total)
 	}
 	if s.ReadyTarget != 0 {
-		t.Fatalf("ReadyTarget = %d, want 0 (all still on old AMI)", s.ReadyTarget)
+		t.Fatalf("ReadyTarget = %d, want 0: every node is old", s.ReadyTarget)
 	}
 	for _, n := range s.Nodes {
 		if n.Phase != PhaseReady || n.OnTarget {
-			t.Fatalf("node %s = %+v, want Ready & not OnTarget", n.Name, n)
+			t.Fatalf("node %s = %+v, want Ready and old", n.Name, n)
 		}
 	}
 
-	// --- t1: surge a new node (joining) and cordon an old one (draining) ----
-	if _, err := client.CoreV1().Nodes().Create(ctx, mkNode("ip-4", newAMI, false, false), metav1.CreateOptions{}); err != nil {
-		t.Fatal(err)
-	}
-	cordon(ctx, t, client, "ip-1")
-
-	s, _ = obs.Snapshot(ctx)
+	// A new node joins, and an old one is cordoned.
+	createNode(t, client, mkNode("ip-4", newAMI, false, false))
+	cordon(t, client, "ip-1")
+	s = snapshot(t, obs)
 	if s.Total != 4 {
 		t.Fatalf("Total = %d, want 4", s.Total)
 	}
 	if s.Draining != 1 || s.Joining != 1 || s.ReadyTarget != 0 {
-		t.Fatalf("counts = draining %d / joining %d / readyTarget %d, want 1 / 1 / 0", s.Draining, s.Joining, s.ReadyTarget)
+		t.Fatalf("draining %d, joining %d, new and ready %d; want 1, 1, 0", s.Draining, s.Joining, s.ReadyTarget)
 	}
 	if got := phaseOf(s, "ip-1"); got != PhaseDraining {
-		t.Fatalf("ip-1 phase = %s, want Draining", got)
+		t.Fatalf("ip-1 is %s, want Draining", got)
 	}
 	if got := phaseOf(s, "ip-4"); got != PhaseJoining {
-		t.Fatalf("ip-4 phase = %s, want Joining", got)
+		t.Fatalf("ip-4 is %s, want Joining", got)
 	}
 
-	// --- t2: new node becomes Ready; drained old node is terminated ---------
-	setReady(ctx, t, client, "ip-4")
-	if err := client.CoreV1().Nodes().Delete(ctx, "ip-1", metav1.DeleteOptions{}); err != nil {
-		t.Fatal(err)
-	}
-
-	s, _ = obs.Snapshot(ctx)
+	// The new node is Ready, and the drained node is gone.
+	setReady(t, client, "ip-4")
+	deleteNode(t, client, "ip-1")
+	s = snapshot(t, obs)
 	if s.Total != 3 {
-		t.Fatalf("Total = %d, want 3 (ip-1 terminated)", s.Total)
+		t.Fatalf("Total = %d, want 3: ip-1 is gone", s.Total)
 	}
 	if s.ReadyTarget != 1 || s.Draining != 0 || s.Joining != 0 {
-		t.Fatalf("counts = readyTarget %d / draining %d / joining %d, want 1 / 0 / 0", s.ReadyTarget, s.Draining, s.Joining)
+		t.Fatalf("new and ready %d, draining %d, joining %d; want 1, 0, 0", s.ReadyTarget, s.Draining, s.Joining)
 	}
 	if v := nodeOf(s, "ip-4"); !v.OnTarget || v.Phase != PhaseReady {
-		t.Fatalf("ip-4 = %+v, want OnTarget Ready", v)
+		t.Fatalf("ip-4 = %+v, want new and Ready", v)
 	}
-}
-
-func cordon(ctx context.Context, t *testing.T, c *fake.Clientset, name string) {
-	t.Helper()
-	n, err := c.CoreV1().Nodes().Get(ctx, name, metav1.GetOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	n.Spec.Unschedulable = true
-	if _, err := c.CoreV1().Nodes().Update(ctx, n, metav1.UpdateOptions{}); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func setReady(ctx context.Context, t *testing.T, c *fake.Clientset, name string) {
-	t.Helper()
-	n, err := c.CoreV1().Nodes().Get(ctx, name, metav1.GetOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	n.Status.Conditions = []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}
-	if _, err := c.CoreV1().Nodes().Update(ctx, n, metav1.UpdateOptions{}); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func phaseOf(s Snapshot, name string) Phase { return nodeOf(s, name).Phase }
-func nodeOf(s Snapshot, name string) NodeView {
-	for _, n := range s.Nodes {
-		if n.Name == name {
-			return n
+	// The nodes of a snapshot are sorted by name.
+	for i := 1; i < len(s.Nodes); i++ {
+		if s.Nodes[i-1].Name > s.Nodes[i].Name {
+			t.Errorf("the nodes are not sorted: %s before %s", s.Nodes[i-1].Name, s.Nodes[i].Name)
 		}
 	}
-	return NodeView{}
 }
 
-// Found on a real cluster: a roll adopted a minute after it began counted
-// the replacement node EKS had already launched as old ("0/3 replaced" on a
-// two-node nodegroup). Only nodes created before the roll's start are old.
-func TestCaptureBaselineBeforeCountsLaunchedNodesAsNew(t *testing.T) {
+// Found on a real cluster: a roll that was attached to a minute after it
+// began counted the node that EKS had launched already as old. Only the
+// nodes that were created before the start of the roll are old.
+func TestStartedAtCountsLaunchedNodesAsNew(t *testing.T) {
 	start := time.Date(2026, 9, 30, 12, 27, 23, 0, time.UTC)
-	at := func(n *corev1.Node, ts time.Time) *corev1.Node {
-		n.CreationTimestamp = metav1.NewTime(ts)
-		return n
-	}
+	cordoned := versioned("old-2", "", start.Add(-time.Hour))
+	cordoned.Spec.Unschedulable = true
 	client := fake.NewClientset(
-		at(mkNode("old-1", "", true, false), start.Add(-time.Hour)),
-		at(mkNode("old-2", "", true, true), start.Add(-time.Hour)),
-		at(mkNode("launched", "", true, false), start.Add(44*time.Second)),
+		versioned("old-1", "", start.Add(-time.Hour)),
+		cordoned,
+		versioned("launched", "", start.Add(44*time.Second)),
 	)
-	obs := NewKubeObserver(client, ng, "")
-	if err := obs.CaptureBaselineBefore(t.Context(), start); err != nil {
-		t.Fatal(err)
-	}
-	snap, err := obs.Snapshot(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if nodeOf(snap, "launched").OnTarget != true || nodeOf(snap, "old-1").OnTarget || nodeOf(snap, "old-2").OnTarget {
+	obs := listing(t, client, Identity{StartedAt: start}, newClock())
+	snap := snapshot(t, obs)
+	if !nodeOf(snap, "launched").OnTarget || nodeOf(snap, "old-1").OnTarget || nodeOf(snap, "old-2").OnTarget {
 		t.Fatalf("nodes = %+v, want only launched new", snap.Nodes)
 	}
 }
 
-// From review: creation times can mislead (clock skew, a scale-out during
-// the roll). For a roll between versions the kubelet version decides.
+// The time of creation can mislead: the clocks differ, or the nodegroup
+// scales out during the roll. For a roll between two versions the kubelet
+// version decides.
 func TestTargetVersionBeatsTheBaseline(t *testing.T) {
 	start := time.Date(2026, 9, 30, 12, 27, 23, 0, time.UTC)
-	node := func(name, kubelet string, created time.Time) *corev1.Node {
-		n := mkNode(name, "", true, false)
-		n.CreationTimestamp = metav1.NewTime(created)
-		n.Status.NodeInfo.KubeletVersion = kubelet
-		return n
-	}
 	client := fake.NewClientset(
-		node("old-after", "v1.34.6-eks-3c1d8b1", start.Add(2*time.Second)),   // old image, created just after
-		node("new-before", "v1.35.3-eks-7a2b9c0", start.Add(-2*time.Second)), // new image, created just before
-		node("unknown", "", start.Add(time.Minute)),                          // no kubelet version yet
+		versioned("old-after", "v1.34.6-eks-3c1d8b1", start.Add(2*time.Second)),   // the old version, created just after
+		versioned("new-before", "v1.35.3-eks-7a2b9c0", start.Add(-2*time.Second)), // the new version, created just before
+		versioned("unknown", "", start.Add(time.Minute)),                          // no kubelet version yet
 	)
-	obs := NewKubeObserver(client, ng, "")
-	obs.SetTargetVersion("1.35")
-	if err := obs.CaptureBaselineBefore(t.Context(), start); err != nil {
-		t.Fatal(err)
-	}
-	snap, err := obs.Snapshot(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
+	obs := listing(t, client, Identity{TargetVersion: "1.35", StartedAt: start}, newClock())
+	snap := snapshot(t, obs)
 	if nodeOf(snap, "old-after").OnTarget || !nodeOf(snap, "new-before").OnTarget {
-		t.Errorf("kubelet version did not decide: %+v", snap.Nodes)
+		t.Errorf("the kubelet version did not decide: %+v", snap.Nodes)
 	}
 	if !nodeOf(snap, "unknown").OnTarget {
-		t.Errorf("a node with no kubelet version should fall back to the baseline (created after start: new)")
+		t.Errorf("a node with no kubelet version follows the time of its creation, which is after the start: new")
 	}
 }
 
-func TestKubeletMinor(t *testing.T) {
-	for in, want := range map[string]string{"v1.35.3-eks-7a2b9c0": "1.35", "1.34.6": "1.34", "": "", "v1": "", "garbage": ""} {
-		n := &corev1.Node{}
-		n.Status.NodeInfo.KubeletVersion = in
-		if got := kubeletMinor(n); got != want {
-			t.Errorf("kubeletMinor(%q) = %q, want %q", in, got, want)
-		}
-	}
-}
-
-// From review: whether a roll changes versions is read from the nodes, not
-// assumed. With every node on the target version (an AMI patch), the
-// creation-time baseline decides; the first node on another minor makes
-// it a version roll, which then stays one as the old nodes leave.
+// Whether a roll changes the version is read from the nodes. With every
+// node on the target version, as for a new AMI, the time of creation
+// decides. With a node on another minor version it is a roll between two
+// versions, and it stays one as the old nodes go.
 func TestTargetVersionOnlyDecidesAVersionRoll(t *testing.T) {
 	start := time.Date(2026, 9, 30, 12, 27, 23, 0, time.UTC)
-	node := func(name, kubelet string, created time.Time) *corev1.Node {
-		n := mkNode(name, "", true, false)
-		n.CreationTimestamp = metav1.NewTime(created)
-		n.Status.NodeInfo.KubeletVersion = kubelet
-		return n
-	}
-	// An AMI patch: both nodes run 1.35; creation time decides.
+	// A new AMI: both nodes run 1.35.
 	client := fake.NewClientset(
-		node("patched-old", "v1.35.3-eks-1", start.Add(-time.Hour)),
-		node("patched-new", "v1.35.3-eks-2", start.Add(time.Minute)),
+		versioned("patched-old", "v1.35.3-eks-1", start.Add(-time.Hour)),
+		versioned("patched-new", "v1.35.3-eks-2", start.Add(time.Minute)),
 	)
-	obs := NewKubeObserver(client, ng, "")
-	obs.SetTargetVersion("1.35")
-	if err := obs.CaptureBaselineBefore(t.Context(), start); err != nil {
-		t.Fatal(err)
-	}
-	snap, err := obs.Snapshot(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
+	obs := listing(t, client, Identity{TargetVersion: "1.35", StartedAt: start}, newClock())
+	snap := snapshot(t, obs)
 	if nodeOf(snap, "patched-old").OnTarget || !nodeOf(snap, "patched-new").OnTarget {
-		t.Errorf("AMI patch: %+v", snap.Nodes)
+		t.Errorf("a new AMI: %+v", snap.Nodes)
 	}
 
-	// A version roll that ends: once an old-minor node was seen, the kubelet
-	// decides even after it is gone, so a new node created "before" the
-	// start (skew) stays new.
+	// A roll between two versions that ends: the kubelet still decides
+	// after the old node is gone, so a new node that was created "before"
+	// the start, by a clock that differs, stays new.
 	client = fake.NewClientset(
-		node("old", "v1.34.6-eks-1", start.Add(-time.Hour)),
-		node("new-skewed", "v1.35.3-eks-2", start.Add(-2*time.Second)),
+		versioned("old", "v1.34.6-eks-1", start.Add(-time.Hour)),
+		versioned("new-skewed", "v1.35.3-eks-2", start.Add(-2*time.Second)),
 	)
-	obs = NewKubeObserver(client, ng, "")
-	obs.SetTargetVersion("1.35")
-	if err := obs.CaptureBaselineBefore(t.Context(), start); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := obs.Snapshot(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	if err := client.CoreV1().Nodes().Delete(t.Context(), "old", metav1.DeleteOptions{}); err != nil {
-		t.Fatal(err)
-	}
-	snap, err = obs.Snapshot(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
+	obs = listing(t, client, Identity{TargetVersion: "1.35", StartedAt: start}, newClock())
+	snapshot(t, obs)
+	deleteNode(t, client, "old")
+	snap = snapshot(t, obs)
 	if !nodeOf(snap, "new-skewed").OnTarget {
-		t.Errorf("after the old node left, the skewed new node reads old: %+v", snap.Nodes)
+		t.Errorf("after the old node went, the new node counts as old: %+v", snap.Nodes)
+	}
+}
+
+// TestAttach_Modes has one row for each way in which Attach tells the new
+// nodes of a roll from the old ones. Attach chooses once, from its first
+// list of the nodes.
+func TestAttach_Modes(t *testing.T) {
+	start := time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)
+	before, after := start.Add(-time.Hour), start.Add(time.Minute)
+	tests := []struct {
+		name string
+		id   Identity
+		// nodes are there as Attach lists, and later joins afterwards.
+		nodes []string
+		later string
+		// kubelet and created give the kubelet version and the time of
+		// creation of each node.
+		kubelet map[string]string
+		created map[string]time.Time
+		// wantNew are the nodes that count as new, of all of them.
+		wantNew []string
+	}{
+		{
+			name:    "a target version, and a node on another minor: the kubelet decides",
+			id:      Identity{TargetVersion: "1.35", StartedAt: start},
+			nodes:   []string{"a", "b"},
+			later:   "c",
+			kubelet: map[string]string{"a": "v1.34.6-eks-1", "b": "v1.35.3-eks-1", "c": "v1.34.6-eks-1"},
+			// b was created before the start and is new. c came later and
+			// is old: the time of creation does not count.
+			created: map[string]time.Time{"a": before, "b": before, "c": after},
+			wantNew: []string{"b"},
+		},
+		{
+			name:    "a target version, and a node with no kubelet version: that node follows its creation",
+			id:      Identity{TargetVersion: "1.35", StartedAt: start},
+			nodes:   []string{"a", "b"},
+			later:   "c",
+			kubelet: map[string]string{"a": "v1.34.6-eks-1"},
+			created: map[string]time.Time{"a": before, "b": before, "c": after},
+			wantNew: []string{"c"},
+		},
+		{
+			name:    "a target version that every node runs: created before the start is old",
+			id:      Identity{TargetVersion: "1.35", StartedAt: start},
+			nodes:   []string{"a", "b"},
+			later:   "c",
+			kubelet: map[string]string{"a": "v1.35.3-eks-1", "b": "v1.35.3-eks-2", "c": "v1.34.6-eks-1"},
+			// c runs another minor, and Attach has chosen already: it
+			// counts by its creation.
+			created: map[string]time.Time{"a": before, "b": after, "c": after},
+			wantNew: []string{"b", "c"},
+		},
+		{
+			name:    "no target version, a start: created before the start is old",
+			id:      Identity{StartedAt: start},
+			nodes:   []string{"a", "b"},
+			later:   "c",
+			kubelet: map[string]string{"a": "v1.34.6-eks-1", "b": "v1.35.3-eks-1"},
+			created: map[string]time.Time{"a": before, "b": after, "c": before},
+			// c was created before the start by its own clock, and was not
+			// there when Attach listed: new.
+			wantNew: []string{"b", "c"},
+		},
+		{
+			name:    "no target version, no start: there as Attach lists is old",
+			id:      Identity{},
+			nodes:   []string{"a", "b"},
+			later:   "c",
+			created: map[string]time.Time{"a": before, "b": after, "c": before},
+			wantNew: []string{"c"},
+		},
+		{
+			name:    "a target AMI changes nothing: the image label is not read",
+			id:      Identity{TargetAMI: oldAMI},
+			nodes:   []string{"a", "b"},
+			later:   "c",
+			created: map[string]time.Time{"a": before, "b": before, "c": after},
+			wantNew: []string{"c"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			node := func(name string) *corev1.Node {
+				n := versioned(name, tt.kubelet[name], tt.created[name])
+				// Every node has the image label of the old AMI.
+				n.Labels[LabelImage] = oldAMI
+				return n
+			}
+			client := fake.NewClientset()
+			for _, name := range tt.nodes {
+				createNode(t, client, node(name))
+			}
+			obs := watching(t, client, tt.id, newClock())
+			changed := cacheChanges(t, obs)
+			createNode(t, client, node(tt.later))
+			s := waitForSnapshot(t, obs, changed, func(s Snapshot) bool { return s.Total == len(tt.nodes)+1 })
+			var got []string
+			for _, n := range s.Nodes {
+				if n.OnTarget {
+					got = append(got, n.Name)
+				}
+			}
+			if diff := cmp.Diff(tt.wantNew, got); diff != "" {
+				t.Errorf("new nodes (-want +got):\n%s", diff)
+			}
+		})
 	}
 }

@@ -1,0 +1,28 @@
+FIELD	VALUE
+overview.status	ACTIVE
+overview.version	1.33
+overview.instance_types	m5.large, m5a.large
+overview.capacity	ON_DEMAND
+overview.created	2026-01-01 00:00 UTC
+overview.modified	2026-01-01 00:00 UTC
+ami.type	AL2023_x86_64_STANDARD
+ami.release	1.33.0-20260101
+ami.status	Outdated
+ami.current	ami-stale
+ami.latest	ami-latest133
+scaling.desired	6
+scaling.min	2
+scaling.max	12
+issues.AsgInstanceLaunchFailures.message	Could not launch an instance
+instances.i-0web1.state	running
+instances.i-0web1.type	m5.large
+instances.i-0web1.lifecycle	on-demand
+instances.i-0web1.zone	us-east-1a
+instances.i-0web1.ami	ami-stale
+instances.i-0web1.launched	2026-03-04 05:06 UTC
+instances.i-0web2.state	pending
+instances.i-0web2.type	m5a.large
+instances.i-0web2.lifecycle	spot
+instances.i-0web2.zone	us-east-1b
+instances.i-0web2.ami	ami-stale
+instances.i-0web2.launched	2026-03-04 05:06 UTC

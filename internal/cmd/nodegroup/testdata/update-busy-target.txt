@@ -1,0 +1,22 @@
+exit: 3
+error: nodegroup web is UPDATING (ConfigUpdate); it was not changed. Run the command again once that finishes
+--- stdout ---
+Run   [X] Blocked   NodegroupUpdate
+
+RUN
+  operation  NodegroupUpdate
+  cluster    prod
+  region     us-east-1
+  version    1.32
+  status     [X] Blocked
+
+RESULTS  1
+  NAME  KIND       STATUS    FROM  TO    UPDATE  NOTE                    STARTED  FINISHED  FAILURE
+  web   Nodegroup  [!] Busy  1.32  1.32  -       ConfigUpdate in flight  -        -         Busy: nodegroup web is UPDATING (ConfigUpdate); it was not changed. Run the command again once that finishes
+
+FAILURES
+[?] nodegroup prod/web (us-east-1): Busy: nodegroup web is UPDATING (ConfigUpdate); it was not changed. Run the command again once that finishes
+--- stderr ---
+PLAN  NodegroupUpdate, prod in us-east-1
+  web  skip, at 1.32 (InFlight: ConfigUpdate)
+[!] web: Busy: nodegroup web is UPDATING (ConfigUpdate); it was not changed. Run the command again once that finishes

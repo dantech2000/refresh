@@ -64,10 +64,15 @@ linters:
         - name: unreachable-code
         - name: var-declaration
         - name: var-naming # Id -> ID, Url -> URL, ...
+        # The rest of revive's default set.
+        - name: empty-block
+        - name: errorf
+        - name: exported
+        - name: package-comments
+        - name: redefines-builtin-id
+        - name: unused-parameter
     gocritic:
       enabled-tags: [diagnostic]
-      disabled-checks:
-        - ifElseChain # style; not worth the churn
     gocyclo:
       min-complexity: 30
     gocognit:

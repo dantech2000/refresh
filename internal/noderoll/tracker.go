@@ -1,45 +1,60 @@
 package noderoll
 
-import "sort"
-
-// EventKind classifies a node lifecycle transition during a roll.
-type EventKind string
-
-const (
-	EvtJoining    EventKind = "joining"    // a new node appeared, not yet Ready
-	EvtOnline     EventKind = "online"     // a node became Ready
-	EvtDraining   EventKind = "draining"   // a node was cordoned / tainted for removal
-	EvtTerminated EventKind = "terminated" // a node left the cluster
+import (
+	"slices"
+	"time"
 )
 
-// Event is a single observed lifecycle transition.
+// EventKind is a step of a node through a roll.
+type EventKind string
+
+// The kinds of event.
+const (
+	// EvtJoining: a node appeared and is not Ready yet.
+	EvtJoining EventKind = "joining"
+	// EvtOnline: a node became Ready.
+	EvtOnline EventKind = "online"
+	// EvtDraining: a node was cordoned, or tainted for removal.
+	EvtDraining EventKind = "draining"
+	// EvtTerminated: a node is gone.
+	EvtTerminated EventKind = "terminated"
+)
+
+// Event is one step of one node.
 type Event struct {
-	Node string    `json:"node"`
-	Kind EventKind `json:"kind"`
+	Node string
+	Kind EventKind
+	// At is when the snapshot that showed the step was taken, on the
+	// clock of the loop that feeds the Tracker. It is zero when that loop
+	// gives no time.
+	At time.Time
 }
 
-// trackerEventCapacity bounds how many events a Tracker retains. The panel
-// only shows the last few, and a long roll of a large nodegroup would
-// otherwise grow the history without bound.
+// trackerEventCapacity is how many events a Tracker keeps. A panel shows
+// the last few, and a long roll of a large nodegroup would grow the
+// history without end.
 const trackerEventCapacity = 256
 
-// Tracker derives lifecycle events by diffing successive snapshots — turning
-// the observer's point-in-time state into the "node came online / went offline"
-// feed the live panel shows. It is pure: feed it snapshots, read Recent. It
-// keeps the last trackerEventCapacity events; older ones are dropped.
+// Tracker turns successive snapshots into the events of a roll: it
+// compares each snapshot with the one before. It reads nothing itself. It
+// keeps the last trackerEventCapacity events.
 type Tracker struct {
 	prev   map[string]Phase
 	seeded bool
 	events []Event
 }
 
-// NewTracker returns an empty Tracker.
+// NewTracker returns a Tracker with no events.
 func NewTracker() *Tracker { return &Tracker{prev: map[string]Phase{}} }
 
-// Observe diffs s against the previous snapshot and appends any transitions.
-// The first snapshot is taken as the baseline (no events), so a roll that is
-// already in flight on attach doesn't replay its whole history.
-func (t *Tracker) Observe(s Snapshot) {
+// Observe compares s with the snapshot before it and adds an event for
+// each difference. The first snapshot is the starting point and gives no
+// event, so a roll that is already running does not replay its history.
+func (t *Tracker) Observe(s Snapshot) { t.ObserveAt(s, time.Time{}) }
+
+// ObserveAt is Observe with the time of the snapshot, which each event
+// that it adds carries.
+func (t *Tracker) ObserveAt(s Snapshot, at time.Time) {
 	cur := make(map[string]Phase, len(s.Nodes))
 	for _, n := range s.Nodes {
 		cur[n.Name] = n.Phase
@@ -49,32 +64,32 @@ func (t *Tracker) Observe(s Snapshot) {
 		t.seeded = true
 		return
 	}
-	// Appeared or changed phase, in s.Nodes order (KubeObserver sorts by name).
+	// A node that appeared or changed its phase, in the order of s.Nodes.
 	for _, n := range s.Nodes {
 		old, existed := t.prev[n.Name]
 		if existed && old == n.Phase {
 			continue
 		}
 		if k := eventForPhase(n.Phase); k != "" {
-			t.add(Event{Node: n.Name, Kind: k})
+			t.add(Event{Node: n.Name, Kind: k, At: at})
 		}
 	}
-	// Disappeared → terminated, sorted by name (map order is random).
+	// A node that is gone, by name: the order of a map is random.
 	var gone []string
 	for name := range t.prev {
 		if _, ok := cur[name]; !ok {
 			gone = append(gone, name)
 		}
 	}
-	sort.Strings(gone)
+	slices.Sort(gone)
 	for _, name := range gone {
-		t.add(Event{Node: name, Kind: EvtTerminated})
+		t.add(Event{Node: name, Kind: EvtTerminated, At: at})
 	}
 	t.prev = cur
 }
 
-// add appends e and drops the oldest events past trackerEventCapacity. The
-// trim shifts in place, so the backing array stays bounded.
+// add appends e and drops the oldest events beyond the capacity. It moves
+// the events in place, so the backing array stays bounded.
 func (t *Tracker) add(e Event) {
 	t.events = append(t.events, e)
 	if over := len(t.events) - trackerEventCapacity; over > 0 {
@@ -91,17 +106,16 @@ func eventForPhase(p Phase) EventKind {
 		return EvtOnline
 	case PhaseDraining:
 		return EvtDraining
-	default:
-		return ""
 	}
+	return ""
 }
 
-// Recent returns a copy of the last n events (fewer if not enough have
-// accrued; every retained event when n <= 0).
+// Recent returns a copy of the last n events, or of every event that the
+// Tracker keeps when n is 0 or less or there are fewer.
 func (t *Tracker) Recent(n int) []Event {
 	src := t.events
 	if n > 0 && len(src) > n {
 		src = src[len(src)-n:]
 	}
-	return append([]Event(nil), src...)
+	return slices.Clone(src)
 }

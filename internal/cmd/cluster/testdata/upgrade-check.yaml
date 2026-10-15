@@ -1,0 +1,86 @@
+apiVersion: refresh.drod.dev/v2
+kind: UpgradeCheck
+cluster: prod
+region: us-east-1
+version: "1.32"
+readiness: Blocked
+reasons:
+  - 'Insights: 1 ERROR insight (Deprecated APIs removed in 1.33)'
+  - 'VersionSkew: 1 nodegroup at the kubelet skew limit (ng-legacy (1.29, 3 behind)); upgrade the nodes before the control plane; 1 add-on behind latest (coredns (v1.11.3-eksbuild.1, latest v1.11.4-eksbuild.2))'
+support:
+  tier: Standard
+  standardUntil: "2027-03-23T00:00:00Z"
+  extendedUntil: "2028-03-23T00:00:00Z"
+  daysRemaining: 173
+  autoUpgrade: true
+  builtIn: false
+insights:
+  - id: bc8b2f86-1111-4a4a-8b8b-000000000001
+    name: Deprecated APIs removed in 1.33
+    category: UPGRADE_READINESS
+    status: ERROR
+    statusReason: Deprecated APIs are in use
+    kubernetesVersion: "1.33"
+    description: Checks for usage of deprecated APIs
+  - id: 1a9f0c21-2222-4a4a-8b8b-000000000002
+    name: Kubelet version skew
+    category: UPGRADE_READINESS
+    status: WARNING
+    statusReason: A nodegroup is behind
+    kubernetesVersion: "1.33"
+insightsEvaluated: true
+checks:
+  - name: Insights
+    outcome: Fail
+    blocking: true
+    message: 1 ERROR insight (Deprecated APIs removed in 1.33)
+    details: []
+    findings:
+      - Deprecated APIs removed in 1.33
+      - Kubelet version skew
+  - name: VersionSkew
+    outcome: Fail
+    blocking: true
+    message: 1 nodegroup at the kubelet skew limit (ng-legacy (1.29, 3 behind)); upgrade the nodes before the control plane; 1 add-on behind latest (coredns (v1.11.3-eksbuild.1, latest v1.11.4-eksbuild.2))
+    details: []
+    findings:
+      - coredns
+      - ng-legacy
+  - name: ControlPlane
+    outcome: Pass
+    blocking: true
+    message: etcd 12% of 8 GiB
+    details:
+      - etcd database 12.5% of the 8 GiB limit (1.00 GiB in use)
+      - API server 5xx rate 0.01% (5 of 48210 requests)
+    findings: []
+skew:
+  controlPlaneVersion: "1.32"
+  nodegroups:
+    - name: ng-a
+      version: "1.32"
+      minorsBehind: 0
+      atSkewLimit: false
+    - name: ng-legacy
+      version: "1.29"
+      minorsBehind: 3
+      atSkewLimit: true
+  addons:
+    - name: coredns
+      version: v1.11.3-eksbuild.1
+      latest: v1.11.4-eksbuild.2
+      behind: true
+    - name: vpc-cni
+      version: v1.19.0-eksbuild.1
+      latest: v1.19.0-eksbuild.1
+      behind: false
+rollback:
+  previousVersion: "1.31"
+  upgradedAt: "2026-09-29T12:00:00Z"
+  availableUntil: "2026-10-06T12:00:00Z"
+  insights:
+    passing: 0
+    warning: 0
+    error: 0
+    unknown: 0
+failures: []

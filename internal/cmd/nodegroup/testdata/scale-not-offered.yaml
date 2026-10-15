@@ -1,0 +1,61 @@
+exit: 0
+error: 
+--- stdout ---
+apiVersion: refresh.drod.dev/v2
+kind: Run
+operation: NodegroupScale
+status: Succeeded
+clusters:
+  - cluster: prod
+    region: us-east-1
+    version: "1.33"
+    decision: Proceed
+    steps:
+      - phase: Scale
+        kind: Scale
+        name: web
+        action: Submit
+        sizes:
+          before:
+            desired: 2
+            min: 1
+            max: 3
+          after:
+            desired: 3
+            min: 1
+            max: 3
+    gate:
+      decision: Go
+      reasons: []
+      accepted: []
+      forced: []
+      checks:
+        - name: Quotas
+          outcome: Pass
+          blocking: true
+          message: 31% of the vCPU quota in use (40 of 128)
+          details:
+            - 'EC2 On-Demand Standard vCPUs: 40 of 128 in use (31.2%, 88 free)'
+            - scaling web up by 1 launches 1 node of up to m5.large, 2 vCPU each (2 vCPU); of its instance types (m5.large, r8g.large), each node counts as the largest, m5.large
+          findings: []
+    blockers: []
+    notices:
+      - EC2 does not offer every instance type of nodegroup web in each of its availability zones (r8g.large in us-east-1a, r8g.large in us-east-1b); new nodes may fail to launch there. This checks the offering, and not the capacity that is free now
+    status: Succeeded
+    results:
+      - phase: Scale
+        kind: Scale
+        name: web
+        status: Succeeded
+        updateId: 00000000-0000-4000-8000-000000000001
+        startedAt: "2026-01-01T00:00:00Z"
+        finishedAt: "2026-01-01T00:00:45Z"
+    verification: []
+failures: []
+--- stderr ---
+PLAN  NodegroupScale, prod in us-east-1
+  web  scale from desired 2, min 1, max 3 to desired 3, min 1, max 3
+warning: EC2 does not offer every instance type of nodegroup web in each of its availability zones (r8g.large in us-east-1a, r8g.large in us-east-1b); new nodes may fail to launch there. This checks the offering, and not the capacity that is free now
+[~] web: Started (update 00000000-0000-4000-8000-000000000001)
+web: InProgress
+[OK] web: Succeeded

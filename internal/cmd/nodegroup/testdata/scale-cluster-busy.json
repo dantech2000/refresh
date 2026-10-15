@@ -1,0 +1,47 @@
+exit: 3
+error: prod is busy (cluster UPDATING); nothing was started. Run it again once that finishes
+--- stdout ---
+{
+  "apiVersion": "refresh.drod.dev/v2",
+  "kind": "Plan",
+  "operation": "NodegroupScale",
+  "clusters": [
+    {
+      "cluster": "prod",
+      "region": "us-east-1",
+      "version": "1.33",
+      "decision": "Blocked",
+      "steps": [
+        {
+          "phase": "Scale",
+          "kind": "Scale",
+          "name": "web",
+          "action": "Submit",
+          "sizes": {
+            "before": {
+              "desired": 2,
+              "min": 1,
+              "max": 3
+            },
+            "after": {
+              "desired": 3,
+              "min": 1,
+              "max": 3
+            }
+          }
+        }
+      ],
+      "blockers": [
+        {
+          "kind": "Busy",
+          "message": "prod is busy (cluster UPDATING); nothing was started. Run it again once that finishes"
+        }
+      ],
+      "notices": []
+    }
+  ],
+  "failures": []
+}
+--- stderr ---
+PLAN  NodegroupScale, prod in us-east-1
+  web  scale from desired 2, min 1, max 3 to desired 3, min 1, max 3

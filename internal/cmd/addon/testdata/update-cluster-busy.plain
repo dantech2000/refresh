@@ -1,0 +1,21 @@
+exit: 3
+error: prod is busy (cluster UPDATING); nothing was started. Run it again once that finishes
+--- stdout ---
+FIELD	VALUE
+plan.operation	AddonUpdate
+plan.cluster	prod
+plan.region	us-east-1
+plan.version	1.33
+plan.decision	Blocked
+steps.vpc-cni.kind	Addon
+steps.vpc-cni.action	Submit
+steps.vpc-cni.reason	VersionBehind
+steps.vpc-cni.from	v1.19.0-eksbuild.1
+steps.vpc-cni.to	v1.20.0-eksbuild.1
+steps.vpc-cni.note	-
+blockers.1.kind	Busy
+blockers.1.step	-
+blockers.1.message	prod is busy (cluster UPDATING); nothing was started. Run it again once that finishes
+--- stderr ---
+PLAN  AddonUpdate, prod in us-east-1
+  vpc-cni  update v1.19.0-eksbuild.1 to v1.20.0-eksbuild.1 (VersionBehind)

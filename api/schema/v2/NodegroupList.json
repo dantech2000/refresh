@@ -1,0 +1,351 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drod.dev/refresh/schema/v2/NodegroupList.json",
+  "$defs": {
+    "AMIStatus": {
+      "type": "string",
+      "enum": [
+        "Latest",
+        "Outdated",
+        "Updating",
+        "Custom",
+        "Unknown"
+      ],
+      "description": "AMIStatus compares the AMI that a nodegroup runs with the latest recommended AMI for its Kubernetes version and AMI type."
+    },
+    "Failure": {
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/FailureKind"
+        },
+        "name": {
+          "type": "string",
+          "description": "name identifies the item. For a Region failure it is the region."
+        },
+        "cluster": {
+          "type": "string",
+          "description": "cluster is the cluster that the item belongs to."
+        },
+        "region": {
+          "type": "string"
+        },
+        "operation": {
+          "type": "string",
+          "description": "operation is the IAM action that failed, such as \"eks:DescribeNodegroup\"."
+        },
+        "reason": {
+          "type": "string",
+          "examples": [
+            "AccessDenied",
+            "CredentialError",
+            "Throttled",
+            "NotFound",
+            "RegionUnavailable",
+            "InvalidRequest",
+            "ServiceError",
+            "NetworkError",
+            "Timeout",
+            "Interrupted",
+            "UpdateFailed",
+            "UpdateCancelled",
+            "NotMonitored",
+            "NotAttempted",
+            "Busy",
+            "Unknown"
+          ]
+        },
+        "retryable": {
+          "type": "boolean",
+          "description": "retryable reports whether the same command, run again with no other change, may succeed."
+        },
+        "error": {
+          "type": "string",
+          "description": "error is one line of text for people. Do not parse it; use Reason."
+        },
+        "awsErrorCode": {
+          "type": "string",
+          "description": "awsErrorCode is the AWS API error code, such as AccessDeniedException, when AWS answered."
+        },
+        "updateId": {
+          "type": "string",
+          "description": "updateId is the EKS update ID, for a failure of a started update."
+        }
+      },
+      "type": "object",
+      "required": [
+        "kind",
+        "name",
+        "reason",
+        "retryable",
+        "error"
+      ],
+      "description": "Failure is one item that refresh could not read, or one action that it tried and that did not complete."
+    },
+    "FailureKind": {
+      "type": "string",
+      "enum": [
+        "Region",
+        "Cluster",
+        "Nodegroup",
+        "Addon",
+        "Insight",
+        "Update",
+        "PodDisruptionBudget",
+        "Node"
+      ],
+      "description": "FailureKind is the type of item a Failure is about."
+    },
+    "Failures": {
+      "items": {
+        "$ref": "#/$defs/Failure"
+      },
+      "type": "array",
+      "description": "Failures is the failure list of a document. A nil list encodes as [], so a document always has its failures key as a list."
+    },
+    "Instance": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string",
+          "description": "state is the EC2 instance state, such as running."
+        },
+        "lifecycle": {
+          "type": "string",
+          "description": "lifecycle is on-demand or spot."
+        },
+        "availabilityZone": {
+          "type": "string"
+        },
+        "imageId": {
+          "type": "string"
+        },
+        "launchTime": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "type": "object",
+      "required": [
+        "id",
+        "type",
+        "state",
+        "lifecycle",
+        "availabilityZone",
+        "imageId"
+      ],
+      "description": "Instance is an EC2 instance of a nodegroup."
+    },
+    "Issue": {
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "resourceIds": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object",
+      "required": [
+        "code",
+        "message",
+        "resourceIds"
+      ],
+      "description": "Issue is a health issue that EKS reports for a resource."
+    },
+    "Nodegroup": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "description": "status is the EKS status, such as ACTIVE or UPDATING."
+        },
+        "version": {
+          "type": "string",
+          "description": "version is the Kubernetes minor version of the nodegroup."
+        },
+        "versionBehind": {
+          "type": "boolean",
+          "description": "versionBehind is true when the nodegroup runs an older minor version than the control plane. It is left out when one of the two versions is not known."
+        },
+        "amiType": {
+          "type": "string",
+          "description": "amiType is the EKS AMI type, such as AL2023_x86_64_STANDARD."
+        },
+        "releaseVersion": {
+          "type": "string",
+          "description": "releaseVersion is the AMI release version of the nodegroup."
+        },
+        "capacityType": {
+          "type": "string",
+          "description": "capacityType is the EKS capacity type, such as ON_DEMAND or SPOT."
+        },
+        "instanceTypes": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "scaling": {
+          "$ref": "#/$defs/Scaling"
+        },
+        "ami": {
+          "$ref": "#/$defs/NodegroupAMI"
+        },
+        "healthIssues": {
+          "items": {
+            "$ref": "#/$defs/Issue"
+          },
+          "type": "array",
+          "description": "healthIssues are the issues that EKS reports for the nodegroup."
+        },
+        "instances": {
+          "items": {
+            "$ref": "#/$defs/Instance"
+          },
+          "type": "array",
+          "description": "instances are the EC2 instances of the nodegroup, in a document that reads them."
+        },
+        "readyNodes": {
+          "type": "integer",
+          "description": "readyNodes is the number of Ready nodes, from the Kubernetes API, in a document that reads it with --check-readiness."
+        },
+        "workloads": {
+          "$ref": "#/$defs/Workloads",
+          "description": "workloads is what runs on the nodes, from the Kubernetes API, in a document that reads it with --show-workloads."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "modifiedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "incomplete": {
+          "type": "boolean",
+          "description": "incomplete is true when part of the nodegroup could not be read. Its failures are in the failures list of the document."
+        }
+      },
+      "type": "object",
+      "required": [
+        "name"
+      ],
+      "description": "Nodegroup is one EKS managed nodegroup. A key is left out when its data was not read: a nodegroup that could not be described has its name and incomplete."
+    },
+    "NodegroupAMI": {
+      "properties": {
+        "status": {
+          "$ref": "#/$defs/AMIStatus"
+        },
+        "current": {
+          "type": "string",
+          "description": "current is the ID of the AMI that the nodes run. It is left out for a nodegroup with no instance to read."
+        },
+        "latest": {
+          "type": "string",
+          "description": "latest is the ID of the latest recommended AMI. It is left out for an AMI type that has none."
+        },
+        "currentCreatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "currentCreatedAt is when the current AMI was created. \"refresh status\" reads it for an outdated AMI."
+        }
+      },
+      "type": "object",
+      "required": [
+        "status"
+      ],
+      "description": "NodegroupAMI is the AMI of a nodegroup and how it compares with the latest recommended one."
+    },
+    "Scaling": {
+      "properties": {
+        "desired": {
+          "type": "integer"
+        },
+        "min": {
+          "type": "integer"
+        },
+        "max": {
+          "type": "integer"
+        }
+      },
+      "type": "object",
+      "required": [
+        "desired",
+        "min",
+        "max"
+      ],
+      "description": "Scaling is the scaling configuration of a nodegroup."
+    },
+    "Workloads": {
+      "properties": {
+        "pods": {
+          "type": "integer",
+          "description": "pods is the number of pods on the nodes, Succeeded pods left out."
+        },
+        "systemPods": {
+          "type": "integer",
+          "description": "systemPods is the number of them in kube-system."
+        }
+      },
+      "type": "object",
+      "required": [
+        "pods",
+        "systemPods"
+      ],
+      "description": "Workloads is what runs on the nodes of a nodegroup."
+    }
+  },
+  "properties": {
+    "apiVersion": {
+      "type": "string",
+      "const": "refresh.drod.dev/v2",
+      "description": "The version of the document contract."
+    },
+    "kind": {
+      "type": "string",
+      "const": "NodegroupList",
+      "description": "The type of the document."
+    },
+    "cluster": {
+      "type": "string"
+    },
+    "region": {
+      "type": "string"
+    },
+    "nodegroups": {
+      "items": {
+        "$ref": "#/$defs/Nodegroup"
+      },
+      "type": "array"
+    },
+    "failures": {
+      "$ref": "#/$defs/Failures",
+      "description": "Every failure of the run: the items that refresh could not read and the actions that did not complete. The list is sorted by kind, region, cluster, name, and operation. It is [] when there are no failures."
+    }
+  },
+  "type": "object",
+  "required": [
+    "apiVersion",
+    "kind",
+    "cluster",
+    "region",
+    "nodegroups",
+    "failures"
+  ],
+  "title": "NodegroupList",
+  "description": "The document that `refresh nodegroup list -o json` prints. -o yaml prints the same structure."
+}
