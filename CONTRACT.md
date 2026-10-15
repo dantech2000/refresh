@@ -1,5 +1,7 @@
 # refresh v2 contract
 
+> The cutover is done (2026-10-14). This contract is the public interface of the CLI; a change to it needs the owner's sign-off.
+
 Status: approved by the owner on 2026-10-12, then revised the same day after the owner said backwards compatibility is not a goal: "I rather just have a sane command structure." Changes 12 to 17 below come from that. Frozen until cutover.
 
 This is the public interface of the rewritten CLI: commands, flags, env vars, output, and exit codes. After approval it is frozen until cutover. `REWRITE.md` is the plan this belongs to.

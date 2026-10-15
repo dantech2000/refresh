@@ -23,23 +23,9 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
-	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"go.uber.org/goleak"
 )
-
-var update = flag.Bool("update", false, "rewrite the golden traces in testdata")
-
-// updateRuns is how often -update runs a scenario. Every run must give the
-// same trace.
-const updateRuns = 5
-
-// maxConcurrency is the most requests a binary may have open at once: the
-// default of the legacy --max-concurrency flag.
-const maxConcurrency = 8
-
-// legacy runs the legacy refresh binary.
-var legacy Runner
 
 // helperArg makes the test binary act as a stand-in for refresh. The runner
 // tests use it for what the real binary does not do: ignore a signal, leave
@@ -50,11 +36,10 @@ const helperArg = "parity-helper"
 // legacy one. TestMain sets it before any test runs.
 var v2Binary string
 
-// TestMain builds the legacy binary and the v2 binary once. Set
-// REFRESH_PARITY_LEGACY or REFRESH_PARITY_V2 to the path of a binary to
-// test that one and skip its build. Set
-// REFRESH_PARITY_RACE=1 to build it with the race detector: a data race in
-// the binary then fails its run with exit code 66.
+// TestMain builds the binary once. Set REFRESH_PARITY_V2 to the path of a
+// binary to test that one and skip its build. Set REFRESH_PARITY_RACE=1 to
+// build it with the race detector: a data race in the binary then fails its
+// run with exit code 66.
 func TestMain(m *testing.M) {
 	if len(os.Args) > 2 && os.Args[1] == helperArg {
 		helper(os.Args[2])
@@ -65,21 +50,6 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
-	}
-	legacy.Binary = os.Getenv("REFRESH_PARITY_LEGACY")
-	if legacy.Binary == "" {
-		legacy.Binary = filepath.Join(dir, "refresh-legacy")
-		buildArgs := []string{"build", "-o", legacy.Binary, "../../legacy"}
-		if os.Getenv("REFRESH_PARITY_RACE") == "1" {
-			buildArgs = slices.Insert(buildArgs, 1, "-race")
-		}
-		build := exec.Command("go", buildArgs...) //nolint:gosec,noctx // fixed arguments; nothing to cancel it
-		build.Stderr = os.Stderr
-		if err := build.Run(); err != nil {
-			fmt.Fprintln(os.Stderr, "building the legacy binary:", err)
-			_ = os.RemoveAll(dir)
-			os.Exit(1)
-		}
 	}
 	v2Binary = os.Getenv("REFRESH_PARITY_V2")
 	if v2Binary == "" {
@@ -190,73 +160,21 @@ func changeNodegroup(eager bool) int {
 // outputOnly are the trace fields no golden file holds.
 var outputOnly = cmpopts.IgnoreFields(Trace{}, "Terminal", "PeakConcurrency", "Requests", "Confirmations", "Elapsed", "WorldElapsed")
 
-// TestLegacyTraces runs every scenario's legacy command line, checks what
-// the scenario means, and compares the trace with its golden file. Run with
-// -update to rewrite the files.
-func TestLegacyTraces(t *testing.T) {
-	t.Parallel()
-	for _, sc := range scenarios() {
-		t.Run(sc.Name, func(t *testing.T) {
-			t.Parallel()
-			path := filepath.Join("testdata", "legacy", sc.Name+".json")
-			if *update {
-				writeGolden(t, path, record(t, sc))
-				return
-			}
-			got := run(t, sc)
-			if err := sc.check(got, nil); err != nil {
-				t.Errorf("the run does not show what the scenario is for:\n%v\n%s", err, brief(got))
-			}
-			// Peak concurrency depends on how the binary's parallel calls
-			// overlap, which differs from run to run. Every run is held to
-			// the binary's own limit.
-			if got.PeakConcurrency > maxConcurrency {
-				t.Errorf("peak concurrency = %d, want at most %d", got.PeakConcurrency, maxConcurrency)
-			}
-			var want Trace
-			data, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatalf("%v (run the test with -update to record the trace)", err)
-			}
-			if err := json.Unmarshal(data, &want); err != nil {
-				t.Fatalf("%s: %v", path, err)
-			}
-			if diff := cmp.Diff(want, roundTrip(t, got), outputOnly); diff != "" {
-				t.Errorf("the trace differs from %s (-want +got):\n%s", path, diff)
-			}
-		})
-	}
-}
-
+// run returns the recorded trace of the scenario: what the last release of
+// the old CLI did when it ran the scenario's legacy command line. The old
+// tree is gone, so the traces cannot change any more.
 func run(t *testing.T, sc Scenario) Trace {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(t.Context(), runLimit)
-	defer cancel()
-	trace, err := legacy.RunAfter(ctx, sc, sc.LegacyPreview, sc.Legacy, t.TempDir())
+	path := filepath.Join("testdata", "legacy", sc.Name+".json")
+	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if testing.Verbose() {
-		t.Log(brief(trace))
+	var trace Trace
+	if err := json.Unmarshal(data, &trace); err != nil {
+		t.Fatalf("%s: %v", path, err)
 	}
 	return trace
-}
-
-// record runs the scenario updateRuns times and returns the trace. It fails
-// if two runs differ, or if the trace does not show what the scenario is
-// for.
-func record(t *testing.T, sc Scenario) Trace {
-	t.Helper()
-	first := run(t, sc)
-	if err := sc.check(first, nil); err != nil {
-		t.Fatalf("the run does not show what the scenario is for:\n%v\n%s", err, brief(first))
-	}
-	for i := 1; i < updateRuns; i++ {
-		if diff := cmp.Diff(first, run(t, sc), outputOnly); diff != "" {
-			t.Fatalf("run %d differs from run 1: the scenario is not deterministic (-first +this):\n%s", i+1, diff)
-		}
-	}
-	return first
 }
 
 // brief describes a run for a failure message: its exit code, its update
@@ -267,32 +185,6 @@ func brief(t Trace) string {
 		return strings.Join(lines[max(0, len(lines)-8):], "\n")
 	}
 	return fmt.Sprintf("exit code %d; updates %v\nend of the terminal:\n%s\nend of stderr:\n%s", t.ExitCode, updates(t), tail(t.Terminal), tail(t.Stderr))
-}
-
-func writeGolden(t *testing.T, path string, trace Trace) {
-	t.Helper()
-	data, err := json.MarshalIndent(trace, "", "  ")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, append(data, '\n'), 0o644); err != nil {
-		t.Fatal(err)
-	}
-}
-
-// roundTrip passes a trace through JSON, so its payloads have the types a
-// golden file decodes to.
-func roundTrip(t *testing.T, trace Trace) Trace {
-	t.Helper()
-	data, err := json.Marshal(trace)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var out Trace
-	if err := json.Unmarshal(data, &out); err != nil {
-		t.Fatal(err)
-	}
-	return out
 }
 
 // TestMatrix holds the behaviour matrix to the scenarios: every cell names

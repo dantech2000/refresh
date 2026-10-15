@@ -21,8 +21,6 @@ func TestTUIImportsNoBackendAndNoFakes(t *testing.T) {
 			continue
 		}
 		switch {
-		case strings.HasPrefix(rel, "legacy/"):
-			t.Errorf("tui imports %s; the new tree does not import the old one", rel)
 		case rel == "internal/tui/backend", rel == "internal/awsx", rel == "internal/kube", strings.HasPrefix(rel, "internal/cmd/"):
 			t.Errorf("tui imports %s; the model draws a state and calls nothing", rel)
 		case strings.HasSuffix(rel, "test"):

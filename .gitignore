@@ -31,7 +31,6 @@ coverage.html
 # Docs site (Material for MkDocs): built output and the uv-managed venv.
 # pyproject.toml + uv.lock ARE committed (hash-locked deps); .venv/ is not.
 site/
-site-next/
 .venv/
 .python-version
 

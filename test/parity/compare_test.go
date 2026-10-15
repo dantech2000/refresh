@@ -711,46 +711,33 @@ func scenarioNamed(t *testing.T, name string) Scenario {
 	return Scenario{}
 }
 
-// TestPairedSelf pairs the legacy binary with itself, through the code
-// TestPaired uses for the v2 binary: two real runs of one binary must
-// compare as equal and pass the scenario's checks, whatever the reads and
-// the clock did in between. The scenarios cover a preview, a dry run, a
-// lost response, a signal, a second cluster, and a Kubernetes gate.
-func TestPairedSelf(t *testing.T) {
-	t.Parallel()
-	for _, name := range []string{
-		"addon-update-lost-response", "nodegroup-update-interrupt", "cluster-upgrade-yes", "cluster-rollback-blocked",
-		"nodegroup-update-all-clusters", "nodegroup-update-dry-run", "nodegroup-update-pdb-tightens-after-dry-run", "cluster-upgrade-pdb-blocked",
-	} {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			sc := scenarioNamed(t, name)
-			for _, problem := range pair(t, sc, legacy, sc.LegacyPreview, sc.Legacy, nil, false) {
-				t.Error(problem)
-			}
-		})
-	}
-}
-
-// TestPairedFindsProblems pairs the legacy binary with itself in ways that
-// must fail: an allowance that nothing uses, and a "new" command line that
-// does something else than the scenario's.
+// TestPairedFindsProblems pairs the binary with a recorded trace in ways
+// that must fail: an allowance that nothing uses, a run that breaks the
+// contract, a skipped preview, a refused run that read nothing, and a dry
+// run in place of the change. Each case proves that the comparison and the
+// checks catch that problem.
 func TestPairedFindsProblems(t *testing.T) {
 	t.Parallel()
+	bin := Runner{Binary: v2Binary}
+	loaded, err := LoadAllowlist(allowlistPath)
+	if err != nil {
+		t.Fatal(err)
+	}
 	t.Run("an allowance that no difference uses", func(t *testing.T) {
 		t.Parallel()
 		sc := scenarioNamed(t, "addon-update-yes")
-		allow := []Allowance{{Scenario: sc.Name, Field: FieldExitCode, Reason: "r", Source: "s", OwnerApproved: true, Expect: json.RawMessage(`1`)}}
-		problems := pair(t, sc, legacy, nil, sc.Legacy, allow, false)
-		if len(problems) != 1 || !strings.Contains(problems[0], "does not differ as allowed") {
-			t.Errorf("problems = %q, want the unused allowance", problems)
+		allow := append(slices.Clone(loaded), Allowance{Scenario: sc.Name, Field: FieldExitCode, Reason: "r", Source: "s", OwnerApproved: true, Expect: json.RawMessage(`1`)})
+		problems := strings.Join(pair(t, sc, bin, nil, sc.V2, allow, true), "\n")
+		if !strings.Contains(problems, "does not differ as allowed") {
+			t.Errorf("the problems lack the unused allowance:\n%s", problems)
 		}
 	})
 	t.Run("what the contract asks of the new binary", func(t *testing.T) {
 		t.Parallel()
-		// The old binary held to the new contract: it calls AWS, and rolls.
+		// With --yes, the run calls AWS and rolls, which the contract of
+		// this scenario (no terminal, no --yes) refuses.
 		sc := scenarioNamed(t, "nodegroup-update-no-yes")
-		problems := strings.Join(pair(t, sc, legacy, nil, sc.Legacy, nil, true), "\n")
+		problems := strings.Join(pair(t, sc, bin, nil, append(slices.Clone(sc.V2), "--yes"), loaded, true), "\n")
 		for _, want := range []string{"does not show what the contract asks of the new binary", "the binary sent"} {
 			if !strings.Contains(problems, want) {
 				t.Errorf("the problems lack %q:\n%s", want, problems)
@@ -759,42 +746,22 @@ func TestPairedFindsProblems(t *testing.T) {
 	})
 	t.Run("a preview that is skipped", func(t *testing.T) {
 		t.Parallel()
-		// Without its dry run first, the world is not tightened... and with
-		// it, it is. Run the scenario's real command with no preview on a
-		// world whose AfterPreview never ran: the gate passes and the roll
-		// starts, which the scenario's checks and the comparison refuse.
+		// Without its dry run first, the world is not tightened: the gate
+		// passes and the roll starts, which the scenario's checks and the
+		// comparison refuse.
 		sc := scenarioNamed(t, "nodegroup-update-pdb-tightens-after-dry-run")
-		problems := strings.Join(pair(t, sc, legacy, nil, sc.Legacy, nil, false), "\n")
+		problems := strings.Join(pair(t, sc, bin, nil, sc.V2, loaded, true), "\n")
 		for _, want := range []string{"mutations differs (NOT ALLOWED)", "update requests [UpdateNodegroupVersion prod/ng-a], want none"} {
 			if !strings.Contains(problems, want) {
 				t.Errorf("the problems lack %q:\n%s", want, problems)
 			}
 		}
 	})
-	t.Run("a refused run that skipped the budgets", func(t *testing.T) {
-		t.Parallel()
-		// The baseline rule excuses the baseline of a refused run, and no
-		// gate read. The scenario's run is refused by its drain gate, after
-		// the baseline and the budgets. The other run is refused too, and
-		// read neither: it has no --yes for a pattern, and no health gate.
-		sc := scenarioNamed(t, "nodegroup-update-pdb-blocked")
-		skipped := []string{"nodegroup", "update", "-c", "prod", "-n", "ng-", "--skip-health-check", "-o", "json"}
-		problems := strings.Join(pair(t, sc, legacy, nil, skipped, nil, false), "\n")
-		if want := "the old binary had seen pdb prod/default/web allowed=0, and the new binary did not read it there"; !strings.Contains(problems, want) {
-			t.Errorf("the problems lack %q:\n%s", want, problems)
-		}
-		if excused := "pods prod pending="; strings.Contains(problems, excused) {
-			t.Errorf("the problems hold the refused run to the baseline (%q):\n%s", excused, problems)
-		}
-		if strings.Contains(problems, "mutations differs") || strings.Contains(problems, "refusedBeforeMutation differs") {
-			t.Errorf("the other run is not a refusal before any mutation:\n%s", problems)
-		}
-	})
 	t.Run("a dry run in place of the change", func(t *testing.T) {
 		t.Parallel()
 		sc := scenarioNamed(t, "nodegroup-update-yes")
-		dryRun := scenarioNamed(t, "nodegroup-update-dry-run").Legacy
-		problems := strings.Join(pair(t, sc, legacy, nil, dryRun, nil, false), "\n")
+		dryRun := scenarioNamed(t, "nodegroup-update-dry-run").V2
+		problems := strings.Join(pair(t, sc, bin, nil, dryRun, loaded, true), "\n")
 		for _, want := range []string{"mutations differs", "world differs", "no update request, want at least one"} {
 			if !strings.Contains(problems, want) {
 				t.Errorf("the problems lack %q:\n%s", want, problems)

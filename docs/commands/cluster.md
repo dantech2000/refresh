@@ -1,743 +1,404 @@
 # cluster
 
-Discover and operate on EKS clusters: list them (optionally across every
-region), describe one in depth, run a read-only upgrade-readiness check,
-orchestrate a full control-plane → add-on → nodegroup upgrade, and roll an
-upgrade back one minor version.
+| Command | Use |
+|---|---|
+| [`cluster list`](#list) | List the clusters of one or more regions. |
+| [`cluster describe`](#describe) | Describe one cluster with its nodegroups and add-ons. |
+| [`cluster upgrade-check`](#upgrade-check) | Report whether a cluster is ready for its next upgrade. |
+| [`cluster upgrade`](#upgrade) | Upgrade a cluster to a Kubernetes version. |
+| [`cluster rollback`](#rollback) | Roll a cluster back to the version before its upgrade. |
 
-```bash
-refresh cluster <list|describe|upgrade-check|upgrade|rollback> [args] [flags]
-```
-
-The cluster argument is a positional on most subcommands, or `--cluster/-c`,
-falling back to the [active context](../concepts/contexts.md). The read-only
-subcommands also fall back to the kubeconfig's current cluster; `upgrade`
-and `rollback` never do. See
-[Cluster resolution](../concepts/configuration.md#cluster-resolution).
-
----
+The cluster is the positional argument. Without it, the cluster comes from
+`REFRESH_CLUSTER`, then the active context. `list`, `describe`, and
+`upgrade-check` also take the cluster of the current kubeconfig context.
+`upgrade` and `rollback` never do.
 
 ## list
 
-Fast multi-region cluster discovery with integrated health status. Direct EKS
-API calls — no CloudFormation dependency.
-
 ```bash
-refresh cluster list [name-pattern] [flags]
+refresh cluster list [flags]
 ```
 
-Scope with `-A` (every EKS-supported region) or repeated `-r`. Filter and sort
-in-process, then render as a table, structured output, or a region/cluster
-tree. See [Regions](../concepts/configuration.md#regions) for how `-r`, the
-global `--region`, and `REFRESH_EKS_REGIONS` combine.
+```text
+CLUSTERS  16 in 2 regions
 
-With several regions, a region that fails is a `Region` failure: `-o
-json`/`-o yaml` list it under `failures`, and stderr names it on one line.
-The command prints the clusters it gathered, then exits `4` (incomplete
-data). If no region answers (for example, the timeout ends first), the
-command fails with exit `1` instead of printing an empty list. The default
-`-A` sweep skips regions these credentials can't use, the same way `status
--A` does, and a skipped region does not count as a failure.
-
-A cluster or nodegroup that could not be read also makes the command exit
-`4`. Its row keeps what was read and has `"incomplete": true`; the table
-marks its `NODES` cell with `○` (`unknown` when nothing was counted) and
-lists the failure under `INCOMPLETE DATA`. With `--watch`, the watch keeps
-running after a partial result.
-
-```json
-{
-  "apiVersion": "refresh.drod.dev/v1",
-  "kind": "ClusterList",
-  "clusters": [
-    {"name": "prod", "status": "ACTIVE", "region": "us-east-1", "incomplete": true, "...": "..."}
-  ],
-  "count": 1,
-  "failures": [
-    {
-      "kind": "Nodegroup",
-      "name": "web",
-      "cluster": "prod",
-      "region": "us-east-1",
-      "operation": "eks:DescribeNodegroup",
-      "reason": "Throttled",
-      "retryable": true,
-      "error": "ThrottlingException: Rate exceeded",
-      "awsErrorCode": "ThrottlingException"
-    }
-  ]
-}
+CLUSTER              REGION     STATUS    VERSION
+dev-billing-41       us-west-2  ● ACTIVE  1.34
+dev-ml-17            us-west-2  ● ACTIVE  1.31
+dev-orders-32        us-east-1  ● ACTIVE  1.34
+dev-orders-56        us-east-1  ● ACTIVE  1.31
 ```
 
-### Flags
+Without a region flag, the command reads the configured region. `-r` names one
+or more regions, and `-A` reads every region.
 
-| Flag | Description |
+The list has no node count. `refresh status` and `cluster describe` show the
+nodegroups.
+
+| Flag | Meaning |
 |---|---|
-| `--all-regions, -A` | Query all EKS-supported regions |
-| `--region, -r` | Specific region(s) to query (repeatable) |
-| `--filter, -f` | Filter clusters, `key=value` (keys: `name`, `status`, `version`); repeatable |
-| `--sort` | Sort by field: `name` (default), `status`, `version`, `region` |
-| `--desc` | Sort descending |
-| `--show-health, -H` | Include health status for each cluster |
-| `--format, -o` | `table` (default), `json`, `yaml`, `plain`, `tree` |
-| `--tree, -T` | Hierarchical region/cluster tree (implies `--all-regions`) |
-| `--watch, -w` | Re-run and redraw every `--watch-interval` until interrupted |
-| `--watch-interval` | Refresh interval for `--watch` (default `10s`) |
-| `--max-concurrency, -C` | Global: max concurrent region requests |
-| `--timeout, -t` | Global operation timeout (default `60s`; env `REFRESH_TIMEOUT`) |
+| `-A, --all-regions` | Read every region. |
+| `-f, --filter` | Select by `key=value`. Keys: `name`, `region`, `status`, `version`. |
+| `--sort` | `name` (default), `region`, `status`, or `version`. |
+| `--desc` | Sort in descending order. |
+| `--show-health` | Run the health checks that need no Kubernetes access on every cluster, and add a `HEALTH` column. The column does not change the exit code. |
+| `-w, --watch` | Read again and redraw every `--watch-interval`, until Ctrl+C. |
+| `--watch-interval` | Time between two reads. Default `10s`. |
 
-!!! tip "`tree` view"
-    `-o tree` (or `--tree`) renders a region → cluster hierarchy and implies
-    `--all-regions`, so it's the quickest way to eyeball the whole fleet. An
-    explicit `-o` wins over `--tree`.
-
-### Examples
+A cluster or a region that could not be read is listed under `INCOMPLETE DATA`
+or in `failures`, and the command exits `4`. If no region answers, the command
+exits `1`.
 
 ```bash
-# Every active cluster across all regions
-refresh cluster list -A --filter status=ACTIVE
+# Two regions, the newest version first
+refresh cluster list -r us-east-1 -r eu-west-1 --sort version --desc
 
-# Just clusters whose name contains "prod", sorted by version (newest first)
-refresh cluster list prod --sort version --desc
-
-# Fleet hierarchy
-refresh cluster list -o tree
-
-# Live dashboard, redrawn every 5s
-refresh cluster list --watch --watch-interval 5s
-
-# Machine-readable for a script
-refresh cluster list -A -o json
+# Every region, only the production clusters that are being updated
+refresh cluster list -A -f name=prod-* -f status=UPDATING
 ```
-
----
 
 ## describe
-
-Detailed information for a single cluster: networking, security configuration,
-add-ons, and health.
 
 ```bash
 refresh cluster describe [cluster] [flags]
 ```
 
-`describe` has the alias `get`.
+The command prints every section: the overview with the support window, the
+network, the security configuration, the nodegroups, the add-ons, and the
+health.
 
-### Flags
+```text
+prod-payments-00   ● ACTIVE   us-east-1
 
-| Flag | Description |
-|---|---|
-| `--cluster, -c` | EKS cluster name or pattern (or pass as positional) |
-| `--detailed` | Show comprehensive networking and security information |
-| `--no-health` | Skip the health checks (health is shown by default) |
-| `--show-security` | Add the `SECURITY` section: service role, KMS key, deletion protection, endpoint access. `-o json`/`-o yaml` always carry these fields |
-| `--no-addons` | Skip the EKS add-on section (add-ons are shown by default) |
-| `--check-readiness, -R` | Measure real Kubernetes node readiness (`Ready/desired`) via the cluster API, and list the nodegroups (no `--detailed` needed); without it the `NODES` column shows the desired count only |
-| `--kubeconfig` | Path to the kubeconfig for `--check-readiness` (defaults to `$KUBECONFIG`, then `~/.kube/config`) |
-| `--kube-context` | Kubeconfig context for `--check-readiness`, even if its server does not match the cluster endpoint (see [kubeconfig matching](../concepts/configuration.md#matching-the-kubeconfig-to-the-target-cluster)) |
-| `--format, -o` | `table` (default), `json`, `yaml`, `plain` |
-| `--timeout, -t` | Global operation timeout (env `REFRESH_TIMEOUT`) |
+OVERVIEW
+  status            ● ACTIVE
+  version           1.34
+  platform version  eks.1
+  support           ● standard until 2026-12-02 (49 days); dates from refresh, not from EKS
 
-!!! note "Changed in 0.11"
-    `-d`, `-s`, and `-a` were removed; use `--detailed`, `--show-security`,
-    and `--no-addons`. `--show-health` and `--include-addons` were on by
-    default, so they did nothing. They still work in 0.11 as hidden flags that
-    print a deprecation warning, and `--show-health=false` /
-    `--include-addons=false` act as `--no-health` / `--no-addons`. They go
-    away in 0.12.
+NODEGROUPS  3
+  NAME  STATUS    VERSION  INSTANCE  NODES
+  ng-a  ● ACTIVE  1.34     m5.large  4
+  ng-b  ● ACTIVE  1.34     m5.large  5
+  ng-c  ● ACTIVE  1.34     m5.large  4
 
-The support window uses the cluster's upgrade policy. `-o json`/`-o yaml`
-include it as `supportType` (`STANDARD` clusters are auto-upgraded at the end
-of standard support). `cluster upgrade-check` reports it the same way.
+ADD-ONS  4
+  NAME                    VERSION             STATUS    HEALTH
+  coredns                 v1.34.2-eksbuild.1  ● ACTIVE  Healthy
+  vpc-cni                 v1.34.2-eksbuild.1  ● ACTIVE  Healthy
 
-If some add-ons or nodegroups can't be read, `describe` prints the rest,
-lists each one under the top-level `failures` (`-o json`/`-o yaml`), names it
-on stderr (or under `INCOMPLETE DATA` in the table), and exits `4`
-(incomplete data). An add-on or nodegroup list that was not collected is
-left out of the document; one that was collected and is empty is `[]`.
-
-### Examples
-
-```bash
-refresh cluster describe prod-east
-refresh cluster get prod-east --detailed --show-security
-refresh cluster describe prod-east -o json
+HEALTH  9
+  summary  ● Pass
+  NAME           OUTCOME  MESSAGE
+  Nodes          ● Pass   13/13 nodes ready (estimated)
+  Capacity       ● Pass   CPU mean 30%, peak 38%, 13 instances
+  Workloads      Skipped  pass --check-readiness to run the Kubernetes checks
+  Quotas         ● Pass   57% of the vCPU quota in use (146 of 256)
+  Kubernetes     Skipped  pass --check-readiness to run the Kubernetes checks
 ```
 
----
+The `support` row gives the tier, the day that it ends, and what happens
+then. A cluster in extended support shows the premium over standard support,
+such as `extended until 2027-03-23 (160 days), +$0.50/hr over standard
+support`. A cluster whose upgrade policy is `STANDARD` pays no premium: EKS
+upgrades it at the end of standard support. The premium is the price on the
+[EKS pricing page](https://aws.amazon.com/eks/pricing/) when `refresh` was
+released, and the JSON and YAML documents have it as
+`cluster.support.extendedSupportPremiumUsdPerHour`.
+
+The `HEALTH` section runs the [health checks](../concepts/health-checks.md)
+that a change runs before it starts. It shows health, not upgrade readiness:
+an insight in `ERROR` shows in `cluster upgrade-check` and not here. The
+section does not change the exit code.
+
+| Flag | Meaning |
+|---|---|
+| `--check-readiness` | Read the Kubernetes API too: the `Ready` nodes of each nodegroup, and the health checks that need it. |
+
+If a part of the cluster cannot be read, the command prints what it has, names
+the part under `INCOMPLETE DATA` or in `failures`, and exits `4`.
 
 ## upgrade-check
-
-Read-only upgrade-readiness report. Nothing is mutated — this is the pre-flight
-read before [`cluster upgrade`](#upgrade).
 
 ```bash
 refresh cluster upgrade-check [cluster] [flags]
 ```
 
-Surfaces AWS **Cluster Insights** (the same upgrade checks the EKS console
-shows) plus a local **version-skew** picture: control-plane version vs. each
-managed nodegroup, and installed add-ons vs. the latest compatible version —
-with ordered, actionable findings.
+The command reports whether a cluster is ready for its next Kubernetes upgrade.
+It reads the EKS cluster insights, the version skew of the nodegroups and
+add-ons, the control-plane metrics, the support window, and the rollback
+window after a recent upgrade. It changes nothing.
 
-### Upgrade-readiness checks
+```text
+upgrade blocked: Insights: 1 ERROR insight (Deprecated APIs removed in Kubernetes v1.35) (pass --exit-zero to report only)
+prod-platform-06   ✗ NOT READY   ca-central-1 · 1.34 · standard (49d)*
 
-EKS computes these insights server-side and **owns the catalog — it adds and
-changes checks over time** — so treat this list as representative, not
-exhaustive. The authoritative, always-current set for *your* cluster comes from
-`--show-passing` (each row prints a short ID you can pass to `--id`):
+READINESS
+  reason 1  ✗ Insights: 1 ERROR insight (Deprecated APIs removed in Kubernetes v1.35)
 
-```bash
-refresh cluster upgrade-check -c prod-east --show-passing
+INSIGHTS  1
+  NAME  INSIGHT                                      STATUS   VERSION
+  -     Deprecated APIs removed in Kubernetes v1.35  ✗ ERROR  1.35
+
+NODEGROUP SKEW  4
+  NAME  VERSION  BEHIND
+  ng-a  1.34     0
+  ng-b  1.34     0
+
+CHECKS  3
+  NAME          OUTCOME  MESSAGE
+  Insights      ✗ Fail   1 ERROR insight (Deprecated APIs removed in Kubernetes v1.35)
+  VersionSkew   ● Pass   every nodegroup on 1.34 and every add-on at its latest
+  ControlPlane  Skipped  control-plane metrics not emitted (EKS 1.28+ on a supported platform version)
 ```
 
-Common `UPGRADE_READINESS` checks:
+The line under the title gives the region, the version, and the support
+window. A cluster in extended support also shows the premium over standard
+support, such as `extended (160d) +$0.50/hr`, and the document has it as
+`support.extendedSupportPremiumUsdPerHour`.
 
-- **Deprecated APIs** — workloads calling Kubernetes APIs removed in the target
-  version. Conditional (only appears when EKS detects such usage) and named for
-  the version, e.g. *"Deprecated APIs removed in 1.33"*. The detail view (`--id`)
-  names the calling clients (user agent, last-seen, 30-day request count).
-- **Kubelet version skew** / **kube-proxy version skew** — node components too
-  far behind the control plane to upgrade safely.
-- **EKS add-on version compatibility** — installed add-ons vs. the target version.
-- **Amazon Linux 2 compatibility** — nodes on AL2 (end-of-life; no AMIs for newer versions).
-- **Cluster health issues** — control-plane health problems that would block an upgrade.
+After a recent upgrade, the report has a `ROLLBACK` section with the version
+to roll back to and the time until which a rollback is possible.
 
-A second category, `MISCONFIGURATION` (`--category MISCONFIGURATION`), covers
-EKS Hybrid Nodes. After an in-place upgrade, EKS also reports
-`ROLLBACK_READINESS` insights (`--category ROLLBACK_READINESS`).
-
-While a [rollback](#rollback) is available, the report has a `rollback` line
-with the previous version, the date the window closes, and the rollback
-readiness insight counts. The JSON document has the same data under
-`rollback`. The key is left out when no rollback is available or the update
-history can't be read.
-
-Drill into any insight with `--id` — it accepts the **short ID** from the table,
-the full insight ID, or a **case-insensitive name substring**:
-
-```bash
-refresh cluster upgrade-check -c prod-east --id "deprecated"   # by name
-refresh cluster upgrade-check -c prod-east --id bc8b2f86       # by short ID
-```
-
-### Flags
-
-| Flag | Description |
+| Flag | Meaning |
 |---|---|
-| `--cluster, -c` | EKS cluster name or pattern (or pass as positional) |
-| `--category` | Insight category: `UPGRADE_READINESS` (default), `MISCONFIGURATION` |
-| `--status` | Filter by insight status: `PASSING`, `WARNING`, `ERROR`, `UNKNOWN`. `PASSING` needs no `--show-passing` |
-| `--show-passing` | Include `PASSING` insights (hidden by default) |
-| `--id` | Show the detail view for one insight of `--category` — accepts its short ID (from the table), full ID, or a case-insensitive name substring |
-| `--format, -o` | `table` (default), `json`, `yaml`, `plain` |
-| `--exit-zero` | Exit `0` even when the check finds warnings, blockers, or unreadable items (report mode) |
-| `--timeout, -t` | Global operation timeout (env `REFRESH_TIMEOUT`) |
+| `--category` | Insight category: `UPGRADE_READINESS` (default), `MISCONFIGURATION`, or `ROLLBACK_READINESS`. |
+| `--status` | Show only the insights with these statuses: `PASSING`, `WARNING`, `ERROR`, `UNKNOWN`. This narrows what is shown, not what is judged. |
+| `--show-passing` | Show the `PASSING` insights too. |
+| `--insight` | Show one insight in full, by its ID or by the short ID of the table. |
+| `--exit-zero` | Print the report and exit `0`. |
 
-### Exit codes (CI gate)
+The exit code is the verdict:
 
-The exit code follows the readiness verdict:
+| Code | Verdict |
+|---|---|
+| `0` | Ready. |
+| `2` | Review: there are warnings. |
+| `3` | Blocked. |
+| `4` | Incomplete: a check, a nodegroup, or an add-on could not be read. |
 
-| Code | Verdict | Meaning |
-|---|---|---|
-| `0` | `READY` | No finding |
-| `2` | `REVIEW` | A `WARNING` insight, a nodegroup behind the control plane, an addon behind latest, or a control-plane health warning |
-| `3` | `NOT READY` | An `ERROR` or `UNKNOWN` insight, a nodegroup at the kubelet skew limit, or a failed control-plane health check |
-| `4` | `INCOMPLETE` | Nothing blocks, but a nodegroup or add-on could not be read (listed under `failures` in `-o json`) |
-| `1` | | An error (AWS error, cluster not found, interrupt) |
-
-Precedence is `3`, then `4`, then `2`: the item that could not be read could
-be a blocker.
-
-`UNKNOWN` blocks because `cluster upgrade` refuses a hop on it too. With
-`-o json`/`-o yaml`, the document is printed first, then the exit code
-applies. With `--id`, the exit code reflects that one insight. `--exit-zero`
-keeps the report and always exits `0` on a completed check. See
-[Exit codes](../concepts/exit-codes.md#cluster-upgrade-check).
-
-`upgrade-check` reads the insights EKS already has. It does not start an
-insights refresh, so right after a control-plane change the list can be
-empty or stale. `cluster upgrade` refreshes them before each hop.
-
-With `-o plain`, stdout has only the insight rows. The readiness verdict,
-support, control plane, and version skew go to stderr.
-
-### Examples
-
-```bash
-# Readiness summary for prod-east
-refresh cluster upgrade-check -c prod-east
-
-# Include passing checks, as JSON for a gate (exit 2 or 3 fails the job)
-refresh cluster upgrade-check -c prod-east --show-passing -o json
-
-# Report only: same JSON, always exit 0
-refresh cluster upgrade-check -c prod-east -o json --exit-zero
-
-# Drill into one insight (by name, short ID, or full ID)
-refresh cluster upgrade-check -c prod-east --id "deprecated"
-```
-
----
+`-o plain` prints every section as `FIELD` and `VALUE` rows.
 
 ## upgrade
-
-Plan and execute a full EKS cluster upgrade to a target Kubernetes version:
-control plane → nodegroups → add-ons, with a health gate after every phase.
 
 ```bash
 refresh cluster upgrade [cluster] --to <version> [flags]
 ```
 
-EKS upgrades one minor version at a time, so a multi-minor jump expands into
-sequential **hops**. Each hop runs these phases:
+The command upgrades a cluster one minor version at a time. For each minor
+version it runs four phases:
 
-1. Readiness: cluster insights and kubelet version skew.
-2. Control plane.
-3. Required add-ons: the add-ons whose installed version is not compatible
-   with the new control-plane version (`DescribeAddonVersions`). kube-proxy
-   is usually one, because its version follows the Kubernetes minor.
-4. Nodegroup rolls.
-5. The other add-ons: those behind the latest compatible version but still
-   compatible with the new control plane.
+1. It moves the control plane.
+2. It updates the add-ons that the new control plane cannot run.
+3. It rolls every managed nodegroup, one after another.
+4. It updates the other add-ons.
 
-This is the order in the
-[EKS user guide](https://docs.aws.amazon.com/eks/latest/userguide/update-cluster.html):
-update the nodes, then the add-ons. The one exception is an add-on that the
-new control plane cannot run: it goes before the rolls. A hop leaves out a
-phase with nothing to do. Each add-on phase runs in dependency order and moves
-each add-on to the latest version compatible with the hop target. In
-`-o json` and `-o yaml`, a required add-on step has `beforeNodegroups: true`.
+EKS and `refresh` do not upgrade self-managed nodes, hybrid nodes, or Fargate
+pods. Move self-managed and hybrid nodes yourself after the control plane.
+Delete the Fargate pods after the upgrade: they come back at the new version.
+The plan says this in a notice.
 
-### One part at a time (--only)
-
-By default, an upgrade runs every part. To run some parts only, give
-`--only` with one or more of `control-plane`, `addons`, and `nodegroups`. For
-example, upgrade the control plane now, and roll the nodegroups later:
+A dry run prints the plan:
 
 ```bash
-refresh cluster upgrade -c prod-east --to 1.33 --only control-plane
-refresh cluster upgrade -c prod-east --to 1.33 --only nodegroups
-refresh cluster upgrade -c prod-east --to 1.33 --only addons
+refresh cluster upgrade dev-orders-32 --to 1.35 --dry-run
 ```
 
-The steps of the parts left out stay in the plan as manual steps (`Manual`,
-reason `left out by --only …`), and the run does not touch them. The plan
-adds a notice that names the command for each part left out. These rules keep
-the cluster safe:
+```text
+Plan   ● Proceed   ClusterUpgrade
 
-- The readiness gate always runs. Nodes can run up to three minor versions
-  behind the control plane. If a nodegroup left out would be further
-  behind, the control-plane step is blocked.
-- Without `control-plane`, `--to` must be the version the control plane
-  runs: the nodegroups and add-ons catch up to it.
-- Without `addons`, `--to` is one minor version up. An add-on that the new
-  control plane cannot run (often kube-proxy) is named in a notice: update
-  it right after the control plane with `refresh addon update --all`. If
-  such an add-on has no compatible version at all, the plan stays blocked.
-  If an earlier `--only` run left an add-on that the live control plane
-  cannot run (or its versions cannot be read), the next control-plane move
-  without `addons` is blocked until the add-ons catch up.
+PLAN
+  operation       ClusterUpgrade
+  cluster         dev-orders-32
+  region          us-east-1
+  version         1.34
+  target version  1.35
+  decision        ● Proceed
 
-To roll one nodegroup, name it with `--nodegroup` (`-n`, repeatable). The
-other nodegroups are manual steps, and the readiness gate still checks their
-kubelet skew:
+STEPS  8
+  NAME                         KIND          ACTION  REASON         FROM                TO                  NOTE
+  control-plane@1.35           ControlPlane  Submit  VersionBehind  1.34                1.35                -
+  eks-pod-identity-agent@1.35  Addon         Submit  VersionBehind  v1.34.2-eksbuild.1  v1.35.2-eksbuild.1  -
+  vpc-cni@1.35                 Addon         Submit  VersionBehind  v1.34.1-eksbuild.1  v1.35.2-eksbuild.1  -
+  coredns@1.35                 Addon         Submit  VersionBehind  v1.34.2-eksbuild.1  v1.35.2-eksbuild.1  -
+  kube-proxy@1.35              Addon         Submit  VersionBehind  v1.34.2-eksbuild.1  v1.35.2-eksbuild.1  -
+  ng-a@1.35                    Nodegroup     Submit  VersionBehind  1.34                1.35                -
+  ng-b@1.35                    Nodegroup     Submit  VersionBehind  1.34                1.35                -
+  ng-c@1.35                    Nodegroup     Submit  VersionBehind  1.34                1.35                -
 
-```bash
-refresh cluster upgrade -c prod-east --to 1.33 --only nodegroups -n workers-a
+HEALTH GATE
+  decision  ● Go
+
+NOTICES
+  1  self-managed and hybrid nodes are not upgraded by EKS or refresh: move them to 1.35 yourself after the control plane upgrades. Fargate pods stay at 1.34: delete them after the upgrade, and they come back at 1.35
 ```
 
-### Readiness gates
+A real run prints its progress on stderr:
 
-**Cluster Insights.** Before each control-plane step (at plan time for the
-first hop, and against live state before every later hop), `refresh` asks EKS
-to re-evaluate the cluster's insights (`StartInsightsRefresh`) and waits up to
-5 minutes for the refresh to finish. EKS otherwise re-evaluates insights only
-about once a day, so right after a control-plane hop the next version usually
-has no insights at all. The readiness step is **blocked** when:
+```text
+refreshing the cluster insights of dev-orders-32 (waits up to 5m0s)
+phase: control plane, 1.35
+◷ control-plane@1.35: Started (update 00000000-0000-4000-8000-000000000002)
+● control-plane@1.35: Succeeded
+phase: add-ons before the nodegroup rolls, 1.35
+◷ vpc-cni@1.35: Started (update 00000000-0000-4000-8000-000000000004)
+● vpc-cni@1.35: Succeeded
+phase: nodegroups, 1.35
+◷ ng-a@1.35: Started (update 00000000-0000-4000-8000-000000000007)
+● ng-a@1.35: Succeeded
+```
 
-- an insight for the hop version reports `ERROR` or `UNKNOWN`,
-- EKS has no insights for the hop version yet, or
-- the refresh fails or does not finish in time, or the insights can't be
-  read. The gate fails closed, and the read is also a
-  [failure](../concepts/output.md#failures) in the plan's `failures`.
+### Before any change
 
-EKS no longer enforces insights when it updates the cluster version, so this
-gate is the only check for deprecated APIs and for the kubelet skew of nodes
-outside managed nodegroups (Fargate, Karpenter, self-managed, hybrid, and Auto
-Mode nodes). `--skip-insights-check` turns it off. Use it only when you have
-checked those yourself; the plan then carries a notice.
+1. The command reads the whole cluster.
+2. It asks EKS to refresh the cluster insights, and waits for that for up to 5
+   minutes. An `ERROR` or `UNKNOWN` insight for the next version blocks. A
+   nodegroup that the new version would put past the kubelet skew also blocks.
+   The refresh is the one request that a blocked run sends. A dry run does not
+   send it.
+3. It runs the [health gate](../concepts/health-checks.md) for every nodegroup
+   that the plan would roll. So a PodDisruptionBudget that would stop a drain
+   is known before the control plane moves.
 
-The refresh needs the IAM actions `eks:StartInsightsRefresh` and
-`eks:DescribeInsightsRefresh`, in addition to `eks:ListInsights`.
+Each gate runs again right before its own phase. Before every change that it
+sends, the command reads the cluster again and checks that the change is still
+allowed.
 
-`--dry-run` starts no refresh, because `StartInsightsRefresh` is a write API.
-It reads the insights EKS already has. `ERROR` insights still block the
-preview. Missing or `UNKNOWN` insights show as a notice, because a real run
-refreshes them first and blocks until EKS has evaluated the hop version.
-Insights that can't be read are a failure, so the dry run exits `4`.
+### Questions
 
-**Nodegroup pre-flight.** Before each nodegroup roll, after the nodegroup is
-confirmed `ACTIVE` with no health issues, `refresh` runs the same
-[pre-flight health checks](../concepts/health-checks.md) as
-[`nodegroup update`](nodegroup.md#update), scoped to that nodegroup:
+On a terminal, the command asks before each phase. `--yes` skips the questions.
+`--yes` is required with `-o json`, `-o yaml`, and without a terminal.
 
-- A drain blocker on the nodegroup stops the roll, before EKS is asked to
-  roll anything. A drain blocker is a PodDisruptionBudget that allows 0
-  disruptions (including a PDB whose status is not synced), or a pod that
-  more than one PDB selects. With `--force` (which lets EKS evict through
-  PDBs) it is a warning instead.
-- PodDisruptionBudgets that could not be read (for example, a denied
-  permission) stop the roll in the same way. With `--force` the roll starts
-  and the warning names the failed read. The run then lists the read in
-  `failures` and exits `4` when it finishes. `nodegroup update` has the same
-  rule.
-- A read that a health check could not make, and that the run went past
-  (a warning with `--yes`), is listed in `failures` too, and the run exits
-  `4` when it finishes.
-- A `BLOCK` health decision stops the roll.
-- Health warnings need `--yes` or a confirmation at the prompt.
+### If the run stops
 
-The PDB check reads the cluster through the kubeconfig context whose API server
-matches the cluster endpoint, or through the context that you name with
-`--kube-context`. Without one, `refresh` prints a warning, skips the
-PDB check, and continues. `--skip-health-check` turns off these nodegroup
-checks.
+The plan comes from the live state of the cluster. There is no state file.
 
-**Post-roll verification.** After each nodegroup roll, `refresh` runs the
-verification that [`nodegroup update`](nodegroup.md#update) runs. It also
-verifies a roll that an earlier run started and this run waited for.
+- If a phase fails, the run ends with exit `1`. The message names the phases
+  that completed and the command that goes on from there.
+- If the run stops for any reason, run the same command again. It goes on with
+  what is left.
+- `--to` with the version that the control plane already runs only catches up
+  the add-ons and the nodegroups.
 
-- The nodegroup must be `ACTIVE`.
-- No pod may be newly `Pending`. `refresh` lists the `Pending` pods before
-  the roll and compares them after it. This check needs Kubernetes access.
-  Without it, or for a roll that started before this run, the check is
-  skipped and the progress lines say so.
+### Busy clusters
 
-If the verification finds an issue, the run stops before the next nodegroup
-and exits `5`. `report.status` is `VerifyFailed`, and `report.verification`
-lists the checks and the issues. If the nodegroup cannot be read after its
-roll, the run stops and exits `4`, and the read is in `failures`. If both
-occur, the run exits `5` and `failures` has the read.
+The command refuses while someone else changes the cluster. It waits for a
+change of its own that is still running, for example a roll that an earlier
+run started. If that change fails, the command says so before it continues.
 
-Run the same command again to continue. A nodegroup that is already at the
-target version is not done while it is not `ACTIVE` or has an update in
-progress: its plan step stays `Pending`, and the run waits for the update
-and verifies the nodegroup before it continues. The run stops again (exit
-`5`) while the nodegroup is not `ACTIVE`. `--skip-verify` turns the
-verification off, and `--skip-nodegroup` leaves the nodegroup out.
+### One part at a time
 
-In an upgrade over several minor versions, such a nodegroup is checked
-before the next control-plane step: the plan adds a catch-up hop for it at
-the current control-plane version.
-
-### Nodegroup rolls
-
-A nodegroup that lags the control plane normally rolls once per hop, straight
-to the hop target. The plan rolls a nodegroup early, to the current
-control-plane version, only when the next control-plane step would put it past
-the kubelet skew limit (3 minor versions). A nodegroup already past that limit,
-or one that is custom-AMI or skipped, blocks the plan instead.
-
-An Amazon Linux 2 nodegroup (`AL2_*` AMI types) blocks any hop to Kubernetes
-1.33 or later: EKS publishes no AL2 AMIs past 1.32, so its roll would fail
-after the control plane moved. Replace it with an AL2023 or Bottlerocket
-nodegroup first, or leave it at its version with `--skip-nodegroup`, which
-makes it a `Manual` step.
-
-If an installed add-on is not compatible with the live control-plane version
-(for example, after an interrupted hop), the plan first adds a catch-up hop
-that updates it for the current version, before the next control-plane step.
-A run that stops in the last add-on phase needs no catch-up: those add-ons
-still run on the live control plane, and the rerun updates them.
-
-If a nodegroup is already `UPDATING` when its turn comes, `refresh` waits for
-that update to settle, reads the version again, and then skips it or rolls it.
-During long waits, throttling, server, and network errors are retried;
-permanent errors such as `AccessDenied` fail at once.
-
-The live node-roll panel shows only when stdout is a color terminal. Piped,
-CI, and `NO_COLOR` runs print text progress.
-
-!!! note "Resumable by design"
-    The plan is re-derived from live cluster state on every run — no state
-    file. Rerunning after a failure (or Ctrl+C) resumes where it left off, and
-    rerunning after success is a no-op. On a failure, an interrupt, or a
-    timeout, `refresh` prints the exact resume command. It repeats `--profile`, `--region`,
-    `--skip`, `--skip-nodegroup`, `--kubeconfig`, `--kube-context`,
-    `--wait-timeout`, `--force`, `--skip-insights-check`,
-    `--skip-health-check`, and `--yes` when you gave
-    them, so the rerun changes the same things in the same account and region. A rerun at the
-    target version moves no control plane, so it needs no insights.
-
-!!! warning "This mutates the control plane"
-    `cluster upgrade` confirms each mutating phase unless you pass `--yes`.
-    Without a terminal, a run without `--yes` or `--dry-run` fails before any
-    AWS call. A multi-hop upgrade legitimately runs for hours; the default
-    `--wait-timeout` is `4h` (`REFRESH_TIMEOUT` does not change it). When
-    `--wait-timeout` runs out, the error says `timed out` and tells you to
-    increase `--wait-timeout`. Ctrl+C says `interrupted`. Both exit `1`. If
-    either happens while the plan is built, nothing changes. If it happens
-    during a phase, in-flight EKS updates continue in AWS. Start with
-    `--dry-run`.
-
-### Flags
-
-| Flag | Description |
+| Flag | Meaning |
 |---|---|
-| `--to` | **Required.** Target Kubernetes version (e.g. `1.33`) |
-| `--cluster, -c` | EKS cluster name or pattern (or pass as positional) |
-| `--dry-run, -d` | Print the full ordered plan without mutating anything |
-| `--yes, -y` | Skip per-phase confirmation prompts (required with `-o json`/`yaml` or without a terminal) |
-| `--force` | Force nodegroup rolls when pods can't be drained due to PDBs |
-| `--skip-insights-check` | Upgrade without the Cluster Insights readiness check (deprecated APIs, kubelet skew of nodes outside managed nodegroups). Risky: EKS does not block the upgrade itself |
-| `--skip-health-check` | Roll nodegroups without the pre-flight PDB drain-blocker and health checks (not recommended) |
-| `--skip-verify` | Skip post-roll verification (nodes `ACTIVE`, no new stuck pods) |
-| `--kubeconfig` | Path to the kubeconfig for the PDB drain-blocker checks and the live roll panel (defaults to `$KUBECONFIG`, then `~/.kube/config`) |
-| `--kube-context` | Kubeconfig context to use, even if its server does not match the cluster endpoint (see [kubeconfig matching](../concepts/configuration.md#matching-the-kubeconfig-to-the-target-cluster)) |
-| `--skip` | Add-on name to skip, exact and case-insensitive (repeatable; for add-ons managed via Helm/GitOps) |
-| `--skip-nodegroup` | Nodegroup name pattern to skip (repeatable) |
-| `--nodegroup, -n` | Roll only this nodegroup, by exact name (repeatable; default all). The others are manual steps; the readiness gate still checks their kubelet skew |
-| `--only` | Run only these parts: `control-plane`, `addons`, `nodegroups` (repeatable or comma-separated; default all). See [One part at a time](#one-part-at-a-time-only) |
-| `--quiet, -q` | Suppress progress output |
-| `--poll-interval` | How often to poll in-flight updates (default `15s`; must be greater than `0`) |
-| `--format, -o` | `table` (default), `json`, `yaml`, `plain`. With `json`/`yaml`, stdout gets one document: the plan for `--dry-run` or a blocked plan, else `{plan, report, failures}` after the run. Progress goes to stderr, and a run without `--dry-run` needs `--yes`. With `plain`, stdout gets the plan as TSV and everything else goes to stderr |
-| `--wait-timeout` | How long to wait for the whole upgrade to finish (default `4h`; `0` = no limit; not read from `REFRESH_TIMEOUT`) |
-| `--timeout, -t` | Global API timeout when given before the subcommand (`refresh -t 2m cluster upgrade ...`). After the subcommand it is a deprecated alias of `--wait-timeout` in 0.11 and prints a warning |
+| `--to` | The Kubernetes version to reach, such as `1.35`. Required. |
+| `--only` | Limit the run to these parts: `control-plane`, `addons`, `nodegroups`. |
+| `-n, --nodegroup` | Roll only these nodegroups, by exact name. |
+| `--skip-addon` | Leave these add-ons alone, by exact name. |
+| `--skip-nodegroup` | Leave these nodegroups alone, by exact name. |
+| `--skip-insights-check` | Do not refresh or read the cluster insights. Not recommended. |
+| `--skip-verify` | Skip the verification after each nodegroup roll. |
+| `--wait-timeout` | How long to wait for the whole upgrade. Default `4h`. `0` means no limit. A question does not count. |
 
-!!! tip "Exit code in dry-run"
-    A dry-run (or any run) whose plan contains a **blocker** prints the plan and
-    exits `3` without mutating, so it works as a readiness gate in CI. A plan
-    with no blocker whose planner could not read something (the check that
-    EKS offers the target version, the insights, or an add-on's version
-    catalog) exits `4`. A real run with such a failure goes ahead as before,
-    and exits `4` when it finishes.
+The [shared flags](../concepts/configuration.md#flags-of-every-changing-command)
+apply, except `--no-wait`.
 
-### JSON document
+### Exit codes
 
-With `-o json` or `-o yaml`, `--dry-run` and a blocked plan print the plan.
-An executed run prints `{plan, report, failures}`:
-
-```json
-{
-  "apiVersion": "refresh.drod.dev/v1",
-  "kind": "UpgradeRun",
-  "plan": {
-    "clusterName": "prod", "currentVersion": "1.31", "targetVersion": "1.32",
-    "hops": [{"from": "1.31", "to": "1.32", "steps": ["..."]}],
-    "notices": ["insight warnings for 1.32: Deprecated APIs removed in 1.32"],
-    "failures": []
-  },
-  "report": {
-    "status": "Failed",
-    "completed": [],
-    "stoppedAt": "control plane 1.31 → 1.32",
-    "remaining": ["addons for 1.32 (2 update(s), dependency order)"],
-    "failure": {"kind": "Update", "name": "prod", "region": "us-east-1",
-                "reason": "UpdateFailed", "retryable": false,
-                "error": "control plane upgrade to 1.32 failed: insufficient subnet IPs",
-                "updateId": "9c8b7a6d-..."}
-  },
-  "failures": [
-    {"kind": "Update", "name": "prod", "region": "us-east-1",
-     "reason": "UpdateFailed", "retryable": false,
-     "error": "control plane upgrade to 1.32 failed: insufficient subnet IPs",
-     "updateId": "9c8b7a6d-..."}
-  ]
-}
-```
-
-Each plan step has a `type` (`Readiness`, `ControlPlane`, `Addon`, or
-`Nodegroup`) and a `status` (`Pending`, `Completed`, `Blocked`, or
-`Manual`). The `-o plain` columns keep the lower-case words
-(`control-plane`, `pending`).
-
-A `Manual` step is one refresh leaves to you: a custom-AMI nodegroup, or
-an add-on or nodegroup skipped with `--skip` / `--skip-nodegroup`. When a run
-ends with manual steps, the table view says the upgrade is not complete and
-lists them, instead of "Upgrade complete". The exit code does not change.
-
-`plan.notices` are advisory and never change the exit code. `plan.failures`
-are the reads the planner could not make. `report.status` says how the run
-ended, and `report.failure` says why it stopped:
-
-| `report.status` | Meaning |
+| Code | Meaning |
 |---|---|
-| `Succeeded` | Every pending phase finished, or there was nothing to do |
-| `Failed` | A phase failed (`failure` says why: for example `UpdateFailed`) |
-| `Blocked` | A gate stopped the run: the live readiness re-check, a pre-roll nodegroup gate, or an add-on's post-update health gate. `failure` is set when the gate could not read what it needed |
-| `Interrupted` | Ctrl+C or SIGTERM (`failure.reason` is `Interrupted`). Started EKS updates keep running |
-| `TimedOut` | `--wait-timeout` passed (`failure.reason` is `Timeout`). Started EKS updates keep running |
-| `Aborted` | You declined a phase confirmation |
-| `VerifyFailed` | A nodegroup roll finished, and post-roll verification found issues. `verification` has the `checks` that ran and the `issues`. Exit `5` |
+| `0` | Done, or nothing to do. |
+| `1` | An error, a question answered no, an interrupt, or a phase that failed. The phases before it stay done. |
+| `2` | With `--dry-run` only: a real run would ask about warnings. |
+| `3` | Blocked: the cluster is busy, a target of a phase is already changing, a gate stops the change, `--require-healthy` and a warning, or the insights or the kubelet skew block the next version. Nothing changed, or, when a gate stops a later phase, nothing more changed and the message names the phases that completed. |
+| `4` | Incomplete: a wait timed out, or something could not be read. |
+| `5` | A nodegroup was rolled and the verification found an issue, or an add-on was updated and is not healthy. |
 
-The top-level `failures` lists the plan's failures and the report's
-failure. Each is also named once: on stderr, or in the table view under
-`NOT STARTED` (a change AWS rejected) or `INCOMPLETE DATA`.
-
-!!! note "A roll that waits for capacity"
-    EKS reports a nodegroup roll that waits on Auto Scaling only as an
-    update in progress. During each roll, `cluster upgrade` and `cluster
-    rollback` read the Auto Scaling group's activities
-    (`autoscaling:DescribeScalingActivities`) and report each failed node
-    launch once, such as `VcpuLimitExceeded` when the EC2 vCPU quota is too
-    low for the surge nodes. The report goes in the live panel when it
-    draws, else on its own line. Without the permission, there is no report.
-
-!!! note "Kubernetes access for the live roll view"
-    The nodegroup phase renders the same live per-node roll panel as
-    [`nodegroup update`](nodegroup.md#update); see that page for the Kubernetes
-    RBAC it uses (`list` on nodes/pods/events, plus `watch` for streaming).
+When a gate stops a later phase, the run exits `3`, nothing more changed, and
+the message names the phases that completed.
 
 ### Examples
 
 ```bash
-# Print the plan only (exits 3 if anything blocks the upgrade)
-refresh cluster upgrade -c prod-east --to 1.33 --dry-run
+# Upgrade two minor versions without a prompt
+refresh cluster upgrade prod --to 1.36 --yes
 
-# Execute, confirming each mutating phase
-refresh cluster upgrade -c prod-east --to 1.33
+# Move only the control plane
+refresh cluster upgrade prod --to 1.35 --only control-plane
 
-# The control plane only; the nodegroups and add-ons later
-refresh cluster upgrade -c prod-east --to 1.33 --only control-plane
+# Roll the nodegroups later, and leave one alone
+refresh cluster upgrade prod --to 1.35 --only nodegroups --skip-nodegroup gpu
 
-# Non-interactive (CI) run, skipping a Helm-managed add-on
-refresh cluster upgrade -c prod-east --to 1.33 --yes --skip aws-load-balancer-controller
-
-# Machine-readable run: {plan, report} on stdout, progress on stderr
-refresh cluster upgrade -c prod-east --to 1.33 --yes -o json | jq '.report'
+# In CI: a JSON document on stdout, progress on stderr
+refresh cluster upgrade prod --to 1.35 --yes -o json > run.json
 ```
 
-See the [upgrade lifecycle](../concepts/lifecycle.md) for how this fits the
-`status → upgrade-check → patch → upgrade` loop.
-
----
-
 ## rollback
-
-Roll a cluster back to the previous minor version (N to N-1) after an
-in-place upgrade. refresh follows the order in the AWS guide
-[Roll back a cluster to a previous Kubernetes version](https://docs.aws.amazon.com/eks/latest/userguide/rollback-cluster.html):
-
-1. Check the prerequisites and the `ROLLBACK_READINESS` cluster insights.
-2. Roll back the managed nodegroups that run N to N-1.
-3. Downgrade the add-ons whose version N-1 cannot run to the newest version
-   compatible with N-1. EKS does not roll back add-ons itself.
-4. Roll back the control plane (`UpdateClusterVersion` to N-1) and wait for
-   the `VersionRollback` update to finish.
 
 ```bash
 refresh cluster rollback [cluster] [flags]
 ```
 
-### Prerequisites
+The command rolls a cluster back one minor version, within 7 days of an
+in-place upgrade. EKS rolls back only the control plane. So the command runs
+three phases:
 
-EKS accepts a rollback only when all of these are true. refresh checks them
-first, prints the plan, and exits `3` when one fails:
+1. It rolls the managed nodegroups back, one after another.
+2. It downgrades the add-ons that the older version cannot run.
+3. It rolls the control plane back.
 
-- The upgrade to the current version finished less than 7 days ago. EKS
-  counts from when the upgrade finished, but the update history records only
-  when it started, so refresh refuses only once the window has certainly
-  closed; in the last few hours it warns and lets EKS decide. Just before the
-  first change, refresh builds the plan again. It refuses (exit `3`, nothing
-  changed) when the new plan is blocked, or differs from the one you
-  confirmed, for example a nodegroup that appeared since.
-  refresh reads the date from the cluster's update history (`ListUpdates`).
-  EKS counts from the end of the upgrade, so the dates are approximate, and
-  EKS has the final word.
-- The cluster was upgraded in place to its current version. A cluster created
-  at its version cannot roll back.
-- The target is one minor back and a version EKS still supports. If refresh
-  cannot read the support status (`DescribeClusterVersions`), the plan is
-  blocked.
-- If the target is in extended support, the cluster's upgrade policy is
-  `EXTENDED`. Change it first with
-  `aws eks update-cluster-config --name <cluster> --upgrade-policy supportType=EXTENDED`.
-  Extended support charges then apply.
-- The cluster is `ACTIVE` with no update in progress.
-- No `ROLLBACK_READINESS` insight is `ERROR` or `UNKNOWN`. `WARNING` is a
-  notice. EKS refreshes stale insights itself when the rollback starts. If
-  refresh cannot read the insights, the plan is blocked unless you pass
-  `--skip-insights-check`.
-- Before the control plane rolls back, every managed nodegroup is at N-1.
-  refresh reads them again just before that step. A nodegroup you skipped
-  (`--skip-nodegroup`), a custom-AMI nodegroup, or a roll that did not finish
-  stops the run there, and the control plane does not change. Nodes newer
-  than the control plane are outside the Kubernetes version skew policy.
+```bash
+refresh cluster rollback staging-ml-07 --dry-run
+```
 
-EKS also rejects a rollback when an EKS feature enabled on the cluster does
-not exist in N-1. refresh shows the EKS error.
+```text
+Plan   ● Proceed   ClusterRollback
 
-EKS does not roll back self-managed nodes, hybrid nodes, or Fargate pods.
-Move them to N-1 yourself before you roll back. Fargate pods at N cause an
-`ERROR` kubelet skew insight until you delete them. EKS rolls back
-EKS Auto Mode nodes itself, before the control plane.
+STEPS  9
+  NAME                    KIND          ACTION  REASON        FROM                TO                  NOTE
+  ng-a                    Nodegroup     Submit  VersionAhead  1.35                1.34                -
+  ng-b                    Nodegroup     Submit  VersionAhead  1.35                1.34                -
+  eks-pod-identity-agent  Addon         Submit  VersionAhead  v1.35.2-eksbuild.1  v1.34.2-eksbuild.1  -
+  vpc-cni                 Addon         Submit  VersionAhead  v1.35.2-eksbuild.1  v1.34.2-eksbuild.1  -
+  control-plane           ControlPlane  Submit  VersionAhead  1.35                1.34                -
+```
+
+### What cannot roll back
+
+- A cluster that was created at its version.
+- An upgrade that is more than 7 days old.
+- A control plane while a managed nodegroup is above the target version. A
+  nodegroup that you skip, and one with a custom AMI, are yours to move first.
+- An add-on that the target version cannot run, when every version of it that
+  the target runs is newer than the installed one. A rollback never upgrades an
+  add-on. It moves an add-on to the newest version that the target runs and
+  that is at or below the installed one.
+
+EKS and `refresh` do not roll back self-managed nodes or Fargate pods.
+
+`refresh cluster upgrade-check` shows the rollback window of a cluster.
+
+### Questions
+
+The command asks once, with the whole order in the question. `--yes` skips the
+question. If the cluster changed while the question was open, the command asks
+again about what changed. It refuses, whatever the answer and the flags, when
+the version to roll back to is no longer the one that was confirmed.
 
 ### Flags
 
-| Flag | Description |
+| Flag | Meaning |
 |---|---|
-| `--cluster, -c` | EKS cluster name or pattern (or pass as positional) |
-| `--dry-run, -d` | Print the plan without changing anything. Never prompts |
-| `--yes, -y` | Skip the confirmation prompt (required with `-o json`/`yaml` or without a terminal) |
-| `--force` | Force nodegroup rollbacks when pods can't be drained due to PDBs (the same meaning as in `cluster upgrade`) |
-| `--skip-insights-check` | Roll back despite `ERROR` or `UNKNOWN` rollback-readiness insights. refresh also sets `force` on `UpdateClusterVersion`, so EKS skips them too. Not recommended |
-| `--skip-health-check` | Roll back nodegroups without the pre-flight PDB drain-blocker and health checks (not recommended) |
-| `--skip-verify` | Skip post-roll verification (nodes `ACTIVE`, no new stuck pods) |
-| `--kubeconfig` | Path to the kubeconfig for the PDB drain-blocker checks and the live roll panel |
-| `--kube-context` | Kubeconfig context to use, even if its server does not match the cluster endpoint |
-| `--skip-nodegroup` | Nodegroup name pattern to leave alone (repeatable). Move it to N-1 yourself |
-| `--rollback-timeout` | How long EKS may take before it cancels the control-plane rollback (`RollbackConfig`), from `2h` to `168h`. Default: EKS's `12h` |
-| `--quiet, -q` | Suppress progress output |
-| `--wait-timeout` | How long to wait for the whole rollback to finish (default `4h`; `0` = no limit) |
-| `--poll-interval` | How often to poll in-flight updates (default `15s`) |
-| `--format, -o` | `table` (default), `json`, `yaml`. With `json`/`yaml`, stdout gets one document: the `RollbackPlan` for `--dry-run` or a blocked plan, else a `RollbackRun` (`{plan, report, failures}`) after the run |
+| `--skip-nodegroup` | Leave these nodegroups alone, by exact name. |
+| `--skip-insights-check` | Roll back past blocking insights, and send `force` to EKS, which then skips its own insight checks too. Not recommended. |
+| `--rollback-timeout` | The time that EKS gives the control-plane rollback: whole minutes from `2h` to `168h`. `0` leaves the default of EKS. |
+| `--skip-verify` | Skip the verification after each nodegroup roll. |
+| `--wait-timeout` | How long to wait for the whole rollback. Default `4h`. |
 
-`--force` in `cluster upgrade` already means "evict pods despite PDBs", so
-the insight bypass is `--skip-insights-check`, the name `cluster upgrade`
-uses for its own insight check.
+The [shared flags](../concepts/configuration.md#flags-of-every-changing-command)
+apply, except `--no-wait`.
 
-### How it runs
+### Exit codes
 
-refresh asks once before it changes anything. The question lists the
-nodegroups it rolls back, the add-ons it downgrades, and the control-plane
-rollback. Before each nodegroup rollback, the same pre-flight checks as
-[`cluster upgrade`](#nodegroup-rolls) run, including PodDisruptionBudgets
-that would block the drain. After each nodegroup rollback, the same
-post-roll verification runs: issues stop the run with exit `5`, and
-`--skip-verify` turns it off.
-
-The plan is derived from live cluster state on every run. A rerun after a
-failure or Ctrl+C skips add-ons already compatible with N-1, and nodegroups
-already at N-1 that are `ACTIVE` with no update in progress. A nodegroup at
-N-1 that is not `ACTIVE`, or that has an update in progress, stays
-`Pending`: the run waits for the update and verifies the nodegroup before
-the add-ons and the control plane. A rerun after a finished rollback finds the
-`VersionRollback` update in the history and has nothing to do.
-
-A plan step has the same `type` and `status` values as an
-[upgrade plan](#json-document). `report.status` has the same values as in
-`cluster upgrade`.
-
-### Rollback exit codes
-
-| Code | Meaning |
-|---|---|
-| `0` | The rollback finished, or there was nothing to do. A `--dry-run` with no blocker |
-| `1` | A phase failed, you declined the confirmation, the run was interrupted, or it timed out |
-| `3` | Blocked, nothing changed: outside the rollback window, no in-place upgrade, a blocking insight, the upgrade policy, or an unsupported target. Also with `--dry-run` |
-| `4` | The planner could not read something, such as the target's support status or an add-on's version catalog. Also: the pre-roll gate could not read something and the run went past it (PodDisruptionBudgets with `--force`, a health check's read with `--yes`), or a nodegroup could not be read after its rollback |
-| `5` | A nodegroup rollback finished, and post-roll verification found issues. The run stops before the next nodegroup. `--skip-verify` turns the verification off |
-
-### Examples
-
-```bash
-# Print the plan only (exits 3 if anything blocks the rollback)
-refresh cluster rollback prod-east --dry-run
-
-# Roll back, after one confirmation
-refresh cluster rollback prod-east
-
-# Non-interactive run with a 4h EKS rollback timeout
-refresh cluster rollback prod-east --yes --rollback-timeout 4h -o json | jq '.report'
-```
+The codes are those of [`cluster upgrade`](#exit-codes). Exit `3` also means
+that the cluster cannot roll back: no upgrade in the last 7 days, a blocking
+insight, or a nodegroup above the target.

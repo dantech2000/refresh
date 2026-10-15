@@ -1,184 +1,151 @@
-# Configuration & AWS auth
+# Configuration
 
-`refresh` uses your existing AWS credentials and (optionally) kubeconfig — there
-is no separate config to bootstrap. This page covers how it resolves the target
-account/region and the global flags and environment variables.
+`refresh` has no configuration file of its own, apart from the saved
+[contexts](contexts.md). Flags, environment variables, the active context, and
+the AWS configuration decide what a command does.
 
-## AWS credential & region resolution
+## Profile and region
 
-`refresh` resolves the **profile** and **region** in this order (first match
-wins):
+A command picks the AWS profile and the region in this order. The first match
+wins.
 
-1. **Explicit CLI flags** — `--profile` / `--region` (global; work on every
-   command).
-2. **Standard AWS environment variables** — `AWS_PROFILE` /
-   `AWS_DEFAULT_PROFILE` and `AWS_REGION` / `AWS_DEFAULT_REGION` (resolved by
-   the AWS SDK).
-3. **The active `refresh` context** — see [Contexts](contexts.md).
-4. **AWS SDK defaults** — `~/.aws/config`, `~/.aws/credentials`, SSO, IMDS, etc.
+1. The flags `--profile` and `-r/--region`.
+2. The AWS environment variables: `AWS_PROFILE`, and `AWS_REGION` or
+   `AWS_DEFAULT_REGION`.
+3. The active [context](contexts.md).
+4. The AWS configuration: `~/.aws/config` and `~/.aws/credentials`.
 
-Flags always win, so you can override the active context for a single
-invocation:
+An environment variable that disagrees with the active context is an error.
+See [A context applies as a unit](contexts.md#a-context-applies-as-a-unit).
 
-```bash
-refresh status --profile prod --region us-east-1
-```
-
-The active context applies as a unit. Its cluster, profile, and region belong
-together, so an environment variable never replaces only one of them:
-
-- If an environment variable sets a value that the context leaves empty, the
-  environment variable applies. For example, `AWS_PROFILE` applies to a
-  context that has no profile.
-- If an environment variable has the same value as the context, nothing
-  changes.
-- If an environment variable has a different value than the context, the
-  command fails before any AWS call. For example, `AWS_PROFILE=staging` with a
-  context whose profile is `prod` is an error. Without this rule, the command
-  would use the staging credentials with the region and cluster of the prod
-  context.
-
-To fix a conflict, do one of these steps:
-
-1. Pass `--profile` or `--region` to choose the value for one command.
-2. Unset the environment variable that the error names.
-3. Switch to a context that matches, or set `REFRESH_CONTEXT`.
-
-A context file that exists but cannot be read or parsed is also an error. Every
-command that reads the context fails, and the error names the file. Only a
-missing file means "no context".
-
-Credentials themselves come from the standard SDK chain — `refresh` never stores
-them.
-
-Before its first AWS call, a command resolves the credentials from that chain.
-It makes no extra request to do this. If no source gives credentials, or the
-SSO session has expired, the command stops with the setup help. Keys that
-resolve but are revoked or expired fail on the first AWS call, with the same
-help.
-
-For each way of logging in (SSO, access keys, a role to assume,
-`credential_process`, an instance role) and what each login error means, see
-[Logging in to AWS](logging-in.md).
+For the ways to log in, see [Logging in to AWS](logging-in.md).
 
 ## Cluster resolution
 
-Every command that targets one cluster resolves it in this order (first match
-wins):
+Each command names its target with a positional argument or with
+`-c/--cluster`.
 
-1. The `--cluster, -c` flag.
-2. The first positional argument.
-3. The cluster of the active `refresh` context (`refresh use <name>`).
-4. The cluster of the current kubeconfig context. Only read-only commands use
-   this step. `KUBECONFIG` can list several files, separated by `:` (`;` on
-   Windows). refresh merges them as `kubectl` does.
+| Command | Positional | The cluster comes from |
+|---|---|---|
+| `cluster describe`, `upgrade-check`, `upgrade`, `rollback` | `[cluster]` | The positional, then the order below |
+| `nodegroup list`, `addon list` | none | `-c`, then the order below |
+| `nodegroup describe`, `nodegroup scale` | `<nodegroup>` | `-c`, then the order below |
+| `nodegroup update` | `[nodegroup...]`; none means all | `-c`, then the order below |
+| `addon describe` | `<addon>` | `-c`, then the order below |
+| `addon update` | `[addon...]`, or `--all` | `-c`, then the order below |
+| `status`, `cluster list`, `ui` | none | A sweep of regions |
 
-`addon describe` and `nodegroup describe` take `[cluster] [name]`. If a context
-is active and you pass one positional argument without `--cluster` or the name
-flag, that argument is the name, and the cluster comes from the context. So
-`refresh addon describe vpc-cni` describes `vpc-cni` in the cluster of the
-active context. Two positional arguments are always the cluster and the name.
+The order:
 
-`nodegroup update` also reads the `EKS_CLUSTER_NAME` environment variable.
-No other command reads it. The variable never overrides a cluster that is
-clearly on the command line:
+1. The explicit value: the positional or `-c`.
+2. `REFRESH_CLUSTER`.
+3. The active context.
+4. For a command that only reads: the cluster of the current kubeconfig
+   context.
 
-- If you pass `--cluster`, `--cluster` is the cluster.
-- If you pass `--nodegroup` and one positional argument, the positional
-  argument is the cluster.
-- If you pass two positional arguments, the first is the cluster and the
-  second is the nodegroup.
-- In all other cases, `EKS_CLUSTER_NAME` is the cluster, and one positional
-  argument is the nodegroup pattern. refresh prints
-  `Using cluster <name> from EKS_CLUSTER_NAME` to stderr.
+A command that changes something never uses step 4, with or without
+`--dry-run`. `nodegroup update --all-clusters` ignores steps 2 to 4.
 
-```bash
-export EKS_CLUSTER_NAME=staging
-refresh nodegroup update prod --nodegroup ng-a  # prod / ng-a
-refresh nodegroup update prod ng-a              # prod / ng-a
-refresh nodegroup update ng-a                   # staging / ng-a (with a note)
-refresh nodegroup update                        # staging / all nodegroups (with a note)
+Step 4 counts only a context that names an EKS cluster and its region: a
+cluster ARN (as `aws eks update-kubeconfig` writes it), an eksctl cluster
+entry, or an `aws eks get-token` or `aws-iam-authenticator` credential plugin
+with an EKS API server. A context of kind or of a self-managed cluster names
+no cluster. The command then reads the region of that cluster, unless
+`-r/--region` names one.
+
+If nothing resolves, the command fails and names the ways to set a cluster:
+
+```text
+Error: no cluster specified
+Set one with:
+  -c/--cluster, or [cluster]      for this command, whichever it has
+  REFRESH_CLUSTER                 for this shell
+  refresh context use <name>      until you change it
 ```
 
-Mutating commands (`cluster upgrade`, `addon update`, `nodegroup update`,
-`nodegroup scale`) never use the kubeconfig. A kubeconfig that points at
-another cluster cannot select the target of a change. If a mutating command
-takes the cluster from the active context, it prints
-`Using cluster <cluster> (from context <name>)` to stderr.
+### Names are exact
 
-If none of the steps gives a cluster, the command fails with a non-zero exit.
-Read-only commands (`describe`, `list`, `upgrade-check`) also print the
-available clusters to stderr. Mutating commands print only the error.
+A cluster, nodegroup, or add-on name must match exactly. If a name matches
+nothing, the command fails and lists the close matches:
 
-The name can be a partial pattern:
+```text
+Error: cluster "prod-payments" not found in us-east-1
+Did you mean:
+  prod-payments-00
+List the clusters with: refresh cluster list -r us-east-1
+```
 
-- An exact name always wins. `-c prod` selects `prod`, not `prod-legacy`.
-- If only one cluster contains the pattern, `refresh` asks you to confirm it.
-  Without a terminal, mutating commands fail and name the candidate. Read-only
-  commands use the candidate and print a note to stderr.
-- If several clusters contain the pattern, `refresh` asks you to pick one.
-  Without a terminal, the command fails and lists the candidates.
-- `--yes` does not accept a partial cluster name. In scripts, pass the exact
-  name.
-- With `-o json` or `-o yaml`, `refresh` never asks, even on a terminal. The
-  pattern resolves as it does without a terminal.
+Before any request, refresh checks each name against the EKS rules. A name
+has only letters, digits, hyphens, and underscores, and starts with a letter or
+digit. A cluster or add-on name has 1 to 100 characters, and a nodegroup name 1
+to 63. The check applies to an argument, `-c`, `REFRESH_CLUSTER`, and the
+cluster of the active context. A name that breaks the rules is an error, exit
+`1`, and the message names the value and the rule. An empty argument or an
+empty `-c ""` is an error too: it does not fall back to the defaults.
 
-Prompts wait until you answer or press Ctrl+C. The time you take to answer
-does not count against `--timeout`.
+### Filters
 
-### Nodegroup patterns
-
-The nodegroup in `nodegroup update` can also be a partial pattern. A pattern
-that is not an exact nodegroup name always needs a confirmation:
-
-- An exact name always wins. `-n web` selects `web`, not `payments-web`.
-- If only one nodegroup contains the pattern, `refresh` asks you to confirm
-  it. If several nodegroups contain the pattern, `refresh` asks you to confirm
-  all of them.
-- Without a terminal, or with `-o json`/`-o yaml`, the command fails and names
-  the candidates. To accept them, pass `--yes`.
-- In fleet mode (`--all-clusters`), the batch confirmation (or `--yes`)
-  accepts the pattern in each cluster.
+To select by pattern, use `-f/--filter` on the commands that have it:
 
 ```bash
-export EKS_CLUSTER_NAME=staging
-refresh nodegroup update prod        # staging / "prod" is a nodegroup pattern:
-                                     # a match such as prod-mirror needs confirmation
+refresh cluster list -f name=prod-*
+refresh nodegroup update -c prod -f name=web-*
 ```
+
+- A filter is `key=value`. Repeat the flag for more filters. Every filter
+  must match.
+- `*` matches any text, also no text. No other character is special.
+- A value without `*` must equal the whole value. Write `name=*prod*` for
+  "contains prod".
+- Keys and values compare without regard to case.
+- A filter that does not parse, or that has an unknown key, is an error.
+
+| Command | Filter keys |
+|---|---|
+| `status` | `name`, `region`, `version`, `support` |
+| `cluster list` | `name`, `region`, `status`, `version` |
+| `nodegroup list`, `nodegroup update` | `name`, `status`, `instanceType`, `amiStatus`, `version` |
+
+When a filter selects the targets of a change, the confirmation lists the
+matches.
 
 ## Global flags
 
-These are accepted on every command:
+These flags work on every command.
 
-| Flag | Default | Description |
-|---|---|---|
-| `--profile` | — | AWS shared-config profile (overrides the active context) |
-| `--region, -r` | — | AWS region (overrides the active context) |
-| `--timeout, -t` | `60s` | Timeout for API calls on list, describe, and check commands (e.g. `60s`, `2m`). See [Timeouts](#timeouts) |
-| `--max-concurrency, -C` | `8` | Max concurrency for multi-region operations. For `status`, the clusters evaluated at once in each region; `status` sweeps `min(4, -C)` regions at once |
-| `--log-level` | `warn` | Log verbosity: `debug`, `info`, `warn`, `error` |
-| `--verbose` | off | Shortcut for `--log-level debug` |
-| `--no-color` | off | Disable colored output (a non-empty `NO_COLOR` is also honored) |
+| Flag | Environment variable | Default | Meaning |
+|---|---|---|---|
+| `-r, --region` | `REFRESH_EKS_REGIONS` for sweeps | from the context or the AWS configuration | AWS region. A command that sweeps regions takes several: repeat the flag or separate the values with commas. |
+| `--profile` | `AWS_PROFILE` | | AWS shared-config profile. |
+| `-t, --timeout` | `REFRESH_TIMEOUT` | `1m` | Budget for the API calls of a read command, and for the reads of a changing command before its first change. `0` means no limit; a negative value is an error. |
+| `--max-concurrency` | `REFRESH_MAX_CONCURRENCY` | `32` | Limit for AWS requests in flight in one region. |
+| `--no-color` | `NO_COLOR` | | Disable color. |
+| `--log-level` | `REFRESH_LOG_LEVEL` | `warn` | `debug`, `info`, `warn`, or `error`. |
+| `--verbose` | | | Same as `--log-level debug`. |
+| `--kubeconfig` | `KUBECONFIG` | `~/.kube/config` | Kubeconfig file. |
+| `--kube-context` | | | Kubeconfig context to use. It is trusted even when its server does not match the cluster endpoint. |
+| `-h, --help` | | | Help. |
+| `--version` | | | Print the version. On the root command only. |
 
-A global flag works the same before or after the subcommand:
-`refresh -t 5s cluster list` and `refresh cluster list -t 5s` are equal.
+`-o/--output` is not global. Each command that prints a document has it, with
+the formats that the command supports. Put it after the command name.
 
-`addon update` has its own `--timeout` for its update API calls, with a
-longer default (see [Timeouts](#timeouts)). In 0.11, `cluster upgrade` and
-`nodegroup update` still accept a local `--timeout/-t` as a deprecated alias
-of `--wait-timeout`. On these three commands, put the global API timeout
-before the subcommand: `refresh -t 2m cluster upgrade ...`.
+Logs go to stderr, never to stdout, so they do not mix with a document.
+`--log-level debug` prints one line for each attempt of each AWS call, with
+its service, operation, region, and duration, and the class of its error, so
+a retried call shows each retry. It also prints what client-go logs about a
+Kubernetes list or watch that failed.
 
-## Flag shorthands
+### Flag letters
 
-Each one-letter shorthand has one meaning on every command:
+A letter has one meaning in every command. A letter that is not in the table
+is not reserved; `-a` is free, because an add-on is a positional.
 
-| Shorthand | Long flag |
+| Letter | Flag |
 |---|---|
 | `-c` | `--cluster` |
 | `-n` | `--nodegroup` |
-| `-a` | `--addon` |
-| `-o` | `--format` |
+| `-o` | `--output` |
 | `-r` | `--region` |
 | `-t` | `--timeout` |
 | `-d` | `--dry-run` |
@@ -186,168 +153,142 @@ Each one-letter shorthand has one meaning on every command:
 | `-q` | `--quiet` |
 | `-w` | `--watch` |
 | `-f` | `--filter` |
+| `-A` | `--all-regions` |
 
-A few uppercase shorthands exist outside this set, each with one meaning:
-`-A` (`--all-regions`), `-C` (`--max-concurrency`), `-H` (`--show-health`),
-`-R` (`--check-readiness`), `-T` (`--tree`), `-I` (`--show-instances`), and
-`-W` (`--show-workloads`). A test fails the build if a shorthand gets a
-second meaning.
+## Flags of every changing command
 
-A shorthand removed in 0.11 fails with its replacement, for example
-`-d was removed from 'cluster describe' in 0.11.0; use --detailed`. See
-[Migrating to 0.11](../migration.md#migrating-to-011).
-
-## Commands that change a cluster
-
-`addon update`, `nodegroup scale`, `nodegroup update`, and `cluster upgrade`
-share these flags:
+`nodegroup update`, `nodegroup scale`, `addon update`, `cluster upgrade`,
+and `cluster rollback` share these flags.
 
 | Flag | Meaning |
 |---|---|
-| `--dry-run, -d` | Show what would change. Never prompts and never changes anything |
-| `--yes, -y` | Skip the confirmation prompts |
-| `--wait-timeout` | How long to wait for the change to finish (where the command waits) |
-| `--kubeconfig`, `--kube-context` | The Kubernetes access for health, PDB, and live-roll checks (`nodegroup scale`, `nodegroup update`, `cluster upgrade`) |
+| `-d, --dry-run` | Print the plan and the verdict of the health gate. Change nothing. Never prompt. |
+| `-y, --yes` | Do not prompt. Required with `-o json` or `-o yaml`, and without a terminal. |
+| `--no-wait` | Return once AWS accepts the change. Not on `cluster upgrade` and `cluster rollback`. |
+| `--wait-timeout` | How long to wait for the change. `0` means no limit. |
+| `--poll-interval` | Time between two status polls. Default `15s`. |
+| `--skip-health-check` | Skip the health gate. |
+| `--require-healthy` | Stop on any health warning, and do not ask. |
+| `--force` | Go past drain blockers and a vCPU quota surge, with a warning. Not on `addon update`. |
+| `-q, --quiet` | Print no progress. Questions, warnings, and the result still show. |
 
-`addon update` and `nodegroup scale` ask before they change anything.
-`cluster upgrade` asks before each phase. `nodegroup update` asks when a
-nodegroup pattern is not an exact name or health checks warn. A prompt
-continues only on `y` or `yes`. With `-o json`/`-o yaml`, or without a
-terminal, a run that would ask fails with an error that names `--yes`.
-
-!!! note
-    Logs go to **stderr**; data goes to **stdout**. Spinners write nothing
-    when stderr is not a terminal, and `--log-level debug` surfaces
-    service-level detail (cache hits, retries, fallbacks).
+The exit code of a dry run comes from the findings alone, whatever `--yes`
+says. See [Exit codes](exit-codes.md#dry-runs).
 
 ## Regions
 
-A single-cluster command uses one region: `--region`, then `AWS_REGION` /
-`AWS_DEFAULT_REGION`, then the active context, then the AWS config. An
-environment variable that disagrees with the region of the active context is an
-error (see [AWS credential & region resolution](#aws-credential-region-resolution)).
+A command for one cluster uses one region, from the order in
+[Profile and region](#profile-and-region).
 
-`status`, `cluster list`, and `nodegroup update --all-clusters` can scan
-several regions. They pick the regions in this order:
+`status`, `cluster list`, `ui`, and `nodegroup update --all-clusters` can
+read several regions. This is a sweep. The regions of a sweep are:
 
-1. A local `-r/--region` after the subcommand. It is repeatable:
-   `refresh status -r us-east-1 -r us-west-2`.
-2. Without `-A`, a global `--region` before the subcommand. So
-   `refresh --region eu-west-1 status` equals `refresh status -r eu-west-1`.
-3. For a sweep (`status -A`, `cluster list -A`, `nodegroup update
-   --all-clusters`): `REFRESH_EKS_REGIONS`, a comma-separated list, and
-   otherwise every EKS region in the partition of the home region.
-4. Without a sweep: the one configured region (`AWS_REGION`, the active
-   context, or the AWS config).
+1. The regions of `-r`, when it is given.
+2. With `-A`, or when no region is configured: the list in
+   `REFRESH_EKS_REGIONS` (comma-separated). If the variable is not set, the
+   regions that every account of the partition has enabled. This second case
+   is the default sweep.
+3. Otherwise, the configured region.
 
-With a sweep, a global `--region` sets only the home region and so the
-partition: `refresh --region cn-north-1 cluster list -A` sweeps the China
-partition.
+`-A` together with `-r` is a usage error.
 
-In the default sweep (every region of the partition), a region that these credentials cannot use
-(an SCP denial, an opt-in region that is not enabled) is skipped with one
-note on stderr and does not count as a failure. A region that you name with
-`-r` or `REFRESH_EKS_REGIONS` counts as a failure if it cannot be listed.
-What a failed region does depends on the command:
+refresh checks the shape of every region name before it sends a request: a
+partition prefix, a geographic word, and a number, such as `us-east-1`,
+`us-gov-west-1`, or `cn-north-1`. This applies to `-r`, `REFRESH_EKS_REGIONS`,
+the region of a context, and the region of the AWS configuration
+(`AWS_REGION`, `AWS_DEFAULT_REGION`, or the profile). A name of another shape,
+such as `notaregion` or `bogus-1`, is an error, exit `1`. An empty name, such
+as `-r ""`, is an error too. refresh does not keep a list of regions, because
+AWS adds new ones. A name of the right shape that is not a region, such as
+`us-east-9`, reaches AWS, and the error says that EKS does not answer there.
 
-- `status` marks the data incomplete and exits `4`.
-- `nodegroup update --all-clusters` reports the region and exits `4`.
-- `cluster list` prints one warning per failed region on stderr, prints the
-  clusters it gathered, and exits `4`.
+In a default sweep, a region that these credentials cannot use is skipped with
+one note on stderr. It is not a failure. A region that you name with `-r` or
+`REFRESH_EKS_REGIONS` is never skipped: if it cannot be read, it is a failure,
+and the command exits `4`. If no region answers, the command fails with
+exit `1`.
 
-In all three, if no region answers, nothing was gathered and the command
-fails with exit `1`. See [Exit codes](exit-codes.md#region-sweeps). When no
-region answers because of the credentials, the error is the credential setup
-help. An expired token names itself. Invalid keys make every region look
-closed, so when a region was skipped or unavailable, `refresh` calls
-`sts:GetCallerIdentity` once to tell the two apart.
+Opt-in regions are not in the default sweep. Name them with `-r` or
+`REFRESH_EKS_REGIONS`.
 
 ## Timeouts
 
-The global `--timeout` (default `60s`, or `REFRESH_TIMEOUT`) bounds the AWS
-calls of list, describe, and check commands. Config loading and credential
-resolution always run under it.
+| Flag | Default | Bounds |
+|---|---|---|
+| `-t, --timeout` | `1m` | The API calls of a read command. In a changing command: the reads up to the first change. With `--watch`: each refresh. |
+| `--wait-timeout` | `40m` for `nodegroup update`, `5m` for `nodegroup scale`, `5m` for each add-on, `4h` for `cluster upgrade` and `cluster rollback` | Everything after the first change: the waits, the later phases, and the verification. |
+| `--poll-interval` | `15s` | The time between two polls of a wait. |
 
-In a region sweep (`status`, `cluster list`, `refresh ui`, and the other
-commands that read several regions), opening a connection to an AWS endpoint
-(the DNS lookup and the TCP connect) times out after 10 seconds, and a
-connection that cannot be opened is not retried beyond the AWS SDK's own
-three attempts. A region whose endpoint cannot be reached (a regional
-outage, or a firewall that blocks it) fails in 30 to 40 seconds with a
-network error, not after the whole `--timeout`. A longer `--timeout` does
-not help there. This bounds the connection only: with an HTTPS proxy, the
-proxy's own CONNECT step has its own timeout, and with `AWS_DEFAULTS_MODE`
-set, the SDK's connect timeout for that mode applies. Other calls keep the
-SDK's 30-second connect timeout, and a long wait, such as an update, keeps
-polling through a failed connection.
+A question does not count against either budget.
 
-These commands bound long-running work with their own flags. `REFRESH_TIMEOUT`
-does not set them:
+If `--wait-timeout` passes before the change finishes, the command exits `4`.
+The change may still be running in AWS. Run the command again to see where it
+is.
 
-| Command | Flag | Default | Scope |
-|---|---|---|---|
-| `nodegroup update` | `--wait-timeout` | `40m` | The whole run. With `--all-clusters`, each cluster (health gate, roll, verify) gets its own `--wait-timeout`. `0` means no limit |
-| `cluster upgrade` | `--wait-timeout` | `4h` | The whole upgrade. `0` means no limit |
-| `addon update` | `--timeout, -t` | `10m` | The update API calls. With `--wait`, each add-on (or each batch of 3 with `--parallel`) also gets `--wait-timeout` (default `5m`). `--wait-timeout 0` means no limit |
-| `nodegroup scale --wait` | `--wait-timeout` | `5m` | Added to the global `--timeout`, plus one more `--timeout` with `--health-check`. `0` means no limit |
+If the AWS credentials expire during a wait, for example when an SSO session
+ends, the command stops at the first poll that fails and exits `4`. The
+change may still be running in AWS. Sign in again, then run the command again.
 
-Before 0.11, the wait flag was `--timeout/-t` on `nodegroup update` and
-`cluster upgrade`, and `--op-timeout` on `nodegroup scale`. These names still
-work in 0.11 and print a deprecation warning. They go away in 0.12. If you
-pass an old name together with `--wait-timeout`, the command fails.
-
-`--poll-interval` on `nodegroup update` and `cluster upgrade` must be greater
-than `0`. A zero or negative value fails before any AWS call.
+After a roll, the command also waits for the new nodes to become `Ready`: at
+most 2 minutes, and never past the time left of `--wait-timeout`.
 
 ## Environment variables
 
-| Variable | Equivalent / effect |
+| Variable | Meaning |
 |---|---|
-| `AWS_PROFILE`, `AWS_DEFAULT_PROFILE`, `AWS_REGION`, `AWS_DEFAULT_REGION` | Standard AWS SDK resolution. A value that differs from the active context is an error (see [AWS credential & region resolution](#aws-credential-region-resolution)) |
-| `REFRESH_TIMEOUT` | Default for the global `--timeout` (list, describe, and check commands). Not applied to `--wait-timeout` or to the `--timeout` of `addon update`, which bound long-running work |
-| `REFRESH_MAX_CONCURRENCY` | Default for `--max-concurrency` |
-| `REFRESH_LOG_LEVEL` | Default for `--log-level` |
-| `REFRESH_EKS_REGIONS` | Comma-separated region set for multi-region sweeps: `status -A`, `cluster list -A`, and `nodegroup update --all-clusters`. `-r/--region` wins over it. When it is set, a region these credentials cannot use counts as failed instead of being skipped (see [Regions](#regions)) |
-| `REFRESH_CONTEXT` | Name of a saved context to use for this shell, instead of the saved current context (see [Contexts](contexts.md)). If no saved context has that name, every command fails before any AWS call and lists the known names |
-| `EKS_CLUSTER_NAME` | Default cluster for `nodegroup update` only. A cluster given with `--cluster`, or positionally with `--nodegroup` or a second positional, wins (see [Cluster resolution](#cluster-resolution)) |
-| `NO_COLOR` | Any non-empty value disables colored output on stdout and stderr. `TERM=dumb` does the same |
-| `REFRESH_NO_UPDATE_CHECK` | Disable the `refresh version` self-update check. Any non-empty value except `0`, `false`, or `no` disables it |
-| `KUBECONFIG` | kubeconfig path(s) for the Kubernetes checks. A colon-separated list is merged with the usual `kubectl` rules |
-| `REFRESH_IN_CLUSTER_NAME` | EKS cluster a pod runs in; lets in-cluster config be used for that cluster (see [below](#matching-the-kubeconfig-to-the-target-cluster)) |
+| `REFRESH_CLUSTER` | The cluster, for every command that needs one. |
+| `REFRESH_CONTEXT` | The active context for this shell. |
+| `REFRESH_CONFIG_HOME` | The directory of `context.yaml`. |
+| `REFRESH_EKS_REGIONS` | The regions of a sweep with `-A`, comma-separated. |
+| `REFRESH_TIMEOUT` | Default of `--timeout`. |
+| `REFRESH_MAX_CONCURRENCY` | Default of `--max-concurrency`. |
+| `REFRESH_LOG_LEVEL` | Default of `--log-level`. |
+| `REFRESH_NO_UPDATE_CHECK` | Any value other than `0`, `false`, or `no` turns off the update check of `refresh version`. |
+| `REFRESH_IN_CLUSTER_NAME` | The name of the EKS cluster that the pod runs in, when `refresh` runs inside a cluster. |
+| `NO_COLOR` | Any non-empty value disables color. |
+| `KUBECONFIG` | The kubeconfig file or list. |
 
-## Kubeconfig (optional)
+The AWS SDK variables (`AWS_PROFILE`, `AWS_REGION`, `AWS_ACCESS_KEY_ID`, and
+the others) work as they do in the AWS CLI.
 
-These features read the cluster's Kubernetes API:
+## Kubeconfig
 
-- The Kubernetes-backed [pre-flight health checks](health-checks.md) in
-  `nodegroup update` and `cluster upgrade` (PDB drain blockers, critical
-  workloads, real node readiness).
-- `nodegroup scale --check-pdbs`.
+Some features read the Kubernetes API of the cluster:
+
+- The health checks `Workloads`, `DrainBlockers`, `PDBCoverage`, and
+  `Utilization`, and the real node counts of `Nodes`.
 - `--check-readiness` on `cluster describe` and `nodegroup list`.
 - `nodegroup describe --show-workloads`.
-- The live node-roll panel and post-roll verification.
+- The verification after a roll, and the live view of a roll.
 
-The kubeconfig comes from `--kubeconfig` (one file), then `$KUBECONFIG` (a
-colon-separated list is merged with the usual `kubectl` rules), then
-`~/.kube/config`. If the cluster is unreachable, the health checks that need
-it are **skipped** (with a diagnostic), not failed. The
-`nodegroup scale --check-pdbs` gate is the exception: it refuses the
-scale-down.
+### How refresh finds the cluster in the kubeconfig
 
-### Access entries for the identity
+1. The kubeconfig is `--kubeconfig`, then `$KUBECONFIG`, then
+   `~/.kube/config`.
+2. With `--kube-context`, `refresh` uses that context as named. It prints a
+   note when the server of the context does not match the endpoint of the
+   cluster.
+3. Without `--kube-context`, `refresh` uses a context whose server matches
+   the endpoint of the EKS cluster. It tries the current context first.
+4. Inside a pod, `refresh` uses the in-cluster configuration only when its
+   host matches the endpoint, or when `REFRESH_IN_CLUSTER_NAME` equals the
+   name of the cluster.
 
-On a cluster that uses EKS access entries, the identity `refresh` runs as
-needs an access entry and an access policy for the Kubernetes reads:
+If no context points at the cluster, `refresh` has no Kubernetes access for
+that run, and it says so. To add a context:
 
-- Associate `AmazonEKSAdminViewPolicy` with cluster scope. It covers every
-  read `refresh` makes. `AmazonEKSViewPolicy` does not cover nodes, so
-  the live roll view and the node checks are refused.
-- For an IAM Identity Center (SSO) role, use the role's ARN with its path:
-  `arn:aws:iam::<account>:role/aws-reserved/sso.amazonaws.com/AWSReservedSSO_<permission set>_<id>`.
-  An entry for the ARN without the path does not match the role. The
-  ARN that `aws sts get-caller-identity` shows is the assumed-role ARN,
-  not the role ARN. To find the role ARN, run
-  `aws iam list-roles --path-prefix /aws-reserved/sso.amazonaws.com/`.
+```bash
+aws eks update-kubeconfig --name prod --region us-east-1
+```
+
+What happens without Kubernetes access is in
+[Health checks](health-checks.md#kubernetes-access).
+
+### Access entries
+
+On a cluster that uses EKS access entries, the identity needs an access entry
+and an access policy for the Kubernetes reads. `AmazonEKSAdminViewPolicy` with
+cluster scope covers every read. `AmazonEKSViewPolicy` does not cover nodes.
 
 ```bash
 aws eks create-access-entry --cluster-name prod --principal-arn "$ROLE_ARN"
@@ -356,45 +297,26 @@ aws eks associate-access-policy --cluster-name prod --principal-arn "$ROLE_ARN" 
   --access-scope type=cluster
 ```
 
-### Matching the kubeconfig to the target cluster
-
-refresh only runs Kubernetes checks against the cluster you target with
-`--cluster`. It compares each kubeconfig context's server with the cluster's
-API endpoint from `DescribeCluster`:
-
-1. If the current context points at the target cluster, refresh uses it.
-2. If another context points at the target cluster, refresh uses that context.
-   If several contexts match, refresh tries them in order until one is reachable.
-3. If no context matches, refresh skips the Kubernetes checks. A warning on
-   stderr names both servers. Run `aws eks update-kubeconfig --name <cluster>
-   --region <region>` to add a context.
-
-Proxied or tunnelled API servers (Teleport, Rancher, an SSH tunnel to
-`localhost`) never match the EKS endpoint. For these, name the context with
-`--kube-context <name>`. refresh trusts a context that you name, and prints a
-one-line note that it could not verify the target.
-
-Inside a pod, the in-cluster config points at the Kubernetes service address,
-so refresh cannot match it to an EKS endpoint. Set
-`REFRESH_IN_CLUSTER_NAME=<eks cluster name>` in the pod to declare its
-cluster. refresh uses the in-cluster config only when this value equals the
-target cluster name.
+The Kubernetes reads are `list` on nodes, pods, deployments, events, and
+PodDisruptionBudgets, and `list` on the node metrics of `metrics.k8s.io`.
+`watch` on nodes and events lets the live view of a roll follow changes
+without polling.
 
 ## Required IAM permissions
 
 `refresh` calls these AWS APIs. A read-only role needs the read actions. A
-role that patches or upgrades also needs the write actions. When a call is
-denied, the error names the operation, and the command either fails or marks
-the data incomplete.
+role that patches or upgrades also needs the `Update*` actions and
+`eks:StartInsightsRefresh`. When a call is denied, the error names the
+action.
 
 | Action | Used by |
 |---|---|
 | `sts:GetCallerIdentity` | Region sweeps in which no region answered (credential check) |
-| `eks:ListClusters` | `status`, `cluster list`, `nodegroup update --all-clusters`, and every command that takes a cluster name (the name is matched against the list) |
+| `eks:ListClusters` | `status`, `cluster list`, `ui`, `nodegroup update --all-clusters`, and the close matches for a cluster name that is not found |
 | `eks:DescribeCluster` | Every cluster command |
 | `eks:ListNodegroups`, `eks:DescribeNodegroup` | `status`, `nodegroup *`, `cluster describe`/`upgrade-check`/`upgrade`/`rollback`, health checks, the busy check of `addon update` |
-| `eks:ListAddons` | `status`, `addon *` (also to resolve a partial add-on name), `cluster describe`/`upgrade-check`/`upgrade`/`rollback`, the busy check of `nodegroup update`/`scale` |
-| `eks:DescribeAddon`, `eks:DescribeAddonVersions` | `status`, `addon *`, `cluster upgrade-check`/`upgrade`/`rollback`; `eks:DescribeAddon` also in the busy check of `nodegroup update`/`scale` |
+| `eks:ListAddons` | `status`, `addon list`/`update`, `cluster describe`/`upgrade-check`/`upgrade`/`rollback`, the busy check of `nodegroup update`/`scale` |
+| `eks:DescribeAddon`, `eks:DescribeAddonVersions` | `status`, `addon *`, `cluster upgrade-check`/`upgrade`/`rollback`; `eks:DescribeAddon` also in `cluster describe` and the busy check of `nodegroup update`/`scale` |
 | `eks:DescribeClusterVersions` | `status`, `cluster describe`/`upgrade-check`/`upgrade`/`rollback` (support calendar; `refresh` falls back to a built-in calendar) |
 | `eks:ListInsights`, `eks:DescribeInsight` | `cluster upgrade-check`, `cluster upgrade`, `cluster rollback` |
 | `eks:StartInsightsRefresh`, `eks:DescribeInsightsRefresh` | `cluster upgrade` (not with `--dry-run` or `--skip-insights-check`) |
@@ -402,25 +324,21 @@ the data incomplete.
 | `eks:UpdateNodegroupConfig` | `nodegroup scale` |
 | `eks:UpdateClusterVersion` | `cluster upgrade`, `cluster rollback` |
 | `eks:UpdateAddon` | `addon update`, `cluster upgrade`, `cluster rollback` |
-| `eks:DescribeUpdate` | `nodegroup update`, `nodegroup scale --wait`, `addon update --wait`, `cluster upgrade`, `cluster rollback`, `cluster upgrade-check` (rollback window) |
-| `eks:ListUpdates` | `cluster rollback`, `cluster upgrade-check` (rollback window), `refresh ui` (watch a roll or upgrade started elsewhere) |
-| `ssm:GetParameter` | Latest recommended AMI: `status`, `nodegroup list`/`describe`/`update` |
+| `eks:DescribeUpdate` | `nodegroup update`, `nodegroup scale`, `addon update` (not with `--no-wait`), `cluster upgrade`, `cluster rollback`, `cluster upgrade-check` (rollback window) |
+| `eks:ListUpdates` | `cluster rollback`, `cluster upgrade-check` (rollback window), `addon update` and `nodegroup scale` (the type of the update that keeps a target busy), `ui` (watch a roll or upgrade started elsewhere) |
+| `ssm:GetParameter` | Latest recommended AMI: `status`, `cluster describe`, `nodegroup list`/`describe`/`update` |
 | `ec2:DescribeImages` | `status` (AMI age) |
-| `ec2:DescribeInstances` | `status` (Karpenter detection), `nodegroup describe --show-instances`, current AMI lookup |
-| `ec2:DescribeLaunchTemplateVersions` | Current AMI of a launch-template nodegroup (`nodegroup update --dry-run`) |
+| `ec2:DescribeInstances` | `status` (Karpenter detection), `nodegroup describe --show-instances`, current AMI of a nodegroup without a launch-template image (`status`, `cluster describe`, `nodegroup list`/`describe`/`update`), the vCPUs in use for the quota check when the AWS/Usage metric has no data points |
+| `ec2:DescribeLaunchTemplateVersions` | Current AMI of a launch-template nodegroup: `status`, `nodegroup list`/`describe`/`update` |
 | `ec2:DescribeSubnets`, `ec2:DescribeInstanceTypeOfferings` | Instance-type availability warning in `nodegroup update`/`scale` |
-| `ec2:DescribeVpcs` | `cluster describe --detailed` |
-| `autoscaling:DescribeAutoScalingGroups` | Health checks, `nodegroup describe`, current AMI lookup |
-| `autoscaling:DescribeScalingActivities` | A roll's failed node launches (such as the EC2 vCPU quota): `nodegroup update`, `cluster upgrade`, `cluster rollback`, `refresh ui` |
+| `ec2:DescribeInstanceTypes` | The vCPUs of the nodes that a roll or a scale-up launches, and of the instances in use when the AWS/Usage metric has no data points, for the quota check of `nodegroup update`/`scale`, `cluster upgrade`, `cluster rollback` |
+| `ec2:DescribeVpcs` | `cluster describe` |
+| `autoscaling:DescribeAutoScalingGroups` | Health checks, the instances of a nodegroup (`status`, `cluster describe`, `nodegroup list`/`describe`/`update`) |
+| `autoscaling:DescribeScalingActivities` | A roll's failed node launches (such as the EC2 vCPU quota): `nodegroup update`, `cluster upgrade`, `cluster rollback`, `ui` |
 | `cloudwatch:GetMetricData` | Health checks (CPU capacity, control plane, quota usage) |
 | `servicequotas:GetServiceQuota` | Health checks (EC2 vCPU quota) |
 
-Best-effort lookups (AMI age, instance-type availability, CloudWatch metrics,
-quotas) degrade to "unknown" or "skipped" when denied. A denied
-`ssm:GetParameter` marks the AMI status as `unknown (lookup failed)`, and
-`status` exits `4`.
-
-The Kubernetes side needs `list` on nodes, pods, namespaces, deployments,
-events, and PodDisruptionBudgets, and read access to the metrics API. `watch`
-on nodes and events lets the live roll panel stream changes instead of
-polling.
+A denied read does not always stop a command. The command prints what it could
+read, lists the rest under `INCOMPLETE DATA` or in `failures`, and exits `4`.
+A health check that cannot read is `Unreadable`. See
+[Health checks](health-checks.md#outcomes).

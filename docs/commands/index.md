@@ -1,49 +1,42 @@
-# Command reference
+# Commands
 
-`refresh` is organized into a few command groups. Pick a page for the full
-flag-by-flag detail and examples.
+Every command is `refresh <noun> <verb>`, except the four that have no noun:
+`status`, `ui`, `version`, and `completion`.
 
-!!! tip "Looking for the exhaustive flag list?"
-    These pages are the **curated guide** — the flags you'll actually use, with
-    examples. For the complete, always-in-sync list of *every* command and flag,
-    see the **[generated Reference](../reference/index.md)** (produced directly
-    from the CLI, so it can't drift). You can also run `refresh <command> --help`
-    or `man refresh`.
+```text
+refresh status
+refresh cluster   list | describe | upgrade-check | upgrade | rollback
+refresh nodegroup list | describe | update | scale
+refresh addon     list | describe | update
+refresh context   list | add | remove | use | current
+refresh ui
+refresh version
+refresh completion <bash|zsh|fish|powershell>
+```
 
-| Group | What it does |
+| Page | Commands |
 |---|---|
-| [`status`](status.md) | Fleet patch posture across clusters/regions |
-| [`cluster`](cluster.md) | `list`, `describe`, `upgrade-check`, `upgrade`, `rollback` |
-| [`nodegroup`](nodegroup.md) | `list`, `describe`, `scale`, `update` (AMI roll) |
-| [`addon`](addon.md) | `list`, `describe`, `update` (incl. `--all`) |
-| [`ui`](ui.md) | Full-screen terminal UI (experimental): the fleet, readiness, live rolls, upgrades, and rollbacks |
-| [Contexts](contexts.md) | `use`, `current`, `context add/list/remove` |
-| [Utility](utility.md) | `version`, `install-man`, `completion` |
+| [status](status.md) | The fleet overview |
+| [cluster](cluster.md) | `list`, `describe`, `upgrade-check`, `upgrade`, `rollback` |
+| [nodegroup](nodegroup.md) | `list`, `describe`, `update`, `scale` |
+| [addon](addon.md) | `list`, `describe`, `update` |
+| [context](contexts.md) | `list`, `add`, `remove`, `use`, `current` |
+| [ui](ui.md) | The terminal UI (experimental) |
+| [version, completion, and help](utility.md) | `version`, `completion`, `help` |
 
-## Global flags
+These pages explain what each command does. The [reference](../reference/refresh.md)
+is generated from the binary and lists every flag.
 
-Accepted on every command — see [Configuration & AWS auth](../concepts/configuration.md):
+## Rules that hold for every command
 
-`--profile`, `--region/-r`, `--timeout/-t`, `--max-concurrency/-C`,
-`--log-level`, `--verbose`, `--no-color`. They work before or after the
-subcommand (`refresh -t 5s cluster list` equals `refresh cluster list -t 5s`).
-
-Each shorthand letter has one meaning on every command (`-c` cluster, `-n`
-nodegroup, `-a` addon, `-o` format, `-r` region, `-t` timeout, `-d` dry-run,
-`-y` yes, `-q` quiet, `-w` watch, `-f` filter). See
-[Flag shorthands](../concepts/configuration.md#flag-shorthands).
-
-## Conventions
-
-- **Cluster argument** — most commands take the cluster as a positional
-  (`refresh nodegroup list my-cluster`) or via `--cluster/-c`, falling back to
-  the [active context](../concepts/contexts.md). Read-only commands also fall
-  back to the kubeconfig's current cluster. See
+- **The positional names the thing that the command acts on.** `-c/--cluster`
+  names the cluster for the nodegroup and add-on commands. See
   [Cluster resolution](../concepts/configuration.md#cluster-resolution).
-- **Output** — `-o table|json|yaml|plain` (and `tree` for `cluster list`); see
-  [Output formats](../concepts/output.md). With `-o json`/`-o yaml`, stdout
-  holds exactly one document.
-- **Exit codes** — every command follows one contract: `0` ok, `1` error or
-  interrupt, `2` needs attention, `3` blocked, `4` incomplete data, `5`
-  post-action verification failed. Each command's `--help` lists its codes;
-  see [Exit codes](../concepts/exit-codes.md).
+- **Names are exact.** Select by pattern with `-f/--filter`.
+- **`-o/--output`** is `table`, `json`, `yaml`, or `plain`. See
+  [Output formats](../concepts/output.md).
+- **The exit codes** have one meaning everywhere. See
+  [Exit codes](../concepts/exit-codes.md).
+- **A changing command** runs the health gate, asks once, and waits for the
+  change. It has `--dry-run`, `--yes`, and `--no-wait`. See
+  [Flags of every changing command](../concepts/configuration.md#flags-of-every-changing-command).

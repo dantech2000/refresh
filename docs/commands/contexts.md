@@ -1,131 +1,113 @@
-# Contexts (use / current / context)
+# context
 
-A kubectx-style workflow for EKS. Save named contexts that bind a cluster to an
-optional region and AWS profile, then switch between them by name instead of
-repeating `--cluster/--region/--profile` on every command.
+`refresh context` manages the saved contexts and chooses the active one. A
+context gives a name to a cluster, with an optional region and AWS profile.
+See [Contexts](../concepts/contexts.md) for how a context is used.
 
-```bash
-refresh use <name>          # switch the active context
-refresh current             # print the active context
-refresh context add|list|remove [args] [flags]
-```
+`refresh ctx` is an alias of `refresh context`.
 
-The active context fills in cluster/region/profile defaults for every command.
-Per-invocation flags still override it. A mutating command that takes its
-cluster from the context prints `Using cluster <cluster> (from context <name>)`
-to stderr. For the conceptual overview see
-[Contexts](../concepts/contexts.md); this page is the command-reference detail.
+| Command | Use |
+|---|---|
+| [`context add`](#add) | Add or replace a saved context. |
+| [`context list`](#list) | List the saved contexts. |
+| [`context use`](#use) | Switch the active context. |
+| [`context current`](#current) | Print the active context. |
+| [`context remove`](#remove) | Remove a saved context. |
 
-!!! note "Where contexts are stored"
-    Contexts are saved as YAML under `$XDG_CONFIG_HOME/refresh/context.yaml`
-    (default `~/.config/refresh/context.yaml`). The `REFRESH_CONTEXT` env var
-    overrides the saved "current" pointer for a single shell. It must name a
-    saved context; otherwise every command fails and lists the known names.
+These commands make no AWS call. They do not check that the cluster exists.
 
----
-
-## refresh use
-
-Switch the active context so subsequent commands inherit its cluster, region,
-and profile.
+## add
 
 ```bash
-refresh use [context-name|-]
+refresh context add <name> --cluster <cluster> [--region <region>] [--profile <profile>] [--use]
 ```
 
-- `refresh use prod` — make `prod` active.
-- `refresh use -` — toggle back to the previously active context.
-- `refresh use` — no name: pick interactively from the saved list. The
-  answer can also come from a pipe: `printf prod | refresh use`.
+| Flag | Meaning |
+|---|---|
+| `-c, --cluster` | EKS cluster name. Required. |
+| `-r, --region` | AWS region to save with the context. |
+| `--profile` | AWS shared-config profile to save with the context. |
+| `--use` | Switch to the context after it is saved. |
 
-Per-invocation `--region/--profile/--cluster` flags still override the active
-context.
+A context with the same name is replaced, and the command prints
+`Updated context "<name>"` in place of `Saved context "<name>"`.
+
+The command checks the values before it saves them, and an error saves
+nothing:
+
+- The name has 1 to 63 letters, digits, hyphens (`-`), underscores (`_`), and
+  dots (`.`). The name `-` alone is not allowed: `refresh context use -` means
+  the previous context.
+- The cluster name follows the EKS rules (see
+  [Names are exact](../concepts/configuration.md#names-are-exact)).
+- The region has the shape of a region name, such as `us-east-1` (see
+  [Regions](../concepts/configuration.md#regions)).
 
 ```bash
-refresh use prod
-refresh use -
+refresh context add prod --cluster prod-payments-00 --region us-east-1 --profile prod
 ```
 
----
-
-## refresh current
-
-Print the name and cluster/region/profile of the currently active context. Honors
-the `REFRESH_CONTEXT` override (an unknown name is an error), and prints a hint
-to stderr when no context is active.
-
-```bash
-refresh current
+```text
+Saved context "prod"
 ```
 
----
-
-## refresh context
-
-Manage the named contexts that `refresh use` switches between. The group has the
-alias `ctx`.
-
-```bash
-refresh context <list|add|remove> [args] [flags]
-```
-
-### context list
-
-List every saved context with its cluster, region, and profile. The active
-context is marked with a `*`. Aliased as `ls`. Hints go to stderr. If
-`REFRESH_CONTEXT` names an unknown context, `context list` prints a warning
-instead of failing, so you can find the right name.
+## list
 
 ```bash
 refresh context list
 ```
 
-### context add
-
-Create or overwrite a named context. Re-running with the same name updates it in
-place.
-
-```bash
-refresh context add <name> --cluster <cluster> [flags]
+```text
+* prod                 cluster=prod-payments-00 region=us-east-1 profile=prod
+  stage                cluster=staging-data-40 region=us-east-1 profile=-
 ```
 
-| Flag | Description |
+## use
+
+```bash
+refresh context use [context|-]
+```
+
+- With a name, the command switches to that context.
+- With `-`, it switches back to the context that was active before.
+- Without an argument, it lists the saved contexts and asks for one.
+
+```text
+Switched to context "stage" (cluster=staging-data-40 region=us-east-1 profile=-)
+```
+
+## current
+
+```bash
+refresh context current
+```
+
+```text
+prod  cluster=prod-payments-00  region=us-east-1  profile=prod
+```
+
+The `context` commands have no `-o`: they print text for people. A script
+reads the first field of the line, which is the name of the active context:
+
+```bash
+refresh context current | cut -d' ' -f1
+```
+
+When no context is active, the command prints a hint on stderr and nothing on
+stdout, and exits `0`. If `REFRESH_CONTEXT` names a context that is not saved,
+the command fails with exit `1`.
+
+## remove
+
+```bash
+refresh context remove <name>
+```
+
+If the removed context is the active one, no context is active afterwards.
+
+## Exit codes
+
+| Code | Meaning |
 |---|---|
-| `--cluster, -c` | **Required.** EKS cluster name |
-| `--region, -r` | AWS region (optional) |
-| `--profile` | AWS shared-config profile (optional). `-p` was removed in 0.11 |
-| `--use` | Switch to this context immediately after saving |
-
-```bash
-refresh context add prod --cluster prod-eks --region us-east-1 --profile prod
-refresh context add stage --cluster stage-eks --region us-west-2 --profile stage
-
-# Add and switch in one step
-refresh context add prod --cluster prod-eks --use
-```
-
-### context remove
-
-Delete a saved context by name. If the removed context was the active or
-previous one, those pointers are cleared. Aliased as `rm` / `delete`.
-
-```bash
-refresh context remove prod
-```
-
----
-
-## Typical workflow
-
-```bash
-# Define your environments once
-refresh context add prod  --cluster prod-eks  --region us-east-1 --profile prod
-refresh context add stage --cluster stage-eks --region us-west-2 --profile stage
-
-# Switch, then run commands with no repeated flags
-refresh use prod
-refresh nodegroup list          # targets prod-eks / us-east-1 / prod
-refresh cluster upgrade-check   # same context
-
-refresh use stage               # flip the whole environment
-```
+| `0` | Done. |
+| `1` | An error: an unknown context, a missing `--cluster`, or a context file that cannot be read. |

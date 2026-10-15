@@ -21,8 +21,6 @@ func TestBackendImportsNoModelAndNoFakes(t *testing.T) {
 			continue
 		}
 		switch {
-		case strings.HasPrefix(rel, "legacy/"):
-			t.Errorf("backend imports %s; the new tree does not import the old one", rel)
 		case rel == "internal/tui", strings.HasPrefix(rel, "internal/cmd/"):
 			t.Errorf("backend imports %s; nothing of the terminal belongs here", rel)
 		case strings.HasSuffix(rel, "test"):

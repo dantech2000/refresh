@@ -1,8 +1,14 @@
 # Parity suite
 
-The suite runs the old binary and the new binary on the same fake fleet and
-holds the new one to the old one on safety. It does not compare output: the
-two CLIs print different documents and messages by design.
+The suite runs the binary on a fake fleet and holds it, on safety, to what the
+last release of the old CLI did in the same scenario. The old CLI's runs are
+recorded in `testdata/legacy/*.json`; its source was removed at cutover, so
+those traces no longer change. The suite does not compare output: the two
+CLIs print different documents and messages by design.
+
+A recorded trace holds each change with the facts the old binary knew before
+it, the settlement and verification evidence, the exit code, and the final
+world. It does not hold the raw requests, which differ from run to run.
 
 `REWRITE.md` ("Parity suite") says why the suite exists. This page says what
 it compares and how.
@@ -134,11 +140,9 @@ that the other does not have.
 ## Commands
 
 ```bash
-go test ./test/parity/                                  # legacy traces against the goldens
-go test ./test/parity/ -run TestLegacyTraces -update    # record the goldens; each scenario runs 5 times
-REFRESH_PARITY_V2=/path/to/refresh go test ./test/parity/ -run TestPaired
-REFRESH_PARITY_LEGACY=/path/to/legacy go test ./test/parity/   # skip the build
-REFRESH_PARITY_RACE=1 go test ./test/parity/            # build the old binary with the race detector
+go test ./test/parity/                                  # the binary against the recorded traces
+REFRESH_PARITY_V2=/path/to/refresh go test ./test/parity/ -run TestPaired   # test a binary you built
+REFRESH_PARITY_RACE=1 go test ./test/parity/            # build the binary with the race detector
 ```
 
 ## Limits

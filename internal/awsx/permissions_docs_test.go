@@ -1,8 +1,6 @@
 package awsx
 
 import (
-	"errors"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,24 +9,14 @@ import (
 	"github.com/google/go-cmp/cmp"
 )
 
-// permissionsDoc returns the docs page that holds the IAM table. The docs of
-// the v2 CLI are in docs-next/ until cutover, and in docs/ after it, so the
-// test reads the first that exists and needs no edit when the tree is
-// swapped.
+// permissionsDoc returns the docs page that holds the IAM table.
 func permissionsDoc(t *testing.T) string {
 	t.Helper()
-	for _, dir := range []string{"docs-next", "docs"} {
-		path := filepath.Join("..", "..", dir, "concepts", "configuration.md")
-		_, err := os.Stat(path)
-		if err == nil {
-			return path
-		}
-		if !errors.Is(err, fs.ErrNotExist) {
-			t.Fatalf("looking for the IAM table: %v", err)
-		}
+	path := filepath.Join("..", "..", "docs", "concepts", "configuration.md")
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("looking for the IAM table: %v", err)
 	}
-	t.Fatal("no concepts/configuration.md in docs-next/ or docs/")
-	return ""
+	return path
 }
 
 // TestRequiredPermissionsMatchDocs checks that the table under "Required IAM

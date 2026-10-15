@@ -1,228 +1,185 @@
 # Cookbook
 
-Task-oriented, copy-pasteable workflows that string the commands together. Each
-recipe follows the `refresh` loop: **status → readiness → patch → upgrade**. See
-the [upgrade lifecycle](../concepts/lifecycle.md) for the why.
+Recipes for common jobs. Each one names the exit codes that a script must
+handle.
 
----
-
-## Fleet posture: what's stale, everywhere
-
-Start every session here. One table, all clusters, all regions — Kubernetes
-version, support window, stale AMIs, and add-ons behind latest.
+## See what is out of date, everywhere
 
 ```bash
-# The front door
-refresh status -A
-
-# Narrow to "prod" clusters in two regions
-refresh status prod -r us-east-1 -r us-west-2
-
-# Machine-readable for a dashboard
-refresh status -A -o json
+refresh status -A --sort stale --desc
 ```
 
-`status` exits non-zero when the fleet needs attention, so it doubles as a CI
-gate:
+To limit the regions for every sweep, set the list once:
+
+```bash
+export REFRESH_EKS_REGIONS=us-east-1,us-west-2,eu-west-1
+refresh status -A
+```
+
+For a dashboard, read the document:
 
 ```bash
 refresh status -A -o json > status.json
-case $? in
-  0) echo "fleet current" ;;
-  2) echo "stale AMIs, add-ons behind, or health issues" ;;
-  3) echo "a cluster is on extended support or unsupported" ;;
-  4) echo "incomplete data: check the errors in status.json" ;;
+jq -r '.clusters[] | select(.support.tier != "Standard") | "\(.name) \(.region) \(.support.tier)"' status.json
+```
+
+`refresh status` exits `2` when something is out of date and `3` when a cluster
+left standard support. In a job that only collects the data, accept both:
+
+```bash
+refresh status -A -o json > status.json || [ $? -le 3 ]
+```
+
+## Gate a pipeline on upgrade readiness
+
+```bash
+refresh cluster upgrade-check prod --show-passing -o json > check.json
+```
+
+| Exit code | What the pipeline does |
+|---|---|
+| `0` | Go on. |
+| `2` | Go on, or stop for a review. Your choice. |
+| `3` | Stop. |
+| `4` | Stop. The report is incomplete. |
+
+To keep the report and never fail the job, add `--exit-zero`.
+
+## Patch one cluster
+
+1. Look at the plan and the AMI release notes.
+
+    ```bash
+    refresh nodegroup update -c prod --dry-run --changelog
+    ```
+
+2. Roll the nodegroups.
+
+    ```bash
+    refresh nodegroup update -c prod
+    ```
+
+3. Update the add-ons.
+
+    ```bash
+    refresh addon update --all -c prod
+    ```
+
+## Patch nodegroups by pattern
+
+```bash
+refresh nodegroup update -c prod -f name=web-*
+```
+
+The confirmation lists the nodegroups that match.
+
+## Patch every cluster of some regions
+
+1. Look at the plan for every cluster.
+
+    ```bash
+    refresh nodegroup update --all-clusters -r us-east-1,us-west-2 --dry-run
+    ```
+
+2. Run it. The command asks once, for all the clusters.
+
+    ```bash
+    refresh nodegroup update --all-clusters -r us-east-1,us-west-2
+    ```
+
+A cluster that is blocked or fails does not stop the next one.
+
+## Patch from a nightly job
+
+A job has no terminal, so it needs `--yes`. `--require-healthy` makes every
+health warning a stop, so the job never goes past a warning that nobody saw.
+
+```bash
+#!/bin/sh
+refresh nodegroup update -c prod --yes --require-healthy -o json > run.json
+code=$?
+case $code in
+  0) echo "patched, or nothing to do" ;;
+  3) echo "blocked: nothing changed"; jq -r '.clusters[].gate.reasons[]' run.json ;;
+  4) echo "incomplete: check the failures"; jq -r '.failures[] | "\(.kind) \(.name): \(.error)"' run.json ;;
+  5) echo "rolled, and the verification found an issue"; jq -r '.clusters[].verification[] | select(.outcome == "Fail") | .message' run.json ;;
+  *) echo "failed" ;;
 esac
+exit $code
 ```
 
-See [`refresh status`](../commands/status.md).
+## Scale a nodegroup down safely
 
----
+1. Look at the verdict of the health gate.
 
-## Readiness: am I safe to upgrade?
+    ```bash
+    refresh nodegroup scale web -c prod --desired 2 --dry-run
+    ```
 
-A read-only pre-flight that surfaces AWS Cluster Insights plus control-plane vs.
-nodegroup/add-on version skew. Nothing is mutated.
+2. If the gate blocks, fix the PodDisruptionBudget that it names, or accept the
+   disruption with `--force`.
+3. Scale.
+
+    ```bash
+    refresh nodegroup scale web -c prod --desired 2
+    ```
+
+## Upgrade a cluster
+
+1. Check readiness.
+
+    ```bash
+    refresh cluster upgrade-check prod
+    ```
+
+2. Look at the plan.
+
+    ```bash
+    refresh cluster upgrade prod --to 1.35 --dry-run
+    ```
+
+3. Upgrade. On a terminal, the command asks before each phase.
+
+    ```bash
+    refresh cluster upgrade prod --to 1.35
+    ```
+
+4. If the run stops, run the same command again.
+
+To upgrade in parts, on different days:
 
 ```bash
-refresh cluster upgrade-check -c prod-east
-
-# Include passing checks, as JSON for a gate
-refresh cluster upgrade-check -c prod-east --show-passing -o json
-
-# Drill into a flagged insight
-refresh cluster upgrade-check -c prod-east --id <insight-id>
+refresh cluster upgrade prod --to 1.35 --only control-plane
+refresh cluster upgrade prod --to 1.35 --only addons
+refresh cluster upgrade prod --to 1.35 --only nodegroups
 ```
 
-In CI, the exit code is the gate: `0` ready, `2` warnings, `3` blocked.
+To leave an add-on alone that Helm or GitOps manages:
 
 ```bash
-refresh cluster upgrade-check -c prod-east -o json > readiness.json
-case $? in
-  0) echo "ready" ;;
-  2) echo "warnings: review readiness.json" ;;
-  3) echo "blocked"; exit 1 ;;
-  *) echo "check failed"; exit 1 ;;
-esac
+refresh cluster upgrade prod --to 1.35 --skip-addon coredns
 ```
 
-Add `--exit-zero` to keep the report and always exit `0`.
-
-See [`cluster upgrade-check`](../commands/cluster.md#upgrade-check).
-
----
-
-## Patch a single nodegroup
-
-Always preview first. `--changelog` prints the `amazon-eks-ami` release notes
-between the current and target AMI so you know what's changing. Bottlerocket
-and Windows nodegroups get a link to their own release notes instead.
+## Roll an upgrade back
 
 ```bash
-# Preview the roll + read the AMI changelog
-refresh nodegroup update prod-east ng-default --dry-run --changelog
-
-# Roll it, requiring a clean health gate
-refresh nodegroup update prod-east ng-default --require-healthy
+refresh cluster upgrade-check prod      # the ROLLBACK section shows the window
+refresh cluster rollback prod --dry-run
+refresh cluster rollback prod
 ```
 
-See [`nodegroup update`](../commands/nodegroup.md#update).
-
----
-
-## Patch the whole fleet
-
-Fleet mode discovers clusters across regions and rolls them serially with one
-batch confirmation and a worst-outcome exit code. Dry-run, eyeball, then commit.
+## Stop repeating `-c`, `-r`, and `--profile`
 
 ```bash
-# Fleet-wide plan
-refresh nodegroup update --all-clusters -r us-east-1 -r us-west-2 --dry-run
-
-# Execute once the plan looks right
-refresh nodegroup update --all-clusters -r us-east-1 -r us-west-2 --yes
+refresh context add prod --cluster prod-eks --region us-east-1 --profile prod
+refresh context add stage --cluster stage-eks --region us-east-1 --profile stage
+refresh context use prod
+refresh nodegroup list
 ```
 
-Each cluster gets its own `--wait-timeout`. A region that can't be listed makes
-the run exit `4`; see [fleet mode](../commands/nodegroup.md#fleet-mode).
-
----
-
-## Unattended / CI patch
-
-For cron, suppress prompts with `--yes`, treat health warnings as a hard stop
-with `--require-healthy`, and emit a JSON summary with `-o json`. Branch on the
-[exit code](../concepts/exit-codes.md).
+For one shell or one job, set the variables:
 
 ```bash
-refresh nodegroup update -c prod --yes --require-healthy -o json
-case $? in
-  0) echo "patched cleanly" ;;
-  2) echo "health warnings — review" ;;
-  3) echo "blocked by health — do not proceed" ;;
-  4) echo "some updates failed to start" ;;
-  5) echo "rolled, but verification flagged issues" ;;
-esac
+export REFRESH_CONTEXT=stage      # a saved context
+export REFRESH_CLUSTER=stage-eks  # or only the cluster
 ```
-
-!!! warning "TTY-less runs need `--yes`"
-    Without a terminal, with `--quiet`, or with `-o json`, a run that would
-    otherwise prompt fails fast unless you pass `--yes` — so CI never hangs
-    waiting on stdin. A nodegroup pattern that is not an exact name also
-    needs `--yes`. Pass exact cluster names in scripts: `--yes` does not
-    accept a partial cluster name. Since 0.11, `addon update`,
-    `nodegroup scale`, and `cluster upgrade` also need `--yes` in a script,
-    because they ask before they change anything.
-
----
-
-## Update add-ons safely
-
-Update every add-on in dependency-safe order (`vpc-cni` → `coredns`/`kube-proxy`
-→ others), waiting for each to settle before the next.
-
-```bash
-# Lists the add-ons that would change and asks once
-refresh addon update prod-east --all --dependency-order --wait
-
-# Skip an add-on you manage via Helm/GitOps
-refresh addon update prod-east --all --dependency-order --wait --skip aws-load-balancer-controller
-
-# In a script: no prompt
-refresh addon update prod-east --all --dependency-order --wait --yes -o json
-```
-
-See [`addon update`](../commands/addon.md#update).
-
----
-
-## Safe scale-down
-
-EKS does not honor PodDisruptionBudgets when a scaling change removes nodes: it
-terminates them and their pods go down. `--check-pdbs` refuses the scale-down
-(exit `3`) if it could remove more of a PDB's pods than the PDB allows. The
-gate assumes the worst case: the removed nodes are the ones that hold the most
-of the PDB's pods. If it can't read the PDBs, it refuses too.
-
-```bash
-# Preview the gate's verdict and the blocking PDBs (no changes)
-refresh nodegroup scale prod-east -n ng-default --desired 2 --check-pdbs --dry-run
-
-# Scale down for real, refused if a PDB blocks it, waiting for it to settle
-refresh nodegroup scale prod-east -n ng-default --desired 2 --check-pdbs --wait
-
-# Accept the disruption and scale down anyway (no prompt with --yes)
-refresh nodegroup scale prod-east -n ng-default --desired 2 --check-pdbs --force --yes
-```
-
-See [`nodegroup scale`](../commands/nodegroup.md#scale).
-
----
-
-## Stop repeating `--region` / `--profile`
-
-Save your environments once as [contexts](../commands/contexts.md), then switch
-by name. The active context fills in cluster/region/profile defaults.
-
-```bash
-refresh context add prod  --cluster prod-eks  --region us-east-1 --profile prod
-refresh context add stage --cluster stage-eks --region us-west-2 --profile stage
-
-refresh use prod
-refresh nodegroup list           # targets prod-eks / us-east-1 / prod
-refresh cluster upgrade-check    # same context, no flags
-
-refresh use stage                # flip the whole environment
-```
-
----
-
-## Orchestrate a full cluster upgrade
-
-When you're ready to move a minor version, let `refresh` sequence the whole
-thing: control plane → nodegroups → add-ons, with a health gate after every
-phase. Add-ons the new control plane cannot run update before the rolls. EKS upgrades one minor at a time, so a multi-minor jump expands into
-sequential hops. Always dry-run first.
-
-```bash
-# Print the ordered plan (exits 3 if anything blocks)
-refresh cluster upgrade -c prod-east --to 1.33 --dry-run
-
-# Execute, confirming each mutating phase
-refresh cluster upgrade -c prod-east --to 1.33
-
-# Non-interactive run, skipping a Helm-managed add-on
-refresh cluster upgrade -c prod-east --to 1.33 --yes --skip aws-load-balancer-controller
-```
-
-The plan is re-derived from live state on every run, so rerunning after a
-failure (or Ctrl+C) resumes where it left off. `refresh` prints the exact
-command to rerun. For CI, get one JSON document with the plan and what the
-run did:
-
-```bash
-refresh cluster upgrade -c prod-east --to 1.33 --yes -o json 2>upgrade.log | jq '.report'
-```
-
-The run needs `eks:StartInsightsRefresh` and `eks:DescribeInsightsRefresh`
-for the readiness gate. See [`cluster upgrade`](../commands/cluster.md#upgrade).

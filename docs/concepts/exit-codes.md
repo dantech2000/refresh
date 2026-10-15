@@ -1,287 +1,158 @@
 # Exit codes
 
-Every `refresh` command follows one exit-code contract, so a CI job or a cron
-script can branch on the result without reading the output.
-
-## The contract
+Every command uses the same six codes.
 
 | Code | Meaning |
 |---|---|
-| `0` | OK. The command did what you asked and found nothing to report. |
-| `1` | Error or interrupt: bad flags, an AWS error, not found, a missing `--yes`, Ctrl+C, or SIGTERM. |
-| `2` | Needs attention. The command finished, but it found warnings or stale items. |
-| `3` | Blocked or unsupported. A gate stopped the operation and nothing changed, or the target is on extended support or unsupported. |
-| `4` | Incomplete data or partial failure. The command printed what it gathered, but some of it is missing or failed. If nothing could be gathered, the command fails with `1` instead. |
-| `5` | Post-action verification failed. The change was applied, but the check after it found issues. |
+| `0` | OK. |
+| `1` | An error, or an interrupt. |
+| `2` | Needs attention: warnings, or items that are out of date. |
+| `3` | Blocked or unsupported. A gate stopped the change. Nothing changed. When a gate stops a later phase of an upgrade or a rollback, nothing more changed, and the message names the phases that completed. |
+| `4` | Incomplete data, or a partial failure. |
+| `5` | The change was applied, and the check after it found issues. |
 
-Rules that apply to every command:
+When one run has several results, the highest code wins. An interrupt is
+always `1`. There is one exception to the interrupt rule: Ctrl+C in `--watch`
+exits `0`, because that is the normal way to end a watch.
 
-- With `-o json` or `-o yaml`, the command prints its document first. Then the
-  exit code applies. A non-zero code never means the document is missing,
-  unless the code is `1`.
-- A partial result is never a success. The command names what it could not
-  read on stderr, lists it under `failures` in the JSON/YAML document (see
-  [Failures](output.md#failures)), and exits `4`.
-- An interrupt exits `1`. A second Ctrl+C ends the process at once. Data
-  cut short by Ctrl+C is an interrupted run, so it exits `1`, not `4`. Data
-  cut short by the `--timeout` deadline is a partial result and exits `4`.
-- With `--watch`, a partial result (`4`) names what it could not read on
-  stderr, and the watch continues. Any other error ends the watch. Stopping
-  the watch with Ctrl+C exits `0`.
-- `--help` for every command lists the codes that command can return and
-  links to this page.
+A command prints its document first and then exits with the code. So a script
+can read the document of a run that exits `3`, `4`, or `5`.
+
+The message on stderr of an exit `2` or `3` is a verdict, not an error, and
+prints alone:
+
+```text
+upgrade needs review: 1 insight warns
+dry run: a real run would be blocked
+```
+
+Every other message starts with `Error:`: an error or an interrupt (`1`),
+incomplete data or a partial failure (`4`), and a failed verification (`5`).
 
 ## Codes per command
 
-| Command | Codes it can return |
-|---|---|
-| [`status`](#status) | `0`, `1`, `2` stale or needs attention, `3` extended support or unsupported, `4` incomplete data |
-| `cluster list` | `0`, `1` (also when no region answered), `4` a region failed, or a cluster could not be fully read |
-| `cluster describe` | `0`, `1`, `4` some add-ons or nodegroups could not be read |
-| [`cluster upgrade-check`](#cluster-upgrade-check) | `0` ready, `1`, `2` warnings only, `3` blocked, `4` a nodegroup or add-on could not be read |
-| [`cluster upgrade`](#cluster-upgrade) | `0`, `1` error, failed phase, interrupt, or timeout, `3` the plan has a blocker, `4` the planner or a pre-roll gate could not read something, or a nodegroup could not be read after its roll, `5` post-roll verification found issues |
-| [`cluster rollback`](../commands/cluster.md#rollback-exit-codes) | `0`, `1` error, failed phase, declined confirmation, interrupt, or timeout, `3` blocked (window, insights, upgrade policy), `4` the planner or a pre-roll gate could not read something, or a nodegroup could not be read after its rollback, `5` post-roll verification found issues |
-| `nodegroup list` | `0`, `1`, `4` a nodegroup could not be described |
-| `nodegroup describe` | `0`, `1` |
-| [`nodegroup scale`](#nodegroup-scale) | `0`, `1`, `3` blocked by `--check-pdbs`, the pre-scaling health check, or a busy cluster, `4` `--force` scaled without being able to check the PDBs, or a `--health-check` could not read something, `5` post-scaling health check failed |
-| [`nodegroup update`](#nodegroup-update) | `0`, `1`, `2`, `3`, `4`, `5` |
-| `addon list` | `0`, `1`, `4` an add-on could not be described |
-| `addon describe` | `0`, `1` |
-| [`addon update`](#addon-update) | `0`, `1`, `3`, `4`, `5` |
-| `use`, `current`, `context list/add/remove` | `0`, `1` |
-| `version`, `install-man`, `completion` | `0`, `1` |
-
-A failed latest-AMI lookup (for example, a missing `ssm:GetParameter`
-permission) is advisory in `nodegroup list` and `nodegroup describe`. The
-AMI column shows `unknown (lookup failed)`, the row has an
-`amiLookupFailure` object, and the exit code does not change.
-`status` counts the same failure as incomplete data (`4`), because AMI
-staleness is part of its verdict.
+| Command | `0` | `1` | `2` | `3` | `4` | `5` |
+|---|---|---|---|---|---|---|
+| `status` | Everything current, in standard support | Error; no region answered | Something is out of date | A cluster in extended support, or unsupported | A part of the fleet could not be read | |
+| `cluster list`, `cluster describe`, `nodegroup list`, `nodegroup describe`, `addon list`, `addon describe` | Read | Error; not found | | | A part could not be read | |
+| `cluster upgrade-check` | Ready | Error | Review: warnings | Blocked | A check or an item could not be read | |
+| `nodegroup update`, `addon update` | Done, or nothing to do | Error; answered no; interrupt; every change failed | Dry run only: the real run would ask | Blocked; every target busy | Partial failure; a busy target beside others that changed; wait timed out; unread data | The verification found an issue |
+| `nodegroup scale` | Done, or nothing to do | Error; answered no; interrupt; the update failed; sizes that cannot hold | Dry run only | Blocked; busy target | Wait timed out; unread data | |
+| `cluster upgrade`, `cluster rollback` | Done, or nothing to do | Error; answered no; interrupt; a phase failed | Dry run only | Blocked | Wait timed out; unread data | The verification found an issue |
+| `context ...`, `version`, `completion` | Done | Error | | | | |
+| `ui` | Quit | Error | | | | |
 
 ## `status`
 
-| Code | Meaning |
+| Result | Code |
 |---|---|
-| `0` | Every cluster is current and in standard support |
-| `2` | Something needs attention: a stale nodegroup AMI, an addon behind latest, a nodegroup behind the control-plane version, or an AWS-reported control-plane health issue (the `HEALTH` column) |
-| `3` | A cluster is on extended support or unsupported |
-| `4` | Incomplete data: part of a cluster row could not be read (a failed AWS call, or a sweep that timed out before it reached the cluster), or a region could not be listed |
-| `1` | An error, or nothing could be gathered: every region failed or was skipped |
+| Every cluster is current and in standard support | `0` |
+| A stale AMI, a nodegroup behind the control plane, an add-on behind, or a health issue of the control plane, a nodegroup, or an add-on (a `DEGRADED` add-on counts) | `2` |
+| A cluster in extended support, or unsupported | `3` |
+| A part of the fleet could not be read | `4` |
+| An error, or no region answered | `1` |
 
-When more than one applies, the highest-priority code wins: `3`, then `2`,
-then `4`. Incomplete data never exits `0`. An incomplete row shows an unknown
-marker in the table, and the table lists each failure under `INCOMPLETE
-DATA`. With `-o json`/`-o yaml`, the row has `"incomplete": true` and the
-failures are in the top-level `failures`; `-o plain` names them on stderr.
-
-## Region sweeps
-
-`status`, `cluster list -A`, and `nodegroup update --all-clusters` share one
-rule for regions: `4` means some data is missing; if nothing could be
-gathered, the command fails with `1`. The default sweep (no `-r` and no `REFRESH_EKS_REGIONS`)
-skips regions your credentials can't use, such as an SCP denial or a region
-that is not enabled. It prints one note on stderr, and a skipped region does
-not count as a failure. When you name the regions with `-r` or
-`REFRESH_EKS_REGIONS`, a denied region is a failure.
-
-- A region that failed while at least one other region answered (even with
-  no clusters) makes the run exit `4`. `cluster list` and `status` print what
-  the answering regions returned first.
-- When no region answered (every region failed, or every region was
-  skipped), nothing was gathered. The command prints an error and exits `1`.
-  For `nodegroup update --all-clusters`, a discovery that does not finish
-  within `--wait-timeout` also exits `1`.
+The highest code wins: incomplete data (`4`) outranks an unsupported cluster
+(`3`).
 
 ## `cluster upgrade-check`
 
-`upgrade-check` is a CI gate. The exit code follows the readiness verdict in
-the table header (`READY`, `REVIEW`, `NOT READY`). The verdict covers the
-insights in the report, the version skew, and the control-plane health check:
+The exit code is the verdict.
 
-| Code | Meaning |
+| Verdict | Code |
 |---|---|
-| `0` | Ready: no finding |
-| `2` | Needs attention (`REVIEW`): a `WARNING` insight, a nodegroup behind the control plane but inside the kubelet skew limit, an addon behind its latest compatible version, or a control-plane health warning |
-| `3` | Blocked (`NOT READY`): an `ERROR` or `UNKNOWN` insight, a nodegroup at the kubelet skew limit (3 minors behind), or a failed control-plane health check (for example, etcd near its size limit) |
-| `4` | Incomplete (`INCOMPLETE`): nothing blocks, but a nodegroup or add-on could not be read. The document lists them under `failures` |
-| `1` | An error, such as an AWS error, a cluster that does not exist, or an interrupt |
+| Ready | `0` |
+| Review: a warning | `2` |
+| Blocked: an `ERROR` or `UNKNOWN` insight, or a nodegroup too far behind | `3` |
+| Incomplete: a check, a nodegroup, or an add-on could not be read | `4` |
 
-`UNKNOWN` blocks because `cluster upgrade` refuses a hop on an `UNKNOWN`
-insight too: EKS could not evaluate it, so nothing says the upgrade is safe.
+- A blocked cluster with an unread item exits `4`.
+- `--exit-zero` prints the report and exits `0`.
+- `--status` narrows the insights that are shown. It does not change the
+  verdict.
+- `--insight` exits with the status of that one insight.
 
-Precedence is `3`, then `4`, then `2`. A known blocker wins over missing
-data. Missing data wins over warnings, because the item that could not be
-read (for example, a throttled `DescribeNodegroup` on the one nodegroup 3
-minors behind) could be a blocker.
+## Dry runs
 
-`--category` and `--status` narrow the insights, and the gate looks only at
-the insights in the report. With `--id`, the exit code reflects that one
-insight: `0` for `PASSING`, `2` for `WARNING`, `3` for `ERROR` or `UNKNOWN`.
+The exit code of `--dry-run` comes from the findings alone. `--yes` does not
+change it.
 
-`--exit-zero` turns the gate off, for `2`, `3`, and `4`. The command prints
-the same report and exits `0` unless an error or an interrupt stops it. Use it where you want the report without
-failing the job.
+| Finding | Code |
+|---|---|
+| The real run would go | `0` |
+| The real run would ask about warnings | `2` |
+| The real run would be blocked | `3` |
+| A check or the plan could not read what it needs | `4` |
+
+Exit `2` is the code of a dry run whose real run would ask, and of nothing else
+in a changing command.
+
+## Real runs of a changing command
+
+Each step of the run has a code. The run exits with the highest.
+
+| Result of a step | Code |
+|---|---|
+| Succeeded, skipped, or started with `--no-wait` | `0` |
+| The update failed, or EKS refused the request | `1` |
+| The busy rule, the health gate, or `--require-healthy` over a warning stopped it | `3` |
+| The gate or the plan could not read what it needs | `4` |
+| The target was already changing, and no other target changed | `3` |
+| The target was already changing, and another target changed or failed | `4` |
+| `--wait-timeout` passed before the change finished | `4` |
+| AWS accepted the change, and it could not be followed | `4` |
+| The verification found an issue; an add-on was updated and is not healthy | `5` |
+
+Other results:
+
+| Result | Code |
+|---|---|
+| A question answered no | `1` |
+| Ctrl+C | `1`, whatever else happened |
+| A read failed in the plan, the gate, a region, or the verification | `4` |
+| A warning that `--yes` or an answer accepted, in a run that then succeeds | `0` |
+
+### Partial failure
+
+For independent targets, a failure beside a success is a partial failure. The
+independent targets are the nodegroups of `nodegroup update`, the add-ons of
+`addon update --all`, and the clusters of `nodegroup update --all-clusters`.
+
+| Steps | Code |
+|---|---|
+| One failed, one succeeded or started | `4` |
+| Every attempted step failed | `1` |
+| One failed, one skipped as already current | `1` |
+| One blocked, the rest succeeded | `3` |
+| One verification issue, the rest succeeded | `5` |
+
+`cluster upgrade` and `cluster rollback` are a sequence. A phase that fails
+ends the run with exit `1`, whatever the earlier phases did. The message names
+the phases that completed and the command that goes on from there.
+
+### A wait that times out
+
+If `--wait-timeout` passes, the command exits `4`. The change may still be
+running in AWS. Nothing is cancelled. Run the command again: the plan comes
+from the live state.
+
+## Region sweeps
+
+| Result | Code |
+|---|---|
+| A default sweep skipped a region | No effect |
+| A region that you named could not be read | `4` |
+| No region answered | `1` |
+
+## In a script
 
 ```bash
-refresh cluster upgrade-check -c prod -o json > readiness.json
+refresh cluster upgrade-check prod -o json > check.json
 case $? in
-  0) echo "ready to upgrade" ;;
-  2) echo "warnings: review readiness.json" ;;
-  3) echo "blocked: do not upgrade" ;;
-  4) echo "incomplete: see .failures in readiness.json" ;;
-  *) echo "check failed" ;;
+  0) echo "ready" ;;
+  2) echo "review the warnings" ;;
+  3) echo "blocked"; exit 1 ;;
+  4) echo "incomplete: check the failures list"; exit 1 ;;
+  *) echo "error"; exit 1 ;;
 esac
 ```
-
-## `cluster upgrade`
-
-| Code | Meaning |
-|---|---|
-| `0` | The plan finished, or there was nothing to do. A `--dry-run` with no blocker |
-| `1` | A phase failed, the run was interrupted, or it timed out |
-| `3` | The plan has a blocker, also with `--dry-run`. Nothing changed |
-| `4` | The planner could not read something: the check that EKS offers the target version, the Cluster Insights, or an add-on's version catalog. A `--dry-run` exits `4`. A real run goes ahead as before and exits `4` when it finishes. The same applies to a read the pre-roll gate could not make and the run went past: PodDisruptionBudgets with `--force`, or a health check's read with `--yes`. Also: a nodegroup could not be read after its roll, so its state is unknown. The run stops there |
-| `5` | A nodegroup roll finished, and post-roll verification found issues: the nodegroup is not `ACTIVE`, or pods became `Pending` during the roll. The run stops there. `--skip-verify` turns the verification off |
-
-Precedence is `1`, then `5`, then `3`, then `4`. A failed read in a readiness gate
-also blocks the plan, so it exits `3`, and the document lists the read under
-`failures`.
-
-The verification is the one [`nodegroup update`](#nodegroup-update) runs.
-When it also could not read the nodegroup, the run still exits `5`, and the
-read is in `failures`. A run that it stops is resumed with the same command.
-The rerun checks the nodegroup again: a nodegroup at the target version that
-is not `ACTIVE`, or that has an update in progress, is not done. The rerun
-exits `5` again while the nodegroup is not `ACTIVE`.
-
-A `--wait-timeout` that runs out is a timeout, not an interrupt: the error
-says `timed out` and names `--wait-timeout`. After a failure, an interrupt,
-or a timeout, `refresh` prints the command that resumes the upgrade, with the `--wait-timeout`, `--yes`, and other flags you gave. See
-[`cluster upgrade`](../commands/cluster.md#upgrade).
-
-## `nodegroup scale`
-
-| Code | Meaning |
-|---|---|
-| `0` | The scaling request was accepted (and, with `--wait`, it settled) |
-| `1` | An error, including a `--check-pdbs` check that could not read the PDBs, a declined confirmation, or a missing `--yes` without a terminal |
-| `3` | Blocked: `--check-pdbs` refused a scale-down, the pre-scaling health check (`--health-check`) blocked it, or EKS was already changing the cluster. Nothing changed. A `--dry-run` with `--check-pdbs` exits `3` or `1` where the real run would |
-| `4` | With `--check-pdbs --force`: the PDBs could not be checked, and the scale went ahead without the check (a `--dry-run` exits `4` too). With `--health-check`: a health check could not read something, such as the pods of a critical namespace. The scale went ahead, and the read is in `failures` |
-| `5` | The scale was applied, but the post-scaling health check found blocking issues |
-
-A PDB check that could not read what it needs is a
-[failure](output.md#failures), listed under `INCOMPLETE DATA`.
-
-See [Scale-down PDB gate](health-checks.md#scale-down-pdb-gate).
-
-## `nodegroup update`
-
-| Code | Meaning |
-|---|---|
-| `0` | Success: updates started or completed as expected |
-| `1` | An error, an interrupt (Ctrl+C), a monitoring timeout, or an EKS update that ended `Failed` or `Cancelled` or could not be monitored |
-| `2` | Health warnings (with `--health-only` or `--require-healthy`) |
-| `3` | Blocked: a pre-flight check failed, the PDB drain gate found a blocker (without `--force`), or EKS was already changing the cluster. Nothing was rolled. A `--dry-run` exits `3` where the drain gate would refuse |
-| `4` | A failure: a nodegroup could not be read (also in a `--dry-run` preview or after the roll), or its update could not start. Also: `--force` rolled past PodDisruptionBudgets that could not be read. With `--health-only`, a pass whose checks could not read everything |
-| `5` | Post-roll verification found issues (nodes not Ready, or newly stuck pods) |
-
-Precedence is `1`, then `4`, then `5`. A health gate that stops the run keeps
-its code (`2` or `3`), also when a read it could not make caused the verdict;
-the document lists that read under `failures`.
-
-After an interrupt or a monitoring timeout, the EKS update keeps running in
-AWS. Check it with `refresh nodegroup list <cluster>`.
-
-In fleet mode (`--all-clusters`) the run exits with the worst code across
-clusters: `5`, then `4`, then `3`, then `2`, then `1`. A cluster stopped by
-health warnings (`--health-only` or `--require-healthy`) counts as `2`, a
-cluster skipped as `Busy` or refused as `DrainBlocked` counts as `3`, and
-an interrupted or timed-out cluster counts as `1`. A region whose clusters
-could not be listed counts as `4`; see [Region sweeps](#region-sweeps).
-
-A cluster with any other error counts as `4`, including a roll that ended
-`Failed` or `Cancelled`. The same failure exits `1` in a single-cluster run.
-In a fleet, one cluster's failure while the others finish is a partial
-result, so it is `4`.
-
-```bash
-refresh nodegroup update -c prod --yes --require-healthy -o json
-case $? in
-  0) echo "patched cleanly" ;;
-  2) echo "health warnings: review" ;;
-  3) echo "blocked by health: do not proceed" ;;
-  4) echo "something could not be read or started: see .failures" ;;
-  5) echo "rolled, but verification flagged issues" ;;
-esac
-```
-
-See [`nodegroup update`](../commands/nodegroup.md#update) for the flags that
-drive these (`--health-only`, `--require-healthy`, `--skip-verify`).
-
-## `addon update`
-
-| Code | Meaning |
-|---|---|
-| `0` | Success: updates started, completed, were already `UpToDate`, or were already `InProgress` |
-| `1` | An error or an interrupt. For a single add-on, also a failed update: the API call failed, or with `--wait` the EKS update was `Failed`/`Cancelled`, the add-on ended at another version, or the wait timed out (`WaitFailed`) |
-| `3` | EKS was already changing the cluster (the control plane, a nodegroup, or another add-on). Nothing was started |
-| `4` | A failure: with `--all`, an add-on update failed, did not complete, or was not attempted because the run hit its deadline. For any run, an add-on that could not be read after its update (`Unverified`) |
-| `5` | The update landed, but a post-update health check found issues (`CompletedWithIssues`) |
-
-With `--all`, a failure (`4`) wins over health issues (`5`). An `--all` run
-stopped by Ctrl+C exits `1`. The command prints the result before it exits,
-so `-o json` output always has the update ID and status.
-
-```bash
-refresh addon update -c prod vpc-cni --wait -o json
-case $? in
-  0) echo "updated" ;;
-  5) echo "updated, but check the add-on's health" ;;
-  *) echo "update failed" ;;
-esac
-```
-
-## Changes after 0.12 (mutating commands)
-
-| Command | Before | Now |
-|---|---|---|
-| `nodegroup update` (a PodDisruptionBudget would block the drain of a nodegroup to roll) | Warning; the roll started and stalled | `3`, nothing started; `--force` rolls anyway |
-| `nodegroup update --dry-run` (the same) | `0` | `3` |
-| `nodegroup update`, `nodegroup scale`, `addon update` (EKS is already changing the cluster) | `1` from EKS after the prompt | `3` before the prompt |
-
-## Changes in 0.12.0 (mutating commands)
-
-The failure-reporting redesign (REF-179) moved these cases from a finding or
-a pass to a failure:
-
-| Command | Before | Now |
-|---|---|---|
-| `nodegroup update --dry-run` (a nodegroup could not be described) | `0`, shown as `skip-updating` | `4`, action `Unknown` with a `failure` |
-| `nodegroup update --all-clusters --dry-run` (a cluster could not be previewed) | `0` | `4` |
-| `nodegroup update` (post-roll verification could not describe a nodegroup) | `5` | `4` |
-| `nodegroup update --all-clusters` (no clusters found, and a region could not be listed) | `4` with no document | `4` with the document |
-| `addon update --wait` (the post-update health check could not read the add-on) | `5` (`COMPLETED_WITH_ISSUES`) | `4` (`Unverified`) |
-| `cluster upgrade --dry-run` (could not check that EKS offers the target, or could not read the insights) | `0` | `4` |
-| `cluster upgrade` (the same reads failed, and the run finished) | `0` | `4` |
-| `nodegroup scale --check-pdbs --force` (the PDBs could not be checked) | `0` | `4` |
-
-## Changes in 0.11.0
-
-The contract above is new in 0.11.0 (REF-165). If your scripts check exit
-codes, review these changes:
-
-| Command | Before | Now |
-|---|---|---|
-| `cluster upgrade-check` | Always `0` | `2` for warnings, `3` for blockers, `4` when a nodegroup or add-on could not be read. Add `--exit-zero` to keep the old behavior |
-| `cluster list` (some regions failed) | `0` with a stderr warning | `4` |
-| `status` (every region skipped as not accessible) | `4` | `1` |
-| `status`, `cluster list`, `cluster describe`, `nodegroup list`, `addon list`, fleet mode (Ctrl+C after some data came back) | `4` | `1` |
-| `status` (a region answered with no clusters, another failed) | `1` | `4` |
-| `nodegroup update --all-clusters` (no region listed, or discovery hit `--wait-timeout`) | `4` | `1` |
-| `cluster describe` (add-ons or nodegroups unreadable) | `0` with a stderr warning | `4` |
-| `nodegroup list`, `addon list` (items not described) | `1` | `4` |
-| `cluster upgrade` (blocked plan) | `1` | `3` |
-| `nodegroup scale` (`--check-pdbs` refusal, pre-scaling health block) | `1` | `3` |
-| `nodegroup scale` (post-scaling health check failed) | `1` | `5` |
-| `addon update` (`COMPLETED_WITH_ISSUES`) | `2` | `5` |
-| `addon update --all` (an add-on failed or was not attempted) | `1` | `4` |

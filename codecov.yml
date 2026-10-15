@@ -13,3 +13,10 @@ coverage:
       default:
         # Lines added or changed in the PR.
         target: 70%
+
+# Not product code: the fake world and its servers, the dev tools, and the
+# parity runner. Their lines would dilute the ratio that the statuses gate.
+ignore:
+  - "internal/**/*test/**"
+  - "tools/**"
+  - "test/**"

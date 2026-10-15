@@ -1,68 +1,98 @@
 # Installation
 
-`refresh` ships as a single static binary (no runtime dependencies) for Linux,
-macOS, and Windows on amd64 and arm64.
+`refresh` is one static binary for Linux, macOS, and Windows, on amd64 and
+arm64.
 
-## Homebrew (macOS / Linux)
+## Homebrew (macOS and Linux)
 
 ```bash
 brew install dantech2000/tap/refresh
-# upgrade later with:
+```
+
+To upgrade later:
+
+```bash
 brew upgrade dantech2000/tap/refresh
 ```
 
+The cask installs the man pages too.
+
 ## go install
 
-Requires Go **1.26+**:
+This needs Go 1.26 or later.
 
 ```bash
-go install github.com/dantech2000/refresh@latest
+go install github.com/dantech2000/refresh/cmd/refresh@latest
 ```
 
-The binary lands in `$(go env GOPATH)/bin` — make sure that's on your `PATH`.
+The binary goes to `$(go env GOPATH)/bin`. Make sure that directory is on your
+`PATH`.
 
-## Pre-built binary (with signature verification)
+!!! note "The path changed after 0.16"
+    Releases up to 0.16 installed from `github.com/dantech2000/refresh@latest`.
+    That path no longer builds a binary.
 
-Download the archive for your platform from the
-[releases page](https://github.com/dantech2000/refresh/releases/latest), then
-verify it before use.
+## Pre-built binary
 
-Release artifacts are checksummed, and the checksums file is signed with
-[cosign](https://github.com/sigstore/cosign) using keyless (OIDC) signing — no
-long-lived keys. Verify the checksum signature, then the archive:
+The release archives are checksummed. The checksums file is signed with
+[cosign](https://github.com/sigstore/cosign) through GitHub's OIDC provider,
+so there is no long-lived key.
+
+1. Download the archive for your platform, `checksums.txt`,
+   `checksums.txt.sig`, and `checksums.txt.pem` from the
+   [releases page](https://github.com/dantech2000/refresh/releases/latest).
+2. Verify the signature of the checksums file.
+
+    ```bash
+    cosign verify-blob \
+      --certificate checksums.txt.pem \
+      --signature checksums.txt.sig \
+      --certificate-identity-regexp 'https://github.com/dantech2000/refresh' \
+      --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+      checksums.txt
+    ```
+
+3. Verify the archive against the checksums file.
+
+    ```bash
+    sha256sum --check --ignore-missing checksums.txt
+    ```
+
+4. Extract the archive and install the binary. An archive is named
+   `refresh_<version>_<os>_<arch>.tar.gz`.
+
+    ```bash
+    tar -xzf refresh_*_linux_amd64.tar.gz
+    sudo mv refresh /usr/local/bin/
+    ```
+
+5. Optional: install the man pages. They are in the `man/man1` directory of
+   the archive.
+
+    ```bash
+    sudo mkdir -p /usr/local/share/man/man1
+    sudo cp man/man1/*.1 /usr/local/share/man/man1/
+    ```
+
+On macOS, a binary that you download in a browser is quarantined. If macOS
+refuses to run it, clear the attribute:
 
 ```bash
-# 1) verify the signed checksums file
-cosign verify-blob \
-  --certificate checksums.txt.pem \
-  --signature checksums.txt.sig \
-  --certificate-identity-regexp 'https://github.com/dantech2000/refresh' \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  checksums.txt
-
-# 2) verify your downloaded archive against the (now-trusted) checksums
-sha256sum --check --ignore-missing checksums.txt
-
-# 3) extract and install (archives are named refresh_<version>_<os>_<arch>,
-#    e.g. refresh_1.2.3_linux_amd64.tar.gz or refresh_1.2.3_darwin_arm64.tar.gz)
-tar -xzf refresh_*_linux_amd64.tar.gz
-sudo mv refresh /usr/local/bin/
+xattr -dr com.apple.quarantine /usr/local/bin/refresh
 ```
 
-!!! tip "macOS Gatekeeper"
-    The Homebrew cask clears the quarantine attribute automatically. For a
-    manually-downloaded binary you may need:
-    `xattr -dr com.apple.quarantine /usr/local/bin/refresh`.
+The Homebrew cask does this for you.
 
 ## Shell completion
 
-`refresh` generates completion scripts for bash, zsh, and fish:
+`refresh completion` prints a completion script for bash, zsh, fish, or
+PowerShell. The scripts complete cluster, nodegroup, and add-on names from
+your account.
 
 === "zsh"
 
     ```bash
     refresh completion zsh > "${fpath[1]}/_refresh"
-    # then restart your shell
     ```
 
 === "bash"
@@ -77,28 +107,33 @@ sudo mv refresh /usr/local/bin/
     refresh completion fish > ~/.config/fish/completions/refresh.fish
     ```
 
-## Man page
+=== "PowerShell"
 
-```bash
-refresh install-man   # installs to your man path (no sudo required)
-man refresh
-```
+    ```powershell
+    refresh completion powershell | Out-String | Invoke-Expression
+    ```
 
-## Prerequisites
+Start a new shell after you install a script.
 
-- **AWS credentials** via the standard chain (env vars, shared config/profiles,
-  SSO, or an instance/role profile). See
-  [Configuration & AWS auth](../concepts/configuration.md).
-- **IAM permissions** — see
+## What refresh needs
+
+- **AWS credentials** from the standard chain. See
+  [Logging in to AWS](../concepts/logging-in.md).
+- **IAM permissions.** See
   [Required IAM permissions](../concepts/configuration.md#required-iam-permissions).
-- **A kubeconfig** *(optional)* — needed for the Kubernetes-backed pre-flight
-  health checks (`nodegroup update`, `cluster upgrade`), `nodegroup scale
-  --check-pdbs`, `--check-readiness`, and the live roll panel. Without it,
-  kube-dependent health checks degrade gracefully to "skipped", but
-  `--check-pdbs` refuses a scale-down.
+- **A kubeconfig for the cluster** (optional). The health checks that read the
+  Kubernetes API need it, and so do `--check-readiness`, `--show-workloads`,
+  and the live view of a roll. Without it, a changing command asks before it
+  goes on. See [Kubernetes access](../concepts/health-checks.md#kubernetes-access).
 
-## Verify the install
+## Check the install
 
 ```bash
 refresh version
+```
+
+```text
+refresh version: v0.16.0-158-gb62e59d
+commit: b62e59d
+built: 2026-10-14T01:16:43Z
 ```

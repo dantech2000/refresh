@@ -1,5 +1,7 @@
 # refresh rewrite plan
 
+> The cutover is done (2026-10-14): `legacy/` is deleted, and the new tree is the product. This file is kept as the record of the plan and the decisions.
+
 Status: draft 8, final. Codex (`gpt-6.1-sol`) rejected drafts 1 and 2 and approved draft 3 with changes. This draft applies those changes. The owner decided on 2026-10-12 that the CLI may change where the change is logical, and that the new tree follows the golang-standards project layout and Google's Go best practices. Draft 5 applied those two references, and Codex approved it with changes. On the same day the owner asked for a conventional codebase that any Go developer can pick up, with no project-specific ceremony. Draft 7 removed the bespoke command layer and the bespoke rules. Codex approved it with changes, and draft 8 applies them. Plan review is closed; Codex reviews code from here. See "Review record" at the end.
 
 ## Goal

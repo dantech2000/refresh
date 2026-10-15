@@ -1,7 +1,7 @@
-site_name: refresh — the EKS upgrade companion
+site_name: refresh
 site_description: >-
-  Documentation for refresh, the EKS upgrade companion: a Go CLI for the
-  cluster upgrade/patching lifecycle — status, readiness, patch, upgrade.
+  Documentation for refresh, a command-line tool that keeps Amazon EKS
+  clusters up to date: status, readiness, patch, upgrade.
 site_url: https://drod.dev/refresh/
 repo_url: https://github.com/dantech2000/refresh
 repo_name: dantech2000/refresh
@@ -51,6 +51,10 @@ theme:
 plugins:
   - search
 
+# Copies api/schema/ into the site, at /schema/<version>/<Kind>.json.
+hooks:
+  - tools/mkdocs/publish_schemas.py
+
 markdown_extensions:
   - abbr
   - admonition
@@ -92,40 +96,64 @@ nav:
       - Quickstart: getting-started/quickstart.md
   - Concepts:
       - The upgrade lifecycle: concepts/lifecycle.md
-      - Configuration & AWS auth: concepts/configuration.md
+      - Configuration: concepts/configuration.md
       - Logging in to AWS: concepts/logging-in.md
       - Contexts: concepts/contexts.md
-      - Pre-flight health checks: concepts/health-checks.md
+      - Health checks: concepts/health-checks.md
       - Output formats: concepts/output.md
       - Exit codes: concepts/exit-codes.md
   - Commands:
       - Overview: commands/index.md
-      - refresh status: commands/status.md
-      - refresh ui (experimental): commands/ui.md
+      - status: commands/status.md
       - cluster: commands/cluster.md
       - nodegroup: commands/nodegroup.md
       - addon: commands/addon.md
-      - Contexts (use/current/context): commands/contexts.md
-      - Utility (version/man/completion): commands/utility.md
+      - context: commands/contexts.md
+      - ui (experimental): commands/ui.md
+      - version, completion, and help: commands/utility.md
   - Reference:
-      - Overview: reference/index.md
-      - refresh status: reference/status.md
-      - ui: reference/ui.md
-      - cluster: reference/cluster.md
-      - nodegroup: reference/nodegroup.md
-      - addon: reference/addon.md
-      - use: reference/use.md
-      - current: reference/current.md
-      - context: reference/context.md
-      - version: reference/version.md
-      - install-man: reference/install-man.md
-      - completion: reference/completion.md
+      - refresh: reference/refresh.md
+      - status: reference/refresh_status.md
+      - cluster:
+          - reference/refresh_cluster.md
+          - list: reference/refresh_cluster_list.md
+          - describe: reference/refresh_cluster_describe.md
+          - upgrade-check: reference/refresh_cluster_upgrade-check.md
+          - upgrade: reference/refresh_cluster_upgrade.md
+          - rollback: reference/refresh_cluster_rollback.md
+      - nodegroup:
+          - reference/refresh_nodegroup.md
+          - list: reference/refresh_nodegroup_list.md
+          - describe: reference/refresh_nodegroup_describe.md
+          - update: reference/refresh_nodegroup_update.md
+          - scale: reference/refresh_nodegroup_scale.md
+      - addon:
+          - reference/refresh_addon.md
+          - list: reference/refresh_addon_list.md
+          - describe: reference/refresh_addon_describe.md
+          - update: reference/refresh_addon_update.md
+      - context:
+          - reference/refresh_context.md
+          - list: reference/refresh_context_list.md
+          - add: reference/refresh_context_add.md
+          - remove: reference/refresh_context_remove.md
+          - use: reference/refresh_context_use.md
+          - current: reference/refresh_context_current.md
+      - ui: reference/refresh_ui.md
+      - version: reference/refresh_version.md
+      - completion:
+          - reference/refresh_completion.md
+          - bash: reference/refresh_completion_bash.md
+          - zsh: reference/refresh_completion_zsh.md
+          - fish: reference/refresh_completion_fish.md
+          - powershell: reference/refresh_completion_powershell.md
       - JSON schemas: reference/schemas.md
-  - Usage & examples:
+  - Usage:
       - Cookbook: usage/cookbook.md
-      - Migrating from eksctl / aws CLI: migration.md
+      - Migrating from 0.16: migrating.md
+      - Coming from eksctl or the AWS CLI: migration.md
   - Changelog: changelog.md
 
-# Design notes for the rewrite are for contributors, not for the site.
+# Design notes of the rewrite are for contributors, not for the site.
 exclude_docs: |
   design/

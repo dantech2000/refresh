@@ -1,92 +1,63 @@
-# Utility (version / install-man / completion)
-
-Housekeeping commands: print the version, install the man page, and generate
-shell completion scripts.
-
----
+# version, completion, and help
 
 ## refresh version
 
-Print the running version (and, for release builds, the commit and build date).
-
 ```bash
-refresh version [flags]
+refresh version [-o table|json|yaml] [--no-update-check]
 ```
 
-| Flag | Description |
-|---|---|
-| `--no-update-check` | Skip the check for a newer release (env `REFRESH_NO_UPDATE_CHECK`) |
+The command prints the version, and the commit and build date of a release
+build.
 
-!!! note "Update hint (on by default)"
-    On an interactive terminal, `version` performs a throttled, fail-silent
-    check against GitHub Releases and prints a one-line hint to **stderr** when a
-    newer release is available. The check runs at most once per day (cached
-    under the user config dir), adds no measurable latency, and is skipped when
-    stdout is piped/redirected or the build is `dev`. Disable it entirely with
-    `--no-update-check` or `REFRESH_NO_UPDATE_CHECK=1`.
-
-```bash
-refresh version
-refresh version --no-update-check
+```text
+refresh version: v0.16.0-158-gb62e59d
+commit: b62e59d
+built: 2026-10-14T01:16:43Z
 ```
 
-The global `--version` flag prints the same details.
+`refresh --version` prints the same lines. `-v` is not a flag.
 
----
+### The update check
 
-## refresh install-man
+On a terminal, the command also checks GitHub Releases for a newer version. If
+there is one, it prints a one-line hint on stderr.
 
-Generate the man page from the CLI definition and install it to a
-user-accessible directory — no `sudo` required. Works across macOS, Linux, and
-Unix.
-
-```bash
-refresh install-man
-```
-
-Aliased as `install-manpage`. By default the page is written to
-`$HOME/.local/share/man/man1/refresh.1`. If that man directory isn't on your
-`MANPATH`, the command prints the `export MANPATH=...` line to add to your shell
-profile. Once installed:
-
-```bash
-man refresh
-```
-
----
+- The check runs at most once a day.
+- A failed check prints nothing.
+- The check does not run when stdout is not a terminal.
+- To turn it off, pass `--no-update-check`, or set `REFRESH_NO_UPDATE_CHECK` to
+  any value other than `0`, `false`, or `no`.
 
 ## refresh completion
 
-Output a shell completion script for `bash`, `zsh`, or `fish`.
-
 ```bash
-refresh completion <bash|zsh|fish>
+refresh completion <bash|zsh|fish|powershell>
 ```
 
-=== "bash"
+The command prints a completion script for the shell. The script completes
+commands, flags, and the names of clusters, nodegroups, and add-ons. See
+[Shell completion](../getting-started/installation.md#shell-completion) for
+where to install it.
 
-    ```bash
-    # Load for the current shell
-    source <(refresh completion bash)
+`refresh completion zsh --help` shows the steps for one shell. The command
+exits `0`, or `1` on an error.
 
-    # Or install persistently
-    refresh completion bash > /usr/local/etc/bash_completion.d/refresh
-    ```
+## refresh help
 
-=== "zsh"
+```bash
+refresh help [command]
+```
 
-    ```bash
-    # Write somewhere on your $fpath
-    refresh completion zsh > "${fpath[1]}/_refresh"
-    ```
+The command prints the help of a command, the same as `refresh <command>
+--help`.
 
-=== "fish"
+## Man pages
 
-    ```bash
-    refresh completion fish > ~/.config/fish/completions/refresh.fish
-    ```
+`refresh` has no command that installs man pages. The Homebrew cask installs
+them, and the release archives have them in `man/man1`. See
+[Installation](../getting-started/installation.md#pre-built-binary).
 
-!!! tip "Context-name completion"
-    With completion installed, `refresh use <TAB>` completes saved
-    [context](contexts.md) names straight from your local
-    `context.yaml` — no AWS calls.
+```bash
+man refresh
+man refresh-nodegroup-update
+```
