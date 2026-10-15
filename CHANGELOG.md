@@ -5,7 +5,7 @@
 
 ### ⚠ BREAKING CHANGES
 
-* the command line, several exit codes, and the JSON and YAML documents changed. Every change is listed in the migration guide:
+* the command line, several exit codes, and the JSON and YAML documents changed. Every change is listed in the [migration guide](https://drod.dev/refresh/migrating/). The docs of 0.16 and earlier stay at <https://drod.dev/refresh/v1/>.
 
 ### Features
 
