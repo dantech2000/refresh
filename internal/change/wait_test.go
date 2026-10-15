@@ -5,9 +5,11 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/dantech2000/refresh/internal/fleet/fleettest"
@@ -415,4 +417,90 @@ func TestWaitOptionsDefaults(t *testing.T) {
 	if (WaitOptions{}).pause(ctx) {
 		t.Error("pause went on under a context that has ended")
 	}
+}
+
+// expiringCredentials are credentials that stop resolving once expired is
+// set, as an SSO session or an assumed-role session that ends does. A
+// request then fails before it is sent.
+type expiringCredentials struct{ expired atomic.Bool }
+
+func (c *expiringCredentials) Retrieve(context.Context) (aws.Credentials, error) {
+	if c.expired.Load() {
+		return aws.Credentials{}, errors.New("the SSO session has expired; run aws sso login")
+	}
+	return aws.Credentials{AccessKeyID: "AKIDFAKEFAKEFAKE", SecretAccessKey: "fake-secret", Source: "test", CanExpire: true}, nil
+}
+
+// newExpiringEnv is newEnv with credentials that the test can expire.
+func newExpiringEnv(t *testing.T, world *fleettest.World) (*env, *expiringCredentials) {
+	t.Helper()
+	e := newEnv(t, world)
+	creds := &expiringCredentials{}
+	cfg := e.srv.Config(east)
+	cfg.Credentials = creds
+	e.deps = depsFor(world, cfg)
+	return e, creds
+}
+
+// cancelOnPollError returns wait options that cancel the wait at a poll
+// error that the wait went on through, so a wait that does not stop by
+// itself ends the test instead of polling forever.
+func cancelOnPollError(e *env, cancel context.CancelFunc, polls *int) WaitOptions {
+	o := (&recorder{}).options(e)
+	o.Progress = func(p UpdateProgress) {
+		if p.PollError != "" {
+			*polls++
+			cancel()
+		}
+	}
+	return o
+}
+
+// Credentials that stop resolving in the middle of a wait end it at the
+// first poll that fails: every later poll would fail the same way before
+// it is sent. The error says that the change may still be running, with
+// its update ID.
+func TestWait_CredentialsFail(t *testing.T) {
+	t.Run("WaitUpdate", func(t *testing.T) {
+		e, creds := newExpiringEnv(t, newWorld(nil))
+		id := startUpdate(t, e, fleettest.UpdateScript{Never: true})
+		e.onRequest(fleettest.EKSDescribeUpdate, func(n int) {
+			if n == 2 {
+				creds.expired.Store(true)
+			}
+		})
+		ctx, cancel := context.WithCancel(testContext(t))
+		defer cancel()
+		var retried int
+		err := WaitUpdate(ctx, e.deps.AWS.PollClients(east), cni, id, cancelOnPollError(e, cancel, &retried))
+		var unobserved *UnobservedError
+		if !errors.As(err, &unobserved) || !unobserved.Credentials() {
+			t.Fatalf("error = %v, want an *UnobservedError for the credentials (%d polls went on through it)", err, retried)
+		}
+		for _, w := range []string{"credentials expired or could not be resolved", "may still be running in EKS (update " + id + ")"} {
+			if !strings.Contains(err.Error(), w) {
+				t.Errorf("message = %q, want %q in it", err, w)
+			}
+		}
+	})
+	t.Run("WaitSettled", func(t *testing.T) {
+		e, creds := newExpiringEnv(t, newWorld(nil))
+		startUpdate(t, e, fleettest.UpdateScript{Never: true})
+		e.onRequest(fleettest.EKSDescribeAddon, func(n int) {
+			if n == 1 {
+				creds.expired.Store(true)
+			}
+		})
+		ctx, cancel := context.WithCancel(testContext(t))
+		defer cancel()
+		var retried int
+		_, err := WaitSettled(ctx, e.deps.AWS.PollClients(east), cni, addonSettled, cancelOnPollError(e, cancel, &retried))
+		var unobserved *UnobservedError
+		if !errors.As(err, &unobserved) || !unobserved.Credentials() || unobserved.LastStatus != "UPDATING" {
+			t.Fatalf("error = %v, want an *UnobservedError for the credentials after UPDATING (%d polls went on through it)", err, retried)
+		}
+		if !strings.Contains(err.Error(), "the change already sent may still be running in EKS") {
+			t.Errorf("message = %q", err)
+		}
+	})
 }

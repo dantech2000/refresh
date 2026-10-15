@@ -429,6 +429,7 @@ func WaitSettled(ctx context.Context, c awsx.PollClients, r Resource, done func(
 | First poll | After one `Interval`, as the old monitor (`monitor.go:78-96`). A fresh update ID can answer not-found for a moment. |
 | `ResourceNotFoundException` from `DescribeUpdate` before the update was seen once | Transient |
 | A poll error that `awsx.IsPermanentAPIError` reports | Stop with `*UnobservedError`. The change may still be running. |
+| A poll whose credentials could not be resolved (`awsx.IsIdentityFailure`: an SSO session or an assumed-role session that ended) | Stop with `*UnobservedError` at the first such poll. The credential client made its own attempts, and every later poll fails the same way before it is sent. The message says that the credentials expired or could not be resolved, and that the change may still be running, with its update ID. The insights refresh and the Auto Scaling watch stop on it too. |
 | Any other poll error, or a response with no update or resource in it (`monitor.go:273-276`) | Keep polling; report it through `Progress` |
 | The context ends | Return `ctx.Err()` wrapped with the last status. The caller tells a deadline from an interrupt (section 8). |
 | Reads | `WaitUpdate` calls `DescribeUpdate` only. `WaitSettled` calls the describe of its resource only. |
@@ -1810,3 +1811,9 @@ No behaviour changed in these, which only remove a second copy: `ClusterPlan.dec
 | 10 | The question of a phase is built after a read of the cluster and names the live steps. | `TestEngine_PhaseQuestionNamesTheLiveSteps` |
 | 11 | `Diff` words the force of a control-plane step as `--skip-insights-check`. A step that was planned to attach or verify and ends as a roll says so in a notice. | `TestDiff_ForceIsWordedAsTheFlag`, `TestEngineGuard_ForceAfterAnAttachment` |
 | 12 | An interrupt during the plan that ends only some of its reads is an interrupted run with no plan, and not a blocked plan. | `TestRun_InterruptDuringThePlanAfterTheClusterWasRead` |
+
+### The edge-case audit
+
+| # | Change | Test |
+|---|---|---|
+| 1 | A wait, the insights refresh, and an attach stop at the first poll whose credentials could not be resolved, in place of polling to `--wait-timeout`. The step is `InProgress` with `NotMonitored`, exit 4, as for any change that AWS accepted and that could not be followed; an upgrade or a rollback names the completed phases and the command that goes on. | `TestWait_CredentialsFail`, `TestInsightsRefresh_CredentialsFail`, `TestUpgrade_ProviderFailsDuringAWait` |

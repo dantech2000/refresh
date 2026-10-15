@@ -87,6 +87,9 @@ func NewProvider(cfg aws.Config, optFns ...func(*ProviderOptions)) *Provider {
 	for _, fn := range optFns {
 		fn(&opts)
 	}
+	// Load marks the failures already. A configuration built another
+	// way, such as a test's, gets the mark here.
+	cfg.Credentials = markIdentityFailures(cfg.Credentials)
 	return &Provider{
 		cfg:         cfg,
 		backoff:     opts.Backoff,

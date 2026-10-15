@@ -219,6 +219,10 @@ If `--wait-timeout` passes before the change finishes, the command exits `4`.
 The change may still be running in AWS. Run the command again to see where it
 is.
 
+If the AWS credentials expire during a wait, for example when an SSO session
+ends, the command stops at the first poll that fails and exits `4`. The
+change may still be running in AWS. Sign in again, then run the command again.
+
 After a roll, the command also waits for the new nodes to become `Ready`: at
 most 2 minutes, and never past the time left of `--wait-timeout`.
 

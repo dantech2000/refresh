@@ -192,9 +192,6 @@ func TestEngineCommands_StopPartWay(t *testing.T) {
 // request is sent. The run must stop at the first such poll, with the
 // phases that completed and the command that goes on.
 func TestUpgrade_ProviderFailsDuringAWait(t *testing.T) {
-	t.Skip("known defect: internal/change/wait.go:332 and :392 end a wait only on awsx.IsPermanentAPIError; " +
-		"a credential-chain error (awsx.IsCredentialError, not an API error) is retried until --wait-timeout, " +
-		"so an upgrade polls for 4h with a warning on each poll and then exits 4 on a timeout")
 	e := cmdtest.NewFake(t, engineWorld("1.32", false, nil), east)
 	e.UseWorldClock()
 	withKube(t, e)
@@ -205,8 +202,8 @@ func TestUpgrade_ProviderFailsDuringAWait(t *testing.T) {
 	e.Server.OnRequest = onPoll(func() { creds.expired.Store(true) })
 	start := e.World.Now()
 	err := e.Run(cmdutiltest.Context(t), "cluster", "upgrade", "prod", "--to", "1.33", "--yes")
-	if got := cmdutil.ExitCode(err); got != cmdutil.ExitIncomplete && got != cmdutil.ExitFailure {
-		t.Errorf("exit code = %d (%v), want 1 or 4", got, err)
+	if got := cmdutil.ExitCode(err); got != cmdutil.ExitIncomplete {
+		t.Errorf("exit code = %d (%v), want 4: the change may still be running", got, err)
 	}
 	if waited := e.World.Now().Sub(start); waited > 5*time.Minute {
 		t.Errorf("the run waited %s with credentials that cannot be retrieved, want a stop at the first failed poll", waited)
@@ -216,6 +213,11 @@ func TestUpgrade_ProviderFailsDuringAWait(t *testing.T) {
 	}
 	if err == nil || !strings.Contains(err.Error(), "refresh cluster upgrade prod --to 1.33 --yes") {
 		t.Errorf("error = %v, want the command that goes on", err)
+	}
+	for _, w := range []string{"credentials expired or could not be resolved", "may still be running in EKS (update ", "no phase completed"} {
+		if err == nil || !strings.Contains(err.Error(), w) {
+			t.Errorf("error = %v, want %q in it", err, w)
+		}
 	}
 }
 

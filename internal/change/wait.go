@@ -176,10 +176,42 @@ func (e *UnobservedError) Error() string {
 	if e.UpdateID != "" {
 		what = "update " + e.UpdateID + " of " + what
 	}
+	if e.Credentials() {
+		running := "the change already sent may still be running in EKS"
+		if e.UpdateID != "" {
+			running += " (update " + e.UpdateID + ")"
+		}
+		return fmt.Sprintf("the AWS credentials expired or could not be resolved, so the wait for %s stopped; %s: %s", what, running, awsx.Summary(e.Err))
+	}
 	return fmt.Sprintf("could not follow %s; it may still be running: %s", what, awsx.Summary(e.Err))
 }
 
 func (e *UnobservedError) Unwrap() error { return e.Err }
+
+// Credentials reports whether the wait stopped because the AWS
+// credentials could not be resolved for a poll.
+func (e *UnobservedError) Credentials() bool { return awsx.IsIdentityFailure(e.Err) }
+
+// of returns e with the update ID of the step whose wait it ended, when
+// e has none: a wait for the resource after its update, such as the wait
+// of a control plane for ACTIVE, follows that update too.
+func (e *UnobservedError) of(updateID string) *UnobservedError {
+	if e.UpdateID != "" || updateID == "" {
+		return e
+	}
+	c := *e
+	c.UpdateID = updateID
+	return &c
+}
+
+// pollStops reports whether a poll error ends a wait: an API error that
+// another poll will not fix, or AWS credentials that could not be
+// resolved. The credential client made its own attempts before it gave
+// up, and every later poll fails the same way before it is sent: an SSO
+// session or an assumed-role session that ended stays ended.
+func pollStops(err error) bool {
+	return awsx.IsPermanentAPIError(err) || awsx.IsIdentityFailure(err)
+}
 
 // errNoAnswer is the poll error of an answer with no update or resource
 // in it.
@@ -329,7 +361,7 @@ func (p *updatePoll) poll(ctx context.Context, c awsx.PollClients) (progress Upd
 		if ctx.Err() != nil {
 			return UpdateProgress{}, false, true, p.ended(ctx)
 		}
-		if awsx.IsPermanentAPIError(err) && (p.seen || !awsx.IsNotFound(err)) {
+		if pollStops(err) && (p.seen || !awsx.IsNotFound(err)) {
 			return UpdateProgress{}, false, true, &UnobservedError{Resource: p.r, UpdateID: p.id, LastStatus: p.last, Err: err}
 		}
 		return UpdateProgress{Resource: p.r, UpdateID: p.id, Status: p.last, PollError: awsx.Summary(err)}, true, false, nil
@@ -389,7 +421,7 @@ func WaitSettled(ctx context.Context, c awsx.PollClients, r Resource, done func(
 			if ctx.Err() != nil {
 				return state, ended(ctx, r.String(), state.Status)
 			}
-			if awsx.IsPermanentAPIError(err) {
+			if pollStops(err) {
 				return state, &UnobservedError{Resource: r, LastStatus: state.Status, Err: err}
 			}
 			o.progress(UpdateProgress{Resource: r, Status: state.Status, PollError: awsx.Summary(err)})

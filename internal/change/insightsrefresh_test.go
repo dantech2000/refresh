@@ -569,3 +569,19 @@ func TestInsightsRefresh_FirstPollWaitsAndThrottlingIsQuiet(t *testing.T) {
 		}
 	}
 }
+
+// Credentials that stop resolving during the wait end it at the first
+// poll that fails, and the error says why. The wait does not poll on to
+// its limit.
+func TestInsightsRefresh_CredentialsFail(t *testing.T) {
+	world := engineWorld(func(s *fleettest.State, _ *fleettest.Cluster) { s.InsightsRefresh = time.Hour })
+	e, creds := newExpiringEnv(t, world)
+	e.onRequest(fleettest.EKSStartInsightsRefresh, func(int) { creds.expired.Store(true) })
+	err := refreshOnce(testContext(t), e)
+	if err == nil || !awsx.IsIdentityFailure(err) || !strings.Contains(err.Error(), "credentials expired or could not be resolved") {
+		t.Fatalf("err = %v; want the credentials that could not be resolved", err)
+	}
+	if waited := world.Now().Sub(fleettest.New().Now()); waited > 15*time.Second {
+		t.Errorf("the refresh waited %s with credentials that cannot be resolved, want one poll interval", waited)
+	}
+}

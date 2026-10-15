@@ -16,9 +16,12 @@ type identityError struct {
 func (e *identityError) Error() string { return e.err.Error() }
 func (e *identityError) Unwrap() error { return e.err }
 
-// isIdentityFailure reports whether err is a failure to get credentials,
-// from a provider that markIdentityFailures wrapped.
-func isIdentityFailure(err error) bool {
+// IsIdentityFailure reports whether err is a failure to get the
+// credentials of a call, such as an SSO session or an assumed-role session
+// that ended: the call was never sent. Every client of a Provider marks
+// these failures. The credential client has made its own attempts, so a
+// loop that polls should stop on one rather than poll again.
+func IsIdentityFailure(err error) bool {
 	var identity *identityError
 	return errors.As(err, &identity)
 }
@@ -35,6 +38,9 @@ func isIdentityFailure(err error) bool {
 func markIdentityFailures(provider aws.CredentialsProvider) aws.CredentialsProvider {
 	if provider == nil {
 		return nil
+	}
+	if _, ok := provider.(identityProvider); ok {
+		return provider
 	}
 	return identityProvider{provider}
 }

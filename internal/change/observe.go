@@ -90,8 +90,8 @@ func (r *runner) observers(cp *ClusterPlan, ph Phase, started []int, results []S
 // It reads once for each tick of the wait, so it has the pace of
 // --poll-interval and no clock of its own. It is best effort: a read that
 // fails is tried again on the next tick, and an error that another read
-// will not fix, such as a missing permission, ends the watch with no
-// word.
+// will not fix, such as a missing permission or credentials that could
+// not be resolved, ends the watch with no word.
 func (r *runner) watchScaling(ctx context.Context, c *awsx.Clients, groups []string, since time.Time, ticks <-chan struct{}) {
 	if len(groups) == 0 {
 		return
@@ -107,7 +107,7 @@ func (r *runner) watchScaling(ctx context.Context, c *awsx.Clients, groups []str
 		switch {
 		case ctx.Err() != nil:
 			return
-		case err != nil && awsx.IsPermanentAPIError(err):
+		case err != nil && pollStops(err):
 			return
 		case err != nil:
 			continue

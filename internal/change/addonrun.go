@@ -257,6 +257,7 @@ func (r *runner) waitFailed(ctx context.Context, cp *ClusterPlan, res StepResult
 		res.Failure = r.stepFailure(cp, res, reason, err.Error())
 	case errors.As(err, &unobserved):
 		res.Status = StepInProgress
+		err = unobserved.of(res.UpdateID)
 		res.Failure = r.stepFailure(cp, res, apidoc.ReasonNotMonitored, err.Error())
 		res.Failure.Operation, res.Failure.AWSErrorCode = awsx.Operation(err), awsx.ErrorCode(err)
 	case ctx.Err() != nil && timedOut(ctx):

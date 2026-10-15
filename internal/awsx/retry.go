@@ -70,11 +70,11 @@ func newRetryer(policy Policy, backoff retry.BackoffDelayer) aws.Retryer {
 	}
 	// A failure to get credentials is not retried here, although it can be
 	// transient: the credential client has made its own attempts. A wait
-	// loop still polls through it, because IsRetryable says what it is.
-	retryable := func(err error) bool { return !isIdentityFailure(err) && IsRetryable(err) }
+	// loop stops on it too (IsIdentityFailure).
+	retryable := func(err error) bool { return !IsIdentityFailure(err) && IsRetryable(err) }
 	if policy == Sweep {
 		retryable = func(err error) bool {
-			return !isIdentityFailure(err) && !IsDialFailure(err) && IsRetryable(err)
+			return !IsIdentityFailure(err) && !IsDialFailure(err) && IsRetryable(err)
 		}
 	}
 	if backoff == nil {

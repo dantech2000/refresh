@@ -266,6 +266,7 @@ func watchWaitFailed(ctx context.Context, r Resource, res StepResult, err error,
 		res.Failure = failure(reason, err.Error())
 	case errors.As(err, &unobserved):
 		res.Status = StepInProgress
+		err = unobserved.of(res.UpdateID)
 		res.Failure = failure(apidoc.ReasonNotMonitored, err.Error())
 		res.Failure.Operation, res.Failure.AWSErrorCode = awsx.Operation(err), awsx.ErrorCode(err)
 	case ctx.Err() != nil && timedOut(ctx):

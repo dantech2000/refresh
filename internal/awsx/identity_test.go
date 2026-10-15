@@ -195,11 +195,12 @@ func TestCredentialRefreshIsNotRetriedByTheOperation(t *testing.T) {
 			for _, r := range srv.Requests() {
 				t.Errorf("%s reached the service without credentials", r.Operation)
 			}
-			// A wait loop goes on through this failure: it is transient.
+			// The failure is transient as an API error, and marked: a
+			// wait loop stops on the mark, not on the class.
 			if IsPermanentAPIError(err) || !IsRetryable(err) {
 				t.Errorf("the failed refresh is permanent = %t, retryable = %t; want a transient failure", IsPermanentAPIError(err), IsRetryable(err))
 			}
-			if !isIdentityFailure(err) {
+			if !IsIdentityFailure(err) {
 				t.Error("the error is not marked as a failure to get credentials")
 			}
 			// The call gave its slot back.

@@ -225,11 +225,14 @@ func (st *refreshStart) pause(ctx, wctx context.Context, o WaitOptions, t Target
 }
 
 // pollFailed handles a describe of the wait that failed: a permanent error
-// ends the wait, and any other is polled again. Throttling says nothing
-// that the user can act on, so it gets no progress line.
+// or credentials that could not be resolved end the wait, and any other
+// is polled again. Throttling says nothing that the user can act on, so
+// it gets no progress line.
 func (ir *insightsRefresher) pollFailed(t Target, err error) error {
 	switch {
-	case awsx.IsPermanentAPIError(err):
+	case awsx.IsIdentityFailure(err):
+		return &refreshError{msg: "the AWS credentials expired or could not be resolved while checking the insights refresh of cluster " + t.Cluster, err: err}
+	case pollStops(err):
 		return &refreshError{msg: "checking the insights refresh of cluster " + t.Cluster, err: err}
 	case !awsx.IsThrottling(err):
 		ir.say("checking the insights refresh of %s: %s; still waiting", t.Cluster, awsx.Summary(err))
