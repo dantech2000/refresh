@@ -290,7 +290,8 @@ func healthSection(h *apidoc.Health) view.Section {
 }
 
 // supportLine returns the support of a cluster as one line of a describe
-// view: the tier, the date that it ends, and what happens then.
+// view: the tier, the date that it ends, and what happens then. In
+// extended support that is the premium over standard support.
 func supportLine(s *apidoc.Support) string {
 	if s == nil {
 		return ""
@@ -304,7 +305,12 @@ func supportLine(s *apidoc.Support) string {
 			b.WriteString("; EKS upgrades the cluster then")
 		}
 	case apidoc.SupportExtended:
-		fmt.Fprintf(&b, " until %s (%d days), at a higher price", s.ExtendedUntil.Format(dayLayout), s.DaysRemaining)
+		fmt.Fprintf(&b, " until %s (%d days), ", s.ExtendedUntil.Format(dayLayout), s.DaysRemaining)
+		if s.ExtendedSupportPremiumUSDPerHour > 0 {
+			fmt.Fprintf(&b, "+$%.2f/hr over standard support", s.ExtendedSupportPremiumUSDPerHour)
+		} else {
+			b.WriteString("at a higher price")
+		}
 	}
 	if s.BuiltIn {
 		b.WriteString("; dates from refresh, not from EKS")

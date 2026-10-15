@@ -1,6 +1,7 @@
 package cluster
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -9,9 +10,10 @@ import (
 )
 
 // supportText returns the support of a cluster as a short cell: the tier,
-// and the days left while a window is open, such as "standard (61d)". A
-// "*" marks dates that refresh ships with, because EKS did not report
-// them. It returns "" when the support was not read.
+// the days left while a window is open, and the premium of extended
+// support, such as "standard (61d)" or "extended (40d) +$0.50/hr". A "*"
+// marks dates that refresh ships with, because EKS did not report them.
+// It returns "" when the support was not read.
 func supportText(s *apidoc.Support) string {
 	if s == nil {
 		return ""
@@ -22,6 +24,9 @@ func supportText(s *apidoc.Support) string {
 	}
 	if s.BuiltIn {
 		text += "*"
+	}
+	if s.ExtendedSupportPremiumUSDPerHour > 0 {
+		text += fmt.Sprintf(" +$%.2f/hr", s.ExtendedSupportPremiumUSDPerHour)
 	}
 	return text
 }

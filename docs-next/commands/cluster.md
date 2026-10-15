@@ -97,6 +97,15 @@ HEALTH  9
   Kubernetes     Skipped  pass --check-readiness to run the Kubernetes checks
 ```
 
+The `support` row gives the tier, the day that it ends, and what happens
+then. A cluster in extended support shows the premium over standard support,
+such as `extended until 2027-03-23 (160 days), +$0.50/hr over standard
+support`. A cluster whose upgrade policy is `STANDARD` pays no premium: EKS
+upgrades it at the end of standard support. The premium is the price on the
+[EKS pricing page](https://aws.amazon.com/eks/pricing/) when `refresh` was
+released, and the JSON and YAML documents have it as
+`cluster.support.extendedSupportPremiumUsdPerHour`.
+
 The `HEALTH` section runs the [health checks](../concepts/health-checks.md)
 that a change runs before it starts. It shows health, not upgrade readiness:
 an insight in `ERROR` shows in `cluster upgrade-check` and not here. The
@@ -142,6 +151,11 @@ CHECKS  3
   VersionSkew   ● Pass   every nodegroup on 1.34 and every add-on at its latest
   ControlPlane  Skipped  control-plane metrics not emitted (EKS 1.28+ on a supported platform version)
 ```
+
+The line under the title gives the region, the version, and the support
+window. A cluster in extended support also shows the premium over standard
+support, such as `extended (160d) +$0.50/hr`, and the document has it as
+`support.extendedSupportPremiumUsdPerHour`.
 
 After a recent upgrade, the report has a `ROLLBACK` section with the version
 to roll back to and the time until which a rollback is possible.
