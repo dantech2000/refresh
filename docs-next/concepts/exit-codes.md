@@ -47,7 +47,7 @@ incomplete data or a partial failure (`4`), and a failed verification (`5`).
 | Result | Code |
 |---|---|
 | Every cluster is current and in standard support | `0` |
-| A stale AMI, a nodegroup behind the control plane, an add-on behind, or a control-plane issue | `2` |
+| A stale AMI, a nodegroup behind the control plane, an add-on behind, or a health issue of the control plane, a nodegroup, or an add-on (a `DEGRADED` add-on counts) | `2` |
 | A cluster in extended support, or unsupported | `3` |
 | A part of the fleet could not be read | `4` |
 | An error, or no region answered | `1` |

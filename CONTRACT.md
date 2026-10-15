@@ -45,6 +45,7 @@ Say no to any row and it reverts to today's behaviour.
 | 31 | `completion` has help text in the voice of the other commands, with an `Exit codes:` block, and the command list names `help` | Cobra's stock text read like another tool |
 | 32 | The message of a verdict, exit 2 or 3, prints without `Error:` | A warning or a block is the answer of the command, not a crash. Exit 1 and 4 keep `Error:`. |
 | 33 | An `addon update` step that moves an add-on to an older version has the reason `VersionAhead`, as a rollback step does | The plan labelled a downgrade `VersionBehind`, the reason of an upgrade |
+| 34 | The `HEALTH` column of `status` counts the health issues of the control plane, the nodegroups, and the add-ons, and a `DEGRADED` add-on with no issue listed counts as one. Any issue exits 2 at least. | It counted the control plane alone, so a cluster with a `DEGRADED` add-on showed `ok` and exited 0 |
 
 ## Commands
 

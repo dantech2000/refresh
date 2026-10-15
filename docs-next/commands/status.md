@@ -40,7 +40,7 @@ CLUSTER                REGION     VERSION  SUPPORT           COMPUTE       STALE
 | `COMPUTE` | The managed nodegroups, Auto Mode, Karpenter, or none. |
 | `STALE AMI` | "1/3 (130d)": one of three nodegroups does not run the latest AMI for its own Kubernetes version, and the oldest such AMI is 130 days old. "1 behind CP": one nodegroup is on an older Kubernetes version than the control plane. |
 | `ADDONS` | The add-ons that have a newer compatible version. |
-| `HEALTH` | The control-plane issues that EKS reports. |
+| `HEALTH` | The health issues that EKS reports for the control plane, the nodegroups, and the add-ons, as one count, such as `2 issues`. An add-on that is `DEGRADED` with no issue listed counts as one. The JSON has each part: `healthIssues` of the cluster and of each nodegroup, and `issues` and `status` of each add-on. |
 
 ## Flags
 
@@ -65,7 +65,7 @@ When several apply, the highest wins.
 | Code | Meaning |
 |---|---|
 | `0` | Every cluster is current and in standard support. |
-| `2` | Something is out of date: an AMI, an add-on, a nodegroup behind the control plane, or a control-plane issue. |
+| `2` | Something needs attention: an AMI, an add-on, or a nodegroup behind the control plane, or a health issue of the control plane, a nodegroup, or an add-on. |
 | `3` | A cluster is in extended support, or unsupported. |
 | `4` | A part of the fleet could not be read. |
 | `1` | An error, or no region answered. |

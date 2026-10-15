@@ -22,15 +22,18 @@ Columns:
              oldest such AMI; and the nodegroups on an older version than
              the control plane
   ADDONS     the add-ons with a newer compatible version
-  HEALTH     the control-plane issues that EKS reports
+  HEALTH     the health issues that EKS reports for the control plane,
+             the nodegroups, and the add-ons; an add-on that is DEGRADED
+             with no issue listed counts as one
 
 When several exit codes apply, the highest wins.
 
 Exit codes:
   0  Every cluster is current and in standard support.
   1  An error, an interrupt, or no region answered.
-  2  Something is out of date: an AMI, an add-on, a nodegroup behind the
-     control plane, or a control-plane issue.
+  2  Something needs attention: an AMI, an add-on, or a nodegroup behind
+     the control plane, or a health issue of the control plane, a
+     nodegroup, or an add-on.
   3  A cluster is in extended support, or unsupported.
   4  Incomplete: a part of the fleet could not be read.
 

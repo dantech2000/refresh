@@ -73,15 +73,18 @@ Columns:
              oldest such AMI; and the nodegroups on an older version than
              the control plane
   ADDONS     the add-ons with a newer compatible version
-  HEALTH     the control-plane issues that EKS reports
+  HEALTH     the health issues that EKS reports for the control plane,
+             the nodegroups, and the add-ons; an add-on that is DEGRADED
+             with no issue listed counts as one
 
 When several exit codes apply, the highest wins.
 
 Exit codes:
   0  Every cluster is current and in standard support.
   1  An error, an interrupt, or no region answered.
-  2  Something is out of date: an AMI, an add-on, a nodegroup behind the
-     control plane, or a control-plane issue.
+  2  Something needs attention: an AMI, an add-on, or a nodegroup behind
+     the control plane, or a health issue of the control plane, a
+     nodegroup, or an add-on.
   3  A cluster is in extended support, or unsupported.
   4  Incomplete: a part of the fleet could not be read.`,
 		Example: `  # The configured region
@@ -254,11 +257,11 @@ type findings struct {
 	oldestAMI        time.Time // when the oldest outdated AMI was created
 	behindNodegroups int       // the nodegroups on an older version than the control plane
 	behindAddons     []string  // the add-ons with a newer compatible version
-	issues           int       // the control-plane issues that EKS reports
+	issues           int       // the health issues: see healthIssues
 }
 
 func findingsOf(c apidoc.Cluster) findings {
-	f := findings{issues: len(c.HealthIssues)}
+	f := findings{issues: healthIssues(c)}
 	for _, n := range c.Nodegroups {
 		if n.VersionBehind != nil && *n.VersionBehind {
 			f.behindNodegroups++
@@ -280,6 +283,25 @@ func findingsOf(c apidoc.Cluster) findings {
 		}
 	}
 	return f
+}
+
+// healthIssues counts the health issues that EKS reports for the control
+// plane, the nodegroups, and the add-ons of a cluster. An add-on that is
+// DEGRADED with no issue listed counts as one.
+func healthIssues(c apidoc.Cluster) int {
+	n := len(c.HealthIssues)
+	for _, ng := range c.Nodegroups {
+		n += len(ng.HealthIssues)
+	}
+	for _, a := range c.Addons {
+		switch {
+		case len(a.Issues) > 0:
+			n += len(a.Issues)
+		case a.Status == "DEGRADED":
+			n++
+		}
+	}
+	return n
 }
 
 // total is the number of things to bring up to date, for --sort stale.
@@ -475,13 +497,14 @@ func addonsText(c apidoc.Cluster) string {
 	return strconv.Itoa(len(behind)) + " (" + strings.Join(names, ",") + more + ")"
 }
 
-// healthText returns the number of control-plane issues of a cluster.
+// healthText returns the number of health issues of a cluster: of its
+// control plane, its nodegroups, and its add-ons.
 func healthText(c apidoc.Cluster) string {
+	if n := healthIssues(c); n > 0 {
+		return plural(n, "issue")
+	}
 	if c.HealthIssues == nil {
 		return ""
-	}
-	if n := len(c.HealthIssues); n > 0 {
-		return plural(n, "issue")
 	}
 	return "ok"
 }
