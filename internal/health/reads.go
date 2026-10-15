@@ -47,6 +47,9 @@ type reads struct {
 	// connectErr is the error of the first read that could not connect,
 	// for the message of the access result.
 	connectErr atomic.Pointer[error]
+	// unansweredErr is the error of the first read that got no answer,
+	// for the same message.
+	unansweredErr atomic.Pointer[error]
 }
 
 func newReads(ctx context.Context, in *Input) *reads {
@@ -111,9 +114,12 @@ func once[T any](r *reads, read func() (T, error)) func() (T, error) {
 		switch {
 		case err == nil || isAPIAnswer(err):
 			r.answered.Add(1)
-		case connectFailure(err):
-			r.refused.Add(1)
-			r.connectErr.CompareAndSwap(nil, &err)
+		default:
+			r.unansweredErr.CompareAndSwap(nil, &err)
+			if connectFailure(err) {
+				r.refused.Add(1)
+				r.connectErr.CompareAndSwap(nil, &err)
+			}
 		}
 		return v, err
 	})
@@ -146,7 +152,9 @@ func connectFailure(err error) bool {
 // the run's context has not ended, no read got an answer, and every read
 // that failed could not connect. A timeout, a read that failed after
 // another answered, or any answer of the server, 5xx included, leaves the
-// checks Unreadable with their failures.
+// checks Unreadable with their failures. When no read got an answer, the
+// result does not say that the API is reachable: it warns that the API
+// did not answer.
 func (r *reads) access() (Result, bool) {
 	res := Result{Name: AccessCheck}
 	attempted, answered, refused := r.attempted.Load(), r.answered.Load(), r.refused.Load()
@@ -158,6 +166,9 @@ func (r *reads) access() (Result, bool) {
 		res.Outcome = Warn
 		res.Message = "Kubernetes API unreachable: " + (*r.connectErr.Load()).Error() + "; the Kubernetes checks did not run"
 		return res, true
+	case attempted > 0 && answered == 0:
+		res.Outcome = Warn
+		res.Message = "Kubernetes API did not answer: " + (*r.unansweredErr.Load()).Error() + "; the Kubernetes checks could not read"
 	default:
 		res.Outcome = Pass
 		res.Message = "Kubernetes API reachable"

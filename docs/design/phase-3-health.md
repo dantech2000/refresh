@@ -1137,6 +1137,8 @@ The `HEALTH` summary of `cluster describe` and the `HEALTH` column of `cluster l
 
 The review of the built phase changed four rules, each in its own commit: `Worse` ranks `Unreadable` above `Fail`; an API is "unreachable" only when the run's context has not ended, no read got an answer, and every failed read could not connect (a timeout, a 5xx, or a read that failed after another answered keeps the checks `Unreadable`); unscoped drain blockers need no pod read, and a scale-down drops the multi-budget rule; a nodegroup that is still coming up warns, as the old check warned. A budget whose selector does not parse matches no pod, as in the eviction API; the old check skipped such a budget for the coverage count, which is the one rule difference not listed in section 2.
 
+The edge-case audit changed the access result: it says "Kubernetes API reachable" only when a read got an answer. When no read got one and the API is not unreachable (a timeout of a request that reached the server, or the deadline of the run), the result is `Warn`, "Kubernetes API did not answer", and the checks stay `Unreadable` with their failures.
+
 The read commands that phase 2 built keep their shape: `--check-readiness` on `cluster describe` and `nodegroup list` reads the nodes once through `fleet.FetchKube` and shows `ready/desired` in the `NODES` column, and `nodegroup describe --show-workloads` lists the pods of each node of the nodegroup in one wave and shows a `WORKLOADS` section. The `health` key moved from `ClusterDescription` to the `Cluster` shape, so `cluster list --show-health` and `cluster describe` print it the same way.
 
 Measured on the fake fleet of 200 clusters in 8 regions, old binary and new binary in the same run, 8 runs after one warm-up, `-o json`:

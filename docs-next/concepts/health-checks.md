@@ -115,6 +115,9 @@ the cluster.
   result records it. `--require-healthy` blocks. A dry run exits `2`.
 - If the API answers 401, 403, or 5xx, the checks that need it are
   `Unreadable`. That blocks for `Nodes`, `Workloads`, and `DrainBlockers`.
+- If the API connects but answers no read in time, the checks that need it
+  are `Unreadable`, and the `Kubernetes` result is `Warn`: the API did not
+  answer.
 
 EKS still honours PodDisruptionBudgets during a managed nodegroup roll, with
 or without the checks.

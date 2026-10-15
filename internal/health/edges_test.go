@@ -199,8 +199,6 @@ func TestRun_PrivateEndpoint(t *testing.T) {
 		}
 	})
 	t.Run("dial timeout, the access result", func(t *testing.T) {
-		t.Skip("known defect: internal/health/reads.go:162-164 reports \"Kubernetes API reachable\" (Pass) whenever not every failed read was refused; " +
-			"when every read timed out at the dial, no read reached the API, and the report says it was reachable")
 		h := newHarness(t)
 		ctx := testContext(t)
 		in := h.input(ctx, "ng-a")

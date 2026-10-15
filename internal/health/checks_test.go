@@ -979,7 +979,8 @@ func testRunUnreachable(t *testing.T) {
 
 // The run's deadline passes while the reads are in flight: that is not an
 // unreachable API. The checks stay Unreadable with their failures, and a
-// fail-closed check blocks.
+// fail-closed check blocks. No read got an answer, so the access result
+// does not say that the API is reachable.
 func testRunDeadline(t *testing.T) {
 	h := newHarness(t)
 	ctx, expire := awsxtest.Deadline(testContext(t))
@@ -996,7 +997,7 @@ func testRunDeadline(t *testing.T) {
 				t.Errorf("%s: %s %+v, want Unreadable with a Timeout failure", r.Name, r.Outcome, r.Failures)
 			}
 		case health.AccessCheck:
-			check(t, r, want{outcome: health.Pass})
+			check(t, r, want{outcome: health.Warn, message: "Kubernetes API did not answer"})
 		}
 	}
 	if v := health.Gate(results, health.Policy{Yes: true}); v.Decision != health.Block || v.Exit != 4 {
