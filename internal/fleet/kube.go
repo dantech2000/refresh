@@ -12,6 +12,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/dantech2000/refresh/internal/apidoc"
+	"github.com/dantech2000/refresh/internal/awsx"
 )
 
 // labelNodegroup is the label that EKS sets on the nodes of a managed
@@ -164,6 +165,11 @@ func kubeFailure(kind apidoc.FailureKind, name, what string, err error) apidoc.F
 	switch {
 	case errors.Is(err, context.Canceled):
 		reason = apidoc.ReasonInterrupted
+	// A connection that could not be opened never reached the server, also
+	// when the dial timed out: a network error. Go's connect timeout also
+	// reports itself as context.DeadlineExceeded, so this comes first.
+	case awsx.IsDialFailure(err):
+		reason = apidoc.ReasonNetworkError
 	case errors.Is(err, context.DeadlineExceeded):
 		reason = apidoc.ReasonTimeout
 	case errors.As(err, &status):

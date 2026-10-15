@@ -153,51 +153,40 @@ func dialing(t *testing.T, h *harness, in *health.Input, err error) {
 }
 
 // A private-only API endpoint. When the network refuses the route, every
-// read fails to connect: the API is unreachable, the Kubernetes checks
-// are Skipped, and the gate asks. When the packets are dropped, the dial
-// times out after the client's dial timeout (10s in internal/kube); a
-// timeout is not a failure to connect (phase 3, section 13), so the
-// checks stay Unreadable and the gate blocks with exit 4. Neither run
-// hangs: every read returns its error.
+// read fails to connect. When the packets are dropped, the dial times out
+// after the client's dial timeout (10s in internal/kube). Both are no
+// Kubernetes access (phase 3, section 13): the API is unreachable, the
+// Kubernetes checks are Skipped, and the gate asks, or goes on with
+// --yes. Neither run hangs: every read returns its error.
 func TestRun_PrivateEndpoint(t *testing.T) {
 	unroutable := &net.OpError{Op: "dial", Net: "tcp", Err: os.NewSyscallError("connect", syscall.EHOSTUNREACH)}
 	timedOut := &net.OpError{Op: "dial", Net: "tcp", Err: os.ErrDeadlineExceeded}
-	t.Run("no route", func(t *testing.T) {
-		h := newHarness(t)
-		ctx := testContext(t)
-		in := h.input(ctx, "ng-a")
-		dialing(t, h, in, unroutable)
-		results := health.Run(ctx, health.Preflight(), in)
-		for _, r := range results {
-			switch r.Name {
-			case "Nodes", "Workloads", "DrainBlockers", "PDBCoverage":
-				check(t, r, want{outcome: health.Skipped, message: "Kubernetes API unreachable"})
-			case health.AccessCheck:
-				check(t, r, want{outcome: health.Warn, message: "Kubernetes API unreachable"})
-			}
-		}
-		if v := health.Gate(results, health.Policy{}); v.Decision != health.Ask || v.Exit != 2 {
-			t.Errorf("verdict = %+v, want Ask with exit 2", v)
-		}
-	})
-	t.Run("dial timeout", func(t *testing.T) {
-		h := newHarness(t)
-		ctx := testContext(t)
-		in := h.input(ctx, "ng-a")
-		dialing(t, h, in, timedOut)
-		results := health.Run(ctx, health.Preflight(), in)
-		for _, r := range results {
-			switch r.Name {
-			case "Nodes", "Workloads", "DrainBlockers":
-				if r.Outcome != health.Unreadable || len(r.Failures) == 0 {
-					t.Errorf("%s = %s %+v, want Unreadable with a failure", r.Name, r.Outcome, r.Failures)
+	for name, dialErr := range map[string]error{"no route": unroutable, "dial timeout": timedOut} {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness(t)
+			ctx := testContext(t)
+			in := h.input(ctx, "ng-a")
+			dialing(t, h, in, dialErr)
+			results := health.Run(ctx, health.Preflight(), in)
+			for _, r := range results {
+				switch r.Name {
+				case "Nodes", "Workloads", "DrainBlockers", "PDBCoverage":
+					check(t, r, want{outcome: health.Skipped, message: "Kubernetes API unreachable"})
+				case health.AccessCheck:
+					check(t, r, want{outcome: health.Warn, message: "Kubernetes API unreachable"})
 				}
 			}
-		}
-		if v := health.Gate(results, health.Policy{Yes: true}); v.Decision != health.Block || v.Exit != 4 {
-			t.Errorf("verdict = %+v, want Block with exit 4", v)
-		}
-	})
+			if v := health.Gate(results, health.Policy{}); v.Decision != health.Ask || v.Exit != 2 {
+				t.Errorf("verdict = %+v, want Ask with exit 2", v)
+			}
+			if v := health.Gate(results, health.Policy{Yes: true}); v.Decision != health.Go {
+				t.Errorf("verdict with --yes = %+v, want Go", v)
+			}
+			if v := health.Gate(results, health.Policy{RequireHealthy: true}); v.Decision != health.Block {
+				t.Errorf("verdict with --require-healthy = %+v, want Block", v)
+			}
+		})
+	}
 	t.Run("dial timeout, the access result", func(t *testing.T) {
 		h := newHarness(t)
 		ctx := testContext(t)

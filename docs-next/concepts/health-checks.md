@@ -112,7 +112,10 @@ the cluster.
 
 - If no kubeconfig context points at the cluster, or the API does not connect,
   the `Kubernetes` result is `Warn`. The gate asks. `--yes` accepts and the
-  result records it. `--require-healthy` blocks. A dry run exits `2`.
+  result records it. `--require-healthy` blocks. A dry run exits `2`. "Does
+  not connect" includes a refused connection, no route, and a connection
+  attempt that times out. A private-only API endpoint seen from outside its
+  VPC is this case.
 - If the API answers 401, 403, or 5xx, the checks that need it are
   `Unreadable`. That blocks for `Nodes`, `Workloads`, and `DrainBlockers`.
 - If the API connects but answers no read in time, the checks that need it

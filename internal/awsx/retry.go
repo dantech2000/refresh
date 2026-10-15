@@ -202,7 +202,8 @@ func isContextDeadline(err error) bool {
 
 // IsDialFailure reports whether err is a connection that could not be
 // opened: a DNS failure, a refused connection, a connect timeout, or a proxy
-// that could not be reached. No answer came from AWS. Go's connect timeout
+// that could not be reached. No answer came from the server, AWS or a
+// Kubernetes API server. Go's connect timeout
 // also reports itself as context.DeadlineExceeded, so a caller checks this
 // first to tell it from its own deadline.
 func IsDialFailure(err error) bool {

@@ -15,6 +15,7 @@ import (
 	metricsv1beta1 "k8s.io/metrics/pkg/apis/metrics/v1beta1"
 
 	"github.com/dantech2000/refresh/internal/apidoc"
+	"github.com/dantech2000/refresh/internal/awsx"
 	"github.com/dantech2000/refresh/internal/fleet"
 )
 
@@ -133,11 +134,23 @@ func isAPIAnswer(err error) bool {
 }
 
 // connectFailure reports whether err is a failure to reach the API server
-// at all: a refused or reset connection, a host that does not resolve. A
-// timeout is not one: the client's own timeout fires after the connection
-// was made, and the deadline of the run is the user's, not the server's.
+// at all: a connection that could not be opened, because it was refused,
+// had no route, or timed out, or because the host does not resolve. A
+// private-only endpoint seen from outside its VPC drops the packets, and
+// the dial times out: that is no access, as a refused connection is. Any
+// other timeout is not one: the client's own timeout fires after the
+// connection was made, and the deadline of the run is the user's, not the
+// server's.
 func connectFailure(err error) bool {
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || isAPIAnswer(err) {
+	if errors.Is(err, context.Canceled) || isAPIAnswer(err) {
+		return false
+	}
+	// Before the timeout checks: Go's connect timeout also reports itself
+	// as context.DeadlineExceeded.
+	if awsx.IsDialFailure(err) {
+		return true
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
 		return false
 	}
 	var netErr net.Error
@@ -150,9 +163,10 @@ func connectFailure(err error) bool {
 // access returns the result about the Kubernetes access of the run, and
 // whether the API could not be reached at all. "Unreachable" is strict:
 // the run's context has not ended, no read got an answer, and every read
-// that failed could not connect. A timeout, a read that failed after
-// another answered, or any answer of the server, 5xx included, leaves the
-// checks Unreadable with their failures. When no read got an answer, the
+// that failed could not connect (a dial that timed out included). A
+// timeout after the connection was made, a read that failed after another
+// answered, or any answer of the server, 5xx included, leaves the checks
+// Unreadable with their failures. When no read got an answer, the
 // result does not say that the API is reachable: it warns that the API
 // did not answer.
 func (r *reads) access() (Result, bool) {
