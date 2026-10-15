@@ -63,6 +63,23 @@ func ProfileInEffect(f *Factory) (string, error) {
 	return profile, err
 }
 
+// ExplicitProfile returns the AWS profile that refresh gives the SDK:
+// --profile, else the profile of the active context. A profile from
+// AWS_PROFILE or AWS_DEFAULT_PROFILE is left out, because another tool
+// that the run names reads the environment by itself. It is "" when the
+// options cannot be read; the run reports that error itself.
+func ExplicitProfile(f *Factory) string {
+	opts, err := awsOptions(f)
+	if err != nil {
+		return ""
+	}
+	profile, explicit, err := opts.EffectiveProfile()
+	if err != nil || !explicit {
+		return ""
+	}
+	return profile
+}
+
 // awsOptions collects what decides the AWS profile and region of the run.
 // It reads the context store also when the flags set both: a REFRESH_CONTEXT
 // with a typing error, or a store that cannot be read, fails every command

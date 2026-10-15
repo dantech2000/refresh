@@ -38,6 +38,11 @@ type FollowUp struct {
 	// repeats, and that the request cannot tell from a default: the
 	// --wait-timeout that the user chose.
 	Resume string
+	// Profile is the AWS profile that refresh gives the SDK, from
+	// --profile or the active context, for a command of the AWS CLI that a
+	// notice names. It is empty when the environment names the profile:
+	// the AWS CLI reads the environment too.
+	Profile string
 }
 
 // checkScope refuses a scope that the plan cannot keep safe. Without the

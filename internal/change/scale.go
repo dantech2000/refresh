@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"sync"
 
 	"k8s.io/client-go/kubernetes"
@@ -195,6 +196,11 @@ func planScale(ctx context.Context, d Deps, req ScaleRequest) (*Plan, error) {
 	refuse, notices := Busy(snap, NodegroupScale, phase.Steps)
 	cp.Blockers = append(cp.Blockers, refuse...)
 	cp.Notices = append(cp.Notices, notices...)
+	if len(refuse) > 0 {
+		if hint := scaleOutsideHint(snap, req, phase.Steps[0], d.FollowUp.Profile); hint != "" {
+			cp.Notices = append(cp.Notices, hint)
+		}
+	}
 	// A plan that the busy rule refuses runs no gate: nothing would be
 	// submitted, so its reads would be for nothing.
 	if len(refuse) == 0 {
@@ -300,4 +306,62 @@ func kubeAccess(d Deps, snap *fleet.Snapshot) (kubernetes.Interface, metricsv1be
 		return nil, nil, err.Error()
 	}
 	return client.Clientset, client.Metrics, ""
+}
+
+// scaleOutsideHint returns the AWS CLI command that makes the scale
+// outside refresh, for a scale that the busy rule refused only because
+// other nodegroups of the cluster are rolling. A roll can wait for
+// capacity that this scale would give, and EKS takes a scaling change on
+// another nodegroup during a roll; refresh does not, so the command is
+// the way out. It is "" when anything else is changing, when the
+// snapshot is not complete, or when the scale would send nothing.
+// profile is the AWS profile that refresh gives the SDK; a profile from
+// the environment is left to the environment.
+func scaleOutsideHint(snap *fleet.Snapshot, req ScaleRequest, step Step, profile string) string {
+	if step.Action != Submit || step.Sizes == nil {
+		return ""
+	}
+	if snap.Have.Cluster != fleet.Collected || snap.Have.Nodegroups != fleet.Collected || snap.Have.Addons != fleet.Collected {
+		return ""
+	}
+	if snap.Cluster.Status != "ACTIVE" {
+		return ""
+	}
+	rolling := false
+	for _, n := range snap.Nodegroups {
+		switch {
+		case n.Status == "ACTIVE" || n.Status == "DEGRADED":
+		case n.Name != req.Nodegroup && n.Status == "UPDATING":
+			rolling = true
+		default:
+			return ""
+		}
+	}
+	for _, a := range snap.Addons {
+		if addonInFlight(a.Status) {
+			return ""
+		}
+	}
+	if !rolling {
+		return ""
+	}
+	var sizes []string
+	for _, s := range []struct {
+		key  string
+		size *int32
+	}{{"minSize", req.Min}, {"maxSize", req.Max}, {"desiredSize", req.Desired}} {
+		if s.size != nil {
+			sizes = append(sizes, fmt.Sprintf("%s=%d", s.key, *s.size))
+		}
+	}
+	command := "aws eks update-nodegroup-config --cluster-name " + shellQuote(snap.Cluster.Name) +
+		" --nodegroup-name " + shellQuote(req.Nodegroup) + " --scaling-config " + strings.Join(sizes, ",")
+	if snap.Cluster.Region != "" {
+		command += " --region " + shellQuote(snap.Cluster.Region)
+	}
+	if profile != "" {
+		// "--profile=" keeps a name that starts with "-" a value.
+		command += " --profile=" + shellQuote(profile)
+	}
+	return "if the roll waits for capacity, scale this nodegroup outside refresh (EKS allows it during a roll): " + command
 }

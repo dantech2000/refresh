@@ -438,6 +438,48 @@ func TestPlanScale_Steps(t *testing.T) {
 		if len(cp.Blockers) != 1 || cp.Blockers[0].Kind != BlockerBusy || p.ExitCode() != 3 {
 			t.Errorf("blockers = %+v, exit %d; want one Busy blocker and 3", cp.Blockers, p.ExitCode())
 		}
+		for _, n := range cp.Notices {
+			if strings.Contains(n, "aws eks update-nodegroup-config") {
+				t.Errorf("notice %q: an add-on in flight gets no command to scale outside refresh", n)
+			}
+		}
+	})
+}
+
+// A scale that the busy rule refuses only because another nodegroup rolls
+// names the AWS CLI command that makes it outside refresh: EKS takes it
+// during a roll, and the roll may wait for that capacity.
+func TestPlanScale_HintWhileAnotherNodegroupRolls(t *testing.T) {
+	rolling := func(c *fleettest.Cluster) {
+		c.Nodegroups = append(c.Nodegroups, &fleettest.Nodegroup{Name: "batch", Version: "1.33", Status: fleettest.StatusUpdating})
+	}
+	t.Run("with the sizes given and the profile of the run", func(t *testing.T) {
+		e := newEnv(t, scaleWorld(rolling))
+		e.deps.FollowUp.Profile = "ops"
+		p, err := NewPlan(testContext(t), e.deps, scaleTo(3))
+		if err != nil {
+			t.Fatal(err)
+		}
+		cp := &p.Clusters[0]
+		want := "aws eks update-nodegroup-config --cluster-name prod --nodegroup-name web --scaling-config desiredSize=3 --region " + east + " --profile=ops"
+		if len(cp.Blockers) != 1 || cp.Blockers[0].Kind != BlockerBusy || !slices.ContainsFunc(cp.Notices, func(n string) bool { return strings.HasSuffix(n, want) }) {
+			t.Errorf("blockers %+v, notices %q; want a Busy blocker and a notice that ends in %q", cp.Blockers, cp.Notices, want)
+		}
+	})
+	t.Run("not when the target itself is rolling", func(t *testing.T) {
+		e := newEnv(t, scaleWorld(func(c *fleettest.Cluster) {
+			rolling(c)
+			c.Nodegroup("web").Status = fleettest.StatusUpdating
+		}))
+		p, err := NewPlan(testContext(t), e.deps, scaleTo(3))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, n := range p.Clusters[0].Notices {
+			if strings.Contains(n, "update-nodegroup-config") {
+				t.Errorf("notice %q for a target that is itself changing", n)
+			}
+		}
 	})
 }
 

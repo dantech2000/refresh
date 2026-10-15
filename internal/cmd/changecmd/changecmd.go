@@ -69,6 +69,7 @@ func depsOf(f *cmdutil.Factory, provider *awsx.Provider) change.Deps {
 		After:     f.After,
 		AfterFunc: f.AfterFunc,
 		Tick:      f.Tick,
+		FollowUp:  change.FollowUp{Profile: cmdutil.ExplicitProfile(f)},
 	}
 }
 
