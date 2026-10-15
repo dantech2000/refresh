@@ -91,10 +91,12 @@ cluster or anything else in it is changing, and it leaves a target alone
 that is already changing. Then the health gate judges all the targets
 together, before the first roll starts: the nodes, the capacity to take
 the drained pods, the control plane, the system workloads, and the
-PodDisruptionBudgets that would stop a drain. --force goes past a drain
-blocker, with a warning, and tells EKS to force the drain. It does nothing
-else: it does not roll a nodegroup that is on the latest AMI. Without
-Kubernetes access the command asks before it goes on.
+PodDisruptionBudgets that would stop a drain, and the EC2 vCPU quota: a
+roll whose likely surge of new nodes does not fit is blocked. --force goes
+past a drain blocker and a quota surge, with a warning, and tells EKS to
+force the drain. It does nothing else: it does not roll a nodegroup that
+is on the latest AMI. Without Kubernetes access the command asks before it
+goes on.
 
 The command asks once before it starts. --yes skips the question, and is
 required with -o json|yaml and without a terminal. It starts every roll,

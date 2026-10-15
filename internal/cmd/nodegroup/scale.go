@@ -70,9 +70,10 @@ for PodDisruptionBudgets when it does. So the health gate reads the nodes
 and the budgets from the Kubernetes API, and stops a scale-down that can
 take a budget below what it allows. --force goes past that, with a
 warning. Without Kubernetes access the command asks before it goes on.
-Any other scale checks the EC2 vCPU quota, and a scale-up warns when an
-availability zone of the nodegroup does not offer one of its instance
-types.
+Any other scale checks the EC2 vCPU quota: a scale-up whose new nodes do
+not fit is blocked, and --force goes past that, with a warning. A scale-up
+warns when an availability zone of the nodegroup does not offer one of its
+instance types.
 
 The command asks once before it starts. --yes skips the question, and is
 required with -o json|yaml and without a terminal. It waits until EKS
