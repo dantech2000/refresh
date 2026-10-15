@@ -121,7 +121,7 @@ add-ons, the control-plane metrics, the support window, and the rollback
 window after a recent upgrade. It changes nothing.
 
 ```text
-Error: upgrade blocked: Insights: 1 ERROR insight (Deprecated APIs removed in Kubernetes v1.35) (pass --exit-zero to report only)
+upgrade blocked: Insights: 1 ERROR insight (Deprecated APIs removed in Kubernetes v1.35) (pass --exit-zero to report only)
 prod-platform-06   ✗ NOT READY   ca-central-1 · 1.34 · standard (49d)*
 
 READINESS

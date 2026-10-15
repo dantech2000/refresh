@@ -174,7 +174,7 @@ refresh nodegroup update -c prod-payments-00 --dry-run
 ```
 
 ```text
-Error: dry run: a real run would be blocked
+dry run: a real run would be blocked
 Plan   ✗ Blocked   NodegroupUpdate
 
 HEALTH GATE
@@ -280,7 +280,7 @@ refresh nodegroup scale ng-b -c dev-orders-32 --desired 2 --dry-run
 ```
 
 ```text
-Error: dry run: a real run would be blocked
+dry run: a real run would be blocked
 Plan   ✗ Blocked   NodegroupScale
 
 STEPS  1

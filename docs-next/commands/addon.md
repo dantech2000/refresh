@@ -126,7 +126,7 @@ An add-on that is `DEGRADED`, or whose last change failed, can be updated to
 repair it. The health gate warns, so the command asks first:
 
 ```text
-Error: dry run: a real run would ask about health warnings
+dry run: a real run would ask about health warnings
 Plan   ▲ Ask   AddonUpdate
 
 STEPS  1

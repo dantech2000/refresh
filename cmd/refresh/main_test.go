@@ -207,9 +207,30 @@ func TestExitCode(t *testing.T) {
 			wantCode: 2,
 		},
 		{
+			// A verdict is not an error: the message alone.
 			name:       "blocked",
-			err:        &cmdutil.ExitError{Code: cmdutil.ExitBlocked, Err: cause},
+			err:        &cmdutil.ExitError{Code: cmdutil.ExitBlocked, Err: errors.New("blocked by 1 health check: Nodes: 1/3 nodes ready; nothing was started")},
 			wantCode:   3,
+			wantErrOut: "blocked by 1 health check: Nodes: 1/3 nodes ready; nothing was started\n",
+		},
+		{
+			name:       "needs attention, with a message",
+			err:        fmt.Errorf("cluster upgrade: %w", &cmdutil.ExitError{Code: cmdutil.ExitNeedsAttention, Err: errors.New("upgrade needs review: 1 insight warns")}),
+			wantCode:   2,
+			wantErrOut: "cluster upgrade: upgrade needs review: 1 insight warns\n",
+		},
+		{
+			// An interrupt is an error, whatever the verdict was.
+			name:        "blocked, interrupted",
+			err:         &cmdutil.ExitError{Code: cmdutil.ExitBlocked, Err: cause},
+			interrupted: true,
+			wantCode:    1,
+			wantErrOut:  "Error: 2 nodegroups are stale\n",
+		},
+		{
+			name:       "verify failed, with a message",
+			err:        &cmdutil.ExitError{Code: cmdutil.ExitVerifyFailed, Err: cause},
+			wantCode:   5,
 			wantErrOut: "Error: 2 nodegroups are stale\n",
 		},
 		{

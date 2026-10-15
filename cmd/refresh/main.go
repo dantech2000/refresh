@@ -81,6 +81,10 @@ func execute(ctx context.Context, args []string, f *cmdutil.Factory) int {
 // ExitError sets the code, and any other error is exit 1. An ExitError
 // without a message prints nothing: the command already printed its result.
 //
+// The message of a verdict, exit 2 (needs attention) or exit 3 (blocked),
+// prints alone: it is the answer of the command, not an error. Every other
+// message starts with "Error: ".
+//
 // An interrupt is exit 1, whatever the command returned, with one exception:
 // to stop a watch with Ctrl+C is the normal way to end it, and exits 0.
 // For every other command a result
@@ -102,14 +106,18 @@ func exitCode(ctx context.Context, errOut io.Writer, err error) int {
 	if interrupted {
 		msg = interruptWords(msg)
 	}
-	if msg != "" {
-		// Nothing can report a failed write to stderr.
-		_, _ = fmt.Fprintln(errOut, "Error: "+msg)
-	}
+	code := cmdutil.ExitCode(err)
 	if interrupted {
-		return cmdutil.ExitFailure
+		code = cmdutil.ExitFailure
 	}
-	return cmdutil.ExitCode(err)
+	if msg != "" {
+		if code != cmdutil.ExitNeedsAttention && code != cmdutil.ExitBlocked {
+			msg = "Error: " + msg
+		}
+		// Nothing can report a failed write to stderr.
+		_, _ = fmt.Fprintln(errOut, msg)
+	}
+	return code
 }
 
 // interruptWords returns the message of a run that the user interrupted.

@@ -43,6 +43,7 @@ Say no to any row and it reverts to today's behaviour.
 | 29 | `-a` is not a reserved flag letter | No command has an add-on flag: the add-on is the positional. A letter that no flag uses is not reserved. |
 | 30 | `context list` and `context current` print no document, and the contract lists every command without `-o` | They print for people. A script reads the name, the first field of `refresh context current`. |
 | 31 | `completion` has help text in the voice of the other commands, with an `Exit codes:` block, and the command list names `help` | Cobra's stock text read like another tool |
+| 32 | The message of a verdict, exit 2 or 3, prints without `Error:` | A warning or a block is the answer of the command, not a crash. Exit 1 and 4 keep `Error:`. |
 
 ## Commands
 
@@ -243,6 +244,8 @@ Unchanged.
 | `5` | The change was applied and the check after it found issues |
 
 Exit 5 needs a check after the change: the verification after a nodegroup roll, and the health of an add-on after its update. `nodegroup scale` has no such check, so it never exits 5. It waits until EKS reports the update done and the nodegroup is `ACTIVE` at the new sizes. A nodegroup that is not `ACTIVE` then, such as `DEGRADED`, is a failed change, exit 1.
+
+The message on stderr of an exit 2 or 3 is a verdict and prints alone, such as `upgrade needs review: ...`. Every other message starts with `Error:`: exit 1, 4, and 5.
 
 When one run has several results, the highest code wins, except that an interrupt is always `1`. This holds for `status` too: incomplete data (4) outranks an unsupported cluster (3). One exception to the interrupt rule: stopping `--watch` with Ctrl+C exits `0`, because that is the normal way to end a watch.
 

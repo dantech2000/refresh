@@ -18,6 +18,17 @@ exits `0`, because that is the normal way to end a watch.
 A command prints its document first and then exits with the code. So a script
 can read the document of a run that exits `3`, `4`, or `5`.
 
+The message on stderr of an exit `2` or `3` is a verdict, not an error, and
+prints alone:
+
+```text
+upgrade needs review: 1 insight warns
+dry run: a real run would be blocked
+```
+
+Every other message starts with `Error:`: an error or an interrupt (`1`),
+incomplete data or a partial failure (`4`), and a failed verification (`5`).
+
 ## Codes per command
 
 | Command | `0` | `1` | `2` | `3` | `4` | `5` |
