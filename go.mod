@@ -24,7 +24,7 @@ require (
 	github.com/go-logr/logr v1.4.4
 	github.com/google/go-cmp v0.7.0
 	github.com/invopop/jsonschema v0.14.0
-	github.com/mattn/go-runewidth v0.0.30
+	github.com/mattn/go-runewidth v0.0.31
 	github.com/rivo/uniseg v0.4.7
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	github.com/spf13/cobra v1.10.2
