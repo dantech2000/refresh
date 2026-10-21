@@ -259,8 +259,17 @@ func TestFleet_InterruptBetweenClusters(t *testing.T) {
 			if sent < 0 {
 				t.Fatal("the roll of prod did not end")
 			}
-			if after := e.operations(sent); len(after) != 0 {
-				t.Errorf("requests after the interrupt: %v, want none", after)
+			// The Auto Scaling watch of prod reads at each tick of the
+			// wait and is cancelled when the wait ends. A read that is
+			// on the wire then is abandoned by the client, and the fake
+			// can log it after the event, so it may follow sent. It was
+			// sent for prod before the interrupt; nothing may be sent for
+			// staging.
+			for _, r := range e.srv.Requests()[sent:] {
+				if r.Operation == fleettest.AutoScalingDescribeScalingActivities && r.Input["AutoScalingGroupName"] == "eks-prod-ng-a" {
+					continue
+				}
+				t.Errorf("request after the interrupt: %s %v, want none", r.Operation, r.Input)
 			}
 			// One checkpoint, before prod. None follows the interrupt.
 			if checkpoints != 1 {
