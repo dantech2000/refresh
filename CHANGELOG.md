@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.17.2](https://github.com/dantech2000/refresh/compare/v0.17.1...v0.17.2) (2026-10-21)
+
+
+### Bug Fixes
+
+* **build:** bump the toolchain to go1.26.10 for GO-2026-6809 ([#550](https://github.com/dantech2000/refresh/issues/550)) ([fcd0ca4](https://github.com/dantech2000/refresh/commit/fcd0ca49f03453e3387a7aa3321f9d06c3b98260))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/credentials ([#536](https://github.com/dantech2000/refresh/issues/536)) ([1e6d3c0](https://github.com/dantech2000/refresh/commit/1e6d3c022b42d8830b3246bfd53b5476c9cee446))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/feature/ec2/imds ([#541](https://github.com/dantech2000/refresh/issues/541)) ([f6f7ce8](https://github.com/dantech2000/refresh/commit/f6f7ce8957253db754b418ada8836d44285b8198))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/autoscaling ([#546](https://github.com/dantech2000/refresh/issues/546)) ([021713b](https://github.com/dantech2000/refresh/commit/021713bbd58aadff7acd619df7d7690337d75572))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/cloudwatch ([#539](https://github.com/dantech2000/refresh/issues/539)) ([1626065](https://github.com/dantech2000/refresh/commit/16260659652aa22c69d04d1fe4cc21e342240755))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/servicequotas ([#538](https://github.com/dantech2000/refresh/issues/538)) ([54045e1](https://github.com/dantech2000/refresh/commit/54045e1901c9489a8cd7211a38e5b4c6061720ff))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/ssm ([#533](https://github.com/dantech2000/refresh/issues/533)) ([2c12cb7](https://github.com/dantech2000/refresh/commit/2c12cb732d7efe89d8e081cc73d28bf297eca499))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/sso ([#540](https://github.com/dantech2000/refresh/issues/540)) ([e02c1a2](https://github.com/dantech2000/refresh/commit/e02c1a2346a19e10cfbfa3338ff54093ce2b6139))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/ssooidc ([#547](https://github.com/dantech2000/refresh/issues/547)) ([ceda6ea](https://github.com/dantech2000/refresh/commit/ceda6ea02cbd55d207dfc55b2cb6aa04d9301813))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/sts ([#537](https://github.com/dantech2000/refresh/issues/537)) ([ecb22cc](https://github.com/dantech2000/refresh/commit/ecb22ccc8ccf7831a274fff87a3978587f164a66))
+* **deps:** bump github.com/mattn/go-runewidth from 0.0.30 to 0.0.31 ([#545](https://github.com/dantech2000/refresh/issues/545)) ([f99de70](https://github.com/dantech2000/refresh/commit/f99de7016cbfb6f1b360230bf5103d65afc9cfaf))
+* **deps:** bump github.com/pb33f/go-yaml from 0.1.0 to 0.1.1 ([#544](https://github.com/dantech2000/refresh/issues/544)) ([ff7614b](https://github.com/dantech2000/refresh/commit/ff7614b292066238f6a21234d67d116eceb636d2))
+
 ## [0.17.1](https://github.com/dantech2000/refresh/compare/v0.17.0...v0.17.1) (2026-10-15)
 
 
