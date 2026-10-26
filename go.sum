@@ -18,8 +18,8 @@ github.com/aws/aws-sdk-go-v2/service/autoscaling v1.79.1 h1:R4Cd/zWJ3bTsykRmoSfW
 github.com/aws/aws-sdk-go-v2/service/autoscaling v1.79.1/go.mod h1:rM7hNcButN34E+4YkY8jNiSHGSTs4bBR88TcpqIZgLM=
 github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.75.1 h1:vECZERPnUbUpoH3xwAUwbYWzBIf10PobAG7UdYuygUw=
 github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.75.1/go.mod h1:KBlt8j7XCg0ZyfOfZQe9ijU4pZ0qmu00m96y07B89Qo=
-github.com/aws/aws-sdk-go-v2/service/ec2 v1.338.3 h1:9hhwIT0KJHiGpnx+LV+zRKNU3jqkkljBT9XXMIgbq70=
-github.com/aws/aws-sdk-go-v2/service/ec2 v1.338.3/go.mod h1:XBOdxGUyamy4dTWjC6LvHaexFxOLHzZO6WEMUXwXHHo=
+github.com/aws/aws-sdk-go-v2/service/ec2 v1.341.0 h1:NvtY2nTE0PZeUeYlR/BB5xedUF3B6nhBJRbEyYhiy60=
+github.com/aws/aws-sdk-go-v2/service/ec2 v1.341.0/go.mod h1:5sMueYq4QuoMZ1Ruh/q75UF9OdVKf0OndZlT23Jqs5Y=
 github.com/aws/aws-sdk-go-v2/service/eks v1.104.0 h1:MBF87P3VAOhfpZxAsogEYig6WOvMdRs0XlW64+zMOMQ=
 github.com/aws/aws-sdk-go-v2/service/eks v1.104.0/go.mod h1:KU0ZDH9Hvt7n0Wm+T6xsWT5Srl48xqikY9aLVt0x3R8=
 github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.22 h1:qHfXn1Tm2Rh8kic/DvdKaiSVlHQRSr5C+rMuBR29D44=
