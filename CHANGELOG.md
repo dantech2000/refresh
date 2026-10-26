@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.17.3](https://github.com/dantech2000/refresh/compare/v0.17.2...v0.17.3) (2026-10-26)
+
+
+### Bug Fixes
+
+* **deps:** bump github.com/aws/aws-sdk-go-v2/config ([#558](https://github.com/dantech2000/refresh/issues/558)) ([047e5ce](https://github.com/dantech2000/refresh/commit/047e5ced75dc68686f27bd9c6048a89b61ab837f))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/feature/ec2/imds ([#555](https://github.com/dantech2000/refresh/issues/555)) ([76c9a04](https://github.com/dantech2000/refresh/commit/76c9a041ab3aae8972be51db377ee240010b8b53))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/autoscaling ([#556](https://github.com/dantech2000/refresh/issues/556)) ([d72ed75](https://github.com/dantech2000/refresh/commit/d72ed75bf26d4dd53b6a1cc95bbd72dbbea44caa))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/cloudwatch ([#554](https://github.com/dantech2000/refresh/issues/554)) ([ab5f4ed](https://github.com/dantech2000/refresh/commit/ab5f4ed94ac599f711b9eaa310f5bf449a5a0f64))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/ec2 ([#569](https://github.com/dantech2000/refresh/issues/569)) ([950b54a](https://github.com/dantech2000/refresh/commit/950b54a2ebf4a59350ae4a7272673a0d65a72653))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/servicequotas ([#557](https://github.com/dantech2000/refresh/issues/557)) ([be33352](https://github.com/dantech2000/refresh/commit/be333529aa39b3d4e1bd2607dc091958f8094a37))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/signin ([#568](https://github.com/dantech2000/refresh/issues/568)) ([caee14c](https://github.com/dantech2000/refresh/commit/caee14c4e6639b40ec4f29bce9bdb34a10b88904))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/sts ([#563](https://github.com/dantech2000/refresh/issues/563)) ([02d3252](https://github.com/dantech2000/refresh/commit/02d325278421e1ba9e8992e02d5fcdee8b8c27b3))
+* **deps:** bump github.com/charmbracelet/x/exp/golden ([#562](https://github.com/dantech2000/refresh/issues/562)) ([8db4221](https://github.com/dantech2000/refresh/commit/8db42210bffaf8b72830143f67dc5e800c4ff5da))
+
 ## [0.17.2](https://github.com/dantech2000/refresh/compare/v0.17.1...v0.17.2) (2026-10-21)
 
 
