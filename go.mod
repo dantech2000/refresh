@@ -15,7 +15,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/ec2 v1.341.0
 	github.com/aws/aws-sdk-go-v2/service/eks v1.104.0
 	github.com/aws/aws-sdk-go-v2/service/servicequotas v1.43.6
-	github.com/aws/aws-sdk-go-v2/service/ssm v1.79.3
+	github.com/aws/aws-sdk-go-v2/service/ssm v1.81.0
 	github.com/aws/aws-sdk-go-v2/service/sts v1.51.5
 	github.com/aws/smithy-go v1.28.6
 	github.com/charmbracelet/colorprofile v0.4.3
