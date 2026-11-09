@@ -7,7 +7,7 @@ table. To rewrite it, run `go test ./internal/awsx/awsxtest -run TestCoverageDoc
 | Column | What `TestMatrix<Column>` proves |
 |---|---|
 | success | The SDK decodes the response into the fields the legacy product reads (the projections in `operations_test.go`). The request is logged once with its operation, service, region, and mutation flag. A mutating operation changed the world. |
-| denied | The SDK returns the access-denied code of the service, in the modeled Go type where the SDK dispatches one for the operation (EKS, Service Quotas) and as `smithy.GenericAPIError` elsewhere. The call is not retried and changes nothing. |
+| denied | The SDK returns the access-denied code of the service, in the modeled Go type where the SDK dispatches one for the operation (EKS, Service Quotas, SSM) and as `smithy.GenericAPIError` elsewhere. The call is not retried and changes nothing. |
 | throttled | The SDK returns the throttling code of the service, in the same type rule, and classifies it as retryable throttling. A client with 3 attempts succeeds after 2 more throttles. |
 | paged | With a forced page size of 1, every item arrives, one request per page. `-` means the API has no pages. |
 | delayed | The response waits for the world's clock, then decodes. |
