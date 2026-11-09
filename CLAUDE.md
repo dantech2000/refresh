@@ -141,9 +141,10 @@ Three rules are this project's own. Each comes from a past bug.
 
 **AWS calls (`awsx`).** `awsx.Clients` holds every service client of one
 region. There is one retry layer, the SDK retryer, with a policy per kind of
-call: `Read` (5 attempts), `Sweep` (short dial timeout, a dial failure is not
-retried), `Poll` (1 attempt; the wait loop goes on through transient errors),
-and `Mutate` (5 attempts with one idempotency token). Do not wrap a call in
+call: `Standard` (5 attempts; an update call keeps one client request token
+across them), `Sweep` (Standard with a short dial timeout, a dial failure is
+not retried), and `Poll` (1 attempt; the wait loop goes on through transient
+errors). Do not wrap a call in
 your own retry. Page a list call with `awsx.ListAll`. Classify an error with
 `awsx.Classify`; `awsx.FormatAWSError` turns it into a message that names the
 IAM action. A new AWS call needs a row in `awsx.RequiredPermissions` and the
