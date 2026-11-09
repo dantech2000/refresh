@@ -16,6 +16,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws/retry"
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 	sqtypes "github.com/aws/aws-sdk-go-v2/service/servicequotas/types"
+	ssmtypes "github.com/aws/aws-sdk-go-v2/service/ssm/types"
 	"github.com/aws/smithy-go"
 	"github.com/google/go-cmp/cmp"
 
@@ -122,7 +123,7 @@ var wireErrors = map[string]struct{ denied, throttled wireError }{
 	"sts":           {wireError{"AccessDenied", generic}, wireError{"Throttling", generic}},
 	"ec2":           {wireError{"UnauthorizedOperation", generic}, wireError{"RequestLimitExceeded", generic}},
 	"autoscaling":   {wireError{"AccessDenied", generic}, wireError{"Throttling", generic}},
-	"ssm":           {wireError{"AccessDeniedException", generic}, wireError{"ThrottlingException", generic}},
+	"ssm":           {wireError{"AccessDeniedException", is[*ssmtypes.AccessDeniedException]}, wireError{"ThrottlingException", is[*ssmtypes.ThrottlingException]}},
 	"cloudwatch":    {wireError{"AccessDenied", generic}, wireError{"Throttling", generic}},
 	"servicequotas": {wireError{"AccessDeniedException", is[*sqtypes.AccessDeniedException]}, wireError{"TooManyRequestsException", is[*sqtypes.TooManyRequestsException]}},
 }
