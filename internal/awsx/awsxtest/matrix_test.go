@@ -16,6 +16,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws/retry"
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 	sqtypes "github.com/aws/aws-sdk-go-v2/service/servicequotas/types"
+	ssmtypes "github.com/aws/aws-sdk-go-v2/service/ssm/types"
 	"github.com/aws/smithy-go"
 	"github.com/google/go-cmp/cmp"
 
@@ -105,10 +106,10 @@ func is[T error](err error) bool {
 }
 
 // wireError is how the SDK must decode one injected error of a service: the
-// code, and the concrete Go type. Where the service's model has a shape for
-// the code and lists it for the operation, the type is that shape, which
-// shows that the SDK dispatched on the error. Elsewhere it is the SDK's
-// generic API error.
+// code, and the concrete Go type. Where the SDK has a shape for the code (the
+// model lists it for the operation, or the service's error registry holds
+// it, as in SSM since 1.80), the type is that shape, which shows that the
+// SDK dispatched on the error. Elsewhere it is the SDK's generic API error.
 type wireError struct {
 	code    string
 	modeled func(error) bool
@@ -122,7 +123,7 @@ var wireErrors = map[string]struct{ denied, throttled wireError }{
 	"sts":           {wireError{"AccessDenied", generic}, wireError{"Throttling", generic}},
 	"ec2":           {wireError{"UnauthorizedOperation", generic}, wireError{"RequestLimitExceeded", generic}},
 	"autoscaling":   {wireError{"AccessDenied", generic}, wireError{"Throttling", generic}},
-	"ssm":           {wireError{"AccessDeniedException", generic}, wireError{"ThrottlingException", generic}},
+	"ssm":           {wireError{"AccessDeniedException", is[*ssmtypes.AccessDeniedException]}, wireError{"ThrottlingException", is[*ssmtypes.ThrottlingException]}},
 	"cloudwatch":    {wireError{"AccessDenied", generic}, wireError{"Throttling", generic}},
 	"servicequotas": {wireError{"AccessDeniedException", is[*sqtypes.AccessDeniedException]}, wireError{"TooManyRequestsException", is[*sqtypes.TooManyRequestsException]}},
 }
@@ -443,7 +444,7 @@ func TestCoverageDoc(t *testing.T) {
 	b.WriteString("table. To rewrite it, run `go test ./internal/awsx/awsxtest -run TestCoverageDoc -update`.\n\n")
 	b.WriteString("| Column | What `TestMatrix<Column>` proves |\n|---|---|\n")
 	b.WriteString("| success | The SDK decodes the response into the fields the legacy product reads (the projections in `operations_test.go`). The request is logged once with its operation, service, region, and mutation flag. A mutating operation changed the world. |\n")
-	b.WriteString("| denied | The SDK returns the access-denied code of the service, in the modeled Go type where the SDK dispatches one for the operation (EKS, Service Quotas) and as `smithy.GenericAPIError` elsewhere. The call is not retried and changes nothing. |\n")
+	b.WriteString("| denied | The SDK returns the access-denied code of the service, in the modeled Go type where the SDK dispatches one for the operation (EKS, Service Quotas, SSM) and as `smithy.GenericAPIError` elsewhere. The call is not retried and changes nothing. |\n")
 	b.WriteString("| throttled | The SDK returns the throttling code of the service, in the same type rule, and classifies it as retryable throttling. A client with 3 attempts succeeds after 2 more throttles. |\n")
 	b.WriteString("| paged | With a forced page size of 1, every item arrives, one request per page. `-` means the API has no pages. |\n")
 	b.WriteString("| delayed | The response waits for the world's clock, then decodes. |\n")
