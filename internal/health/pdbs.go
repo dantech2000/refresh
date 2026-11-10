@@ -21,16 +21,25 @@ import (
 // one of them: real workloads run there.
 var systemNamespaces = map[string]bool{"kube-system": true, "kube-public": true, "kube-node-lease": true}
 
+// maxDisruptedPods is MaxDisruptedPodSize of the eviction API: above it,
+// the API refuses every eviction of the budget.
+const maxDisruptedPods = 2000
+
 // pdb is one PodDisruptionBudget as the checks read it.
 type pdb struct {
 	namespace, name string
 	allowed         int32
 	healthy         int32
 	expected        int32
-	// unsynced is set when the disruption controller has not observed the
-	// spec, or reports SyncFailed. The counts are then not to be trusted,
-	// and the eviction API refuses the pods of the budget.
-	unsynced bool
+	// generation and observed are the generation of the spec and the one
+	// the disruption controller last processed.
+	generation, observed int64
+	// syncFailed is set when the DisruptionAllowed condition reports
+	// SyncFailed: the controller could not compute the counts.
+	syncFailed bool
+	// disrupted is the number of evictions the controller has not
+	// confirmed yet (status.disruptedPods).
+	disrupted int
 	// selector is nil when the spec has no selector, which matches no
 	// pod. An empty selector matches every pod of the namespace.
 	selector    labels.Selector
@@ -42,11 +51,12 @@ func newPDB(in policyv1.PodDisruptionBudget) pdb {
 	p := pdb{
 		namespace: in.Namespace, name: in.Name,
 		allowed: in.Status.DisruptionsAllowed, healthy: in.Status.CurrentHealthy, expected: in.Status.ExpectedPods,
-		unsynced:  in.Status.ObservedGeneration < in.Generation,
+		generation: in.Generation, observed: in.Status.ObservedGeneration,
+		disrupted: len(in.Status.DisruptedPods),
 		healthyOK: in.Status.DesiredHealthy > 0 && in.Status.CurrentHealthy >= in.Status.DesiredHealthy,
 	}
 	if c := meta.FindStatusCondition(in.Status.Conditions, policyv1.DisruptionAllowedCondition); c != nil && c.Reason == policyv1.SyncFailedReason {
-		p.unsynced = true
+		p.syncFailed = true
 	}
 	if policy := in.Spec.UnhealthyPodEvictionPolicy; policy != nil && *policy == policyv1.AlwaysAllow {
 		p.alwaysAllow = true
@@ -61,24 +71,63 @@ func newPDB(in policyv1.PodDisruptionBudget) pdb {
 
 func (p pdb) id() string { return p.namespace + "/" + p.name }
 
-// atRisk reports whether the budget allows no disruption while it may
-// cover pods. expected 0 means "no pod" only when the status is synced.
-func (p pdb) atRisk() bool {
-	return p.allowed <= 0 && (p.expected > 0 || p.unsynced)
+// refusesAll returns why the eviction API refuses every pod that the
+// budget gates, whatever its counts say, or "" when it does not. The
+// rules are those of checkAndDecrement in
+// kubernetes/kubernetes pkg/registry/core/pod/storage/eviction.go at
+// v1.37.2 (the Kubernetes of the client-go in go.mod), in its order:
+//
+//   - status.observedGeneration < metadata.generation: 429, "the
+//     disruption budget is still being processed by the server";
+//   - status.disruptionsAllowed < 0: 403;
+//   - more than MaxDisruptedPodSize (2000) entries in
+//     status.disruptedPods: 403, "too many pending evictions not
+//     confirmed by PDB controller";
+//   - status.disruptionsAllowed == 0: 429 (see refuses).
+//
+// A budget whose DisruptionAllowed condition is SyncFailed also counts
+// here. The API reads that condition only to word its 429, since the
+// controller writes disruptionsAllowed 0 when a sync fails; the counts
+// of such a status are not to be trusted, so the check fails closed.
+func (p pdb) refusesAll() string {
+	switch {
+	case p.observed < p.generation:
+		return fmt.Sprintf("not processed by the disruption controller since its last change: generation %d, observed %d; evictions are refused", p.generation, p.observed)
+	case p.allowed < 0:
+		return fmt.Sprintf("%d disruptions allowed; evictions are refused", p.allowed)
+	case p.disrupted > maxDisruptedPods:
+		return fmt.Sprintf("%d evictions not yet confirmed by the disruption controller, more than %d; evictions are refused", p.disrupted, maxDisruptedPods)
+	case p.syncFailed:
+		return "the disruption controller failed to sync it, 0 disruptions allowed; evictions are refused"
+	}
+	return ""
 }
 
-// allowedNow is the number of pods the budget lets go: 0 when it is not
-// synced, since the eviction API then refuses its pods.
+// refuses reports whether the eviction API refuses a pod that the budget
+// gates: a rule of refusesAll holds, or the budget allows no disruption.
+// The API does not look at expectedPods.
+func (p pdb) refuses() bool {
+	return p.refusesAll() != "" || p.allowed == 0
+}
+
+// atRisk is refuses without a pod read: a synced budget that allows no
+// disruption counts only while its status counts pods.
+func (p pdb) atRisk() bool {
+	return p.refusesAll() != "" || (p.allowed == 0 && p.expected > 0)
+}
+
+// allowedNow is the number of pods the budget lets go: 0 when a rule of
+// refusesAll holds.
 func (p pdb) allowedNow() int32 {
-	if p.unsynced {
+	if p.refusesAll() != "" {
 		return 0
 	}
 	return max(p.allowed, 0)
 }
 
 func (p pdb) summary() string {
-	if p.unsynced {
-		return p.id() + " (status not synced, 0 disruptions allowed; evictions are refused)"
+	if why := p.refusesAll(); why != "" {
+		return p.id() + " (" + why + ")"
 	}
 	return fmt.Sprintf("%s (%d/%d pods healthy, 0 disruptions allowed)", p.id(), p.healthy, p.expected)
 }
@@ -199,9 +248,9 @@ func targetsDesired(snap *fleet.Snapshot, targets []string) (int32, bool) {
 }
 
 // findDrainBlockers is the rule over the budgets. Scoped, it reads the
-// pods of each namespace that has an at-risk budget, to see whether the
-// budget gates a pod on a target node; unscoped, an at-risk budget counts
-// without a pod read, as the old check counted it. With withMulti it also
+// pods of each namespace that has a budget that refuses evictions, to see
+// whether the budget gates a pod on a target node; unscoped, an at-risk
+// budget counts without a pod read, as the old check counted it. With withMulti it also
 // names the pods that more than one budget selects, which needs the pods
 // of each namespace with more than one budget. A scale-down leaves that
 // rule out: EKS ends its evictions after 15 minutes and terminates the
@@ -217,7 +266,7 @@ func findDrainBlockers(in *Input, budgets []pdb, targets map[string]bool, scoped
 		reads    []func()
 	)
 	needsPods := func(ns string) bool {
-		return (scoped && slices.ContainsFunc(byNamespace[ns], pdb.atRisk)) || (withMulti && len(byNamespace[ns]) > 1)
+		return (scoped && slices.ContainsFunc(byNamespace[ns], pdb.refuses)) || (withMulti && len(byNamespace[ns]) > 1)
 	}
 	namespaces := slices.Sorted(maps.Keys(byNamespace))
 	// The pods of every namespace that needs them, in one round trip.
@@ -240,9 +289,11 @@ func findDrainBlockers(in *Input, budgets []pdb, targets map[string]bool, scoped
 		}
 		for _, p := range list {
 			switch {
-			case !p.atRisk():
 			case !scoped:
-				blockers = append(blockers, p.summary())
+				if p.atRisk() {
+					blockers = append(blockers, p.summary())
+				}
+			case !p.refuses():
 			case pods != nil && slices.ContainsFunc(pods.Items, func(pod corev1.Pod) bool { return targets[pod.Spec.NodeName] && p.gates(&pod) }):
 				blockers = append(blockers, p.summary())
 			}
@@ -391,8 +442,12 @@ func runScaleDown(in *Input, nodegroup string, remove int32) Result {
 		}
 		if loss := worstCaseLoss(perNode, int(remove)); loss > p.allowedNow() {
 			r.Findings = append(r.Findings, p.id())
-			r.Details = append(r.Details, fmt.Sprintf("drain blocker: %s (%d/%d pods healthy, %d allowed; covered pods run on %d of the nodes, so removing %d can take down %d)",
-				p.id(), p.healthy, p.expected, p.allowedNow(), len(perNode), remove, loss))
+			counts := fmt.Sprintf("%d/%d pods healthy, %d allowed", p.healthy, p.expected, p.allowedNow())
+			if why := p.refusesAll(); why != "" {
+				counts = why
+			}
+			r.Details = append(r.Details, fmt.Sprintf("drain blocker: %s (%s; covered pods run on %d of the nodes, so removing %d can take down %d)",
+				p.id(), counts, len(perNode), remove, loss))
 		}
 	}
 	if len(r.Findings) == 0 {

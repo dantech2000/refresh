@@ -91,6 +91,10 @@ type PDB struct {
 	SyncFailed  bool
 	AlwaysAllow bool
 	NoSelector  bool
+	// DisruptedPods is the number of evictions that the controller has
+	// not confirmed yet (status.disruptedPods). Above 2000 the eviction
+	// API refuses every pod of the budget.
+	DisruptedPods int
 }
 
 // Deployment is a Kubernetes deployment, as far as refresh reads one.
@@ -269,8 +273,9 @@ func (r *roll) advance(s *State, c *Cluster, now time.Time) {
 //     AlwaysAllow, or, by default, when the budget has CurrentHealthy at
 //     or above a DesiredHealthy above zero;
 //   - otherwise the budget must have a status for its current generation
-//     (not Unsynced) and DisruptionsAllowed above zero. A SyncFailed budget
-//     allows none: the disruption controller writes 0 when it fails.
+//     (not Unsynced), no more than 2000 DisruptedPods, and
+//     DisruptionsAllowed above zero. A SyncFailed budget allows none: the
+//     disruption controller writes 0 when it fails.
 //
 // One simplification: each pod is checked against the budget as it is, so
 // two evictions under a budget that allows one both pass. The world
@@ -321,8 +326,12 @@ func (b PDB) evicts(p *Pod) bool {
 	if p.NotReady && (b.AlwaysAllow || b.CurrentHealthy >= b.DesiredHealthy && b.DesiredHealthy > 0) {
 		return true
 	}
-	return !b.Unsynced && !b.SyncFailed && b.DisruptionsAllowed > 0
+	return !b.Unsynced && !b.SyncFailed && b.DisruptedPods <= maxDisruptedPods && b.DisruptionsAllowed > 0
 }
+
+// maxDisruptedPods is MaxDisruptedPodSize of the eviction API
+// (kubernetes/kubernetes pkg/registry/core/pod/storage/eviction.go).
+const maxDisruptedPods = 2000
 
 // evictionFailure is the error of an update whose drain the budgets kept
 // blocked until it ended, in the words EKS uses.
