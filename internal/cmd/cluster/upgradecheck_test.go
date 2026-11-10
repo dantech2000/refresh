@@ -145,7 +145,7 @@ func TestUpgradeCheck_Verdicts(t *testing.T) {
 		{name: "the etcd limit of a provisioned control plane", edit: func(s *fleettest.State, c *fleettest.Cluster) {
 			ready(s, c)
 			c.ControlPlaneTier = "tier-xl"
-		}, code: 0, want: "etcd 6% of 16 GiB"},
+		}, code: 0, want: "etcd 7% of 16 GB"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -28,7 +28,7 @@ const (
 	controlPlaneWindow  = 15 * time.Minute
 )
 
-// etcdLimit returns the size of the etcd database of a cluster, in GiB, by
+// etcdLimit returns the size of the etcd database of a cluster, in GB, by
 // the scaling tier of its control plane, and whether the tier is known.
 //
 // The EKS User Guide, "Amazon EKS Provisioned Control Plane"
@@ -39,13 +39,18 @@ const (
 // controlPlaneScalingConfig.tier: standard, tier-xl, tier-2xl, tier-4xl, or
 // tier-8xl (EKS API Reference, ControlPlaneScalingConfig). The guide says
 // that every cluster is in Standard mode until it opts in, so a cluster
-// with no scaling config is in Standard mode. The sizes are read as GiB,
-// as the check always read the 8 GB of Standard mode.
+// with no scaling config is in Standard mode.
+//
+// The guide does not say whether a GB is 10^9 or 2^30 bytes, and the unit
+// is not confirmed. The check reads it as decimal (8e9 and 16e9 bytes) on
+// purpose: that is the smaller limit, so the check blocks earlier rather
+// than later. Read as GiB, the Fail threshold of 95 percent of 8 GiB
+// (8.16e9 bytes) would be above a real limit of 8e9 bytes.
 //
 // A tier that refresh does not know, or a cluster that was not read, gets
 // the limit of Standard mode, which is the smaller one: the check then
 // fails early rather than late.
-func etcdLimit(c fleet.Cluster, have fleet.State) (gib float64, known bool) {
+func etcdLimit(c fleet.Cluster, have fleet.State) (gb float64, known bool) {
 	const standard, provisioned = 8, 16
 	if have != fleet.Collected {
 		return standard, false
@@ -105,7 +110,7 @@ func controlPlaneResult(snap *fleet.Snapshot, m controlPlaneMetrics, err error) 
 		if snap.Have.Cluster == fleet.Collected {
 			tier = fmt.Sprintf("the control-plane tier %q is not known", snap.Cluster.ControlPlaneTier)
 		}
-		r.Details = append(r.Details, tier+fmt.Sprintf("; the check uses the %.0f GiB limit of Standard mode", limit))
+		r.Details = append(r.Details, tier+fmt.Sprintf("; the check uses the %.0f GB limit of Standard mode", limit))
 	}
 	return r
 }
@@ -164,23 +169,23 @@ func fetchControlPlaneMetrics(ctx context.Context, in *Input, cluster string) (c
 	return m, nil
 }
 
-// evaluateControlPlane is the rule, apart from the read. limitGiB is the
+// evaluateControlPlane is the rule, apart from the read. limitGB is the
 // size of the etcd database at which it goes read-only.
-func evaluateControlPlane(m controlPlaneMetrics, limitGiB float64) Result {
+func evaluateControlPlane(m controlPlaneMetrics, limitGB float64) Result {
 	if !m.any {
 		return Result{Outcome: Skipped, Message: "control-plane metrics not emitted (EKS 1.28+ on a supported platform version)"}
 	}
 	r := Result{Outcome: Pass, Message: "control plane healthy"}
 	if m.etcdKnown {
-		pct := m.etcdBytes / (limitGiB * (1 << 30)) * 100
-		r.Details = append(r.Details, fmt.Sprintf("etcd database %.1f%% of the %.0f GiB limit (%.2f GiB in use)", pct, limitGiB, m.etcdBytes/(1<<30)))
+		pct := m.etcdBytes / (limitGB * 1e9) * 100
+		r.Details = append(r.Details, fmt.Sprintf("etcd database %.1f%% of the %.0f GB limit (%.2f GB in use)", pct, limitGB, m.etcdBytes/1e9))
 		switch {
 		case pct >= etcdFailPercent:
-			r.Outcome, r.Message = Fail, fmt.Sprintf("etcd database near the %.0f GiB read-only limit (%.1f%%); compact it before a change", limitGiB, pct)
+			r.Outcome, r.Message = Fail, fmt.Sprintf("etcd database near the %.0f GB read-only limit (%.1f%%); compact it before a change", limitGB, pct)
 		case pct >= etcdWarnPercent:
-			r.Outcome, r.Message = Warn, fmt.Sprintf("etcd database growing toward the %.0f GiB limit (%.1f%%)", limitGiB, pct)
+			r.Outcome, r.Message = Warn, fmt.Sprintf("etcd database growing toward the %.0f GB limit (%.1f%%)", limitGB, pct)
 		default:
-			r.Message = fmt.Sprintf("etcd %.0f%% of %.0f GiB", pct, limitGiB)
+			r.Message = fmt.Sprintf("etcd %.0f%% of %.0f GB", pct, limitGB)
 		}
 	} else {
 		r.Details = append(r.Details, "etcd size metric not reported")

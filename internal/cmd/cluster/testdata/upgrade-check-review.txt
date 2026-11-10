@@ -21,4 +21,4 @@ CHECKS  3
   NAME          OUTCOME    MESSAGE
   Insights      [!] Warn   1 WARNING insight (Kubelet version skew)
   VersionSkew   [OK] Pass  every nodegroup on 1.32 and every add-on at its latest
-  ControlPlane  [OK] Pass  etcd 12% of 8 GiB
+  ControlPlane  [OK] Pass  etcd 13% of 8 GB

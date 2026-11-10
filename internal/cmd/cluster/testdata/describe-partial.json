@@ -107,9 +107,9 @@
           "name": "ControlPlane",
           "outcome": "Pass",
           "blocking": true,
-          "message": "etcd 12% of 8 GiB",
+          "message": "etcd 13% of 8 GB",
           "details": [
-            "etcd database 12.5% of the 8 GiB limit (1.00 GiB in use)",
+            "etcd database 13.4% of the 8 GB limit (1.07 GB in use)",
             "API server 5xx rate 0.01% (5 of 48210 requests)"
           ],
           "findings": []

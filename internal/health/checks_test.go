@@ -330,12 +330,16 @@ func TestControlPlane(t *testing.T) {
 		edits []edit
 		want  want
 	}{
-		{name: "healthy", want: want{outcome: health.Pass, message: "etcd 12% of 8 GiB"}},
-		{name: "etcd growing", edits: []edit{metrics(6.6*(1<<30), 100, 0, 0)}, want: want{outcome: health.Warn, message: "etcd database growing toward the 8 GiB limit (82.5%)"}},
-		{name: "etcd near the limit", edits: []edit{metrics(7.7*(1<<30), 100, 0, 0)}, want: want{outcome: health.Fail, message: "near the 8 GiB read-only limit (96.2%)"}},
+		{name: "healthy", want: want{outcome: health.Pass, message: "etcd 13% of 8 GB"}},
+		{name: "etcd growing", edits: []edit{metrics(6.6e9, 100, 0, 0)}, want: want{outcome: health.Warn, message: "etcd database growing toward the 8 GB limit (82.5%)"}},
+		{name: "etcd near the limit", edits: []edit{metrics(7.7e9, 100, 0, 0)}, want: want{outcome: health.Fail, message: "near the 8 GB read-only limit (96.2%)"}},
+		// The unit of the limit is not confirmed. Read as GiB, 7.8e9 bytes
+		// would be 90.8 percent, a warning, and the check would never fail
+		// before a real limit of 8e9 bytes.
+		{name: "near a decimal limit", edits: []edit{metrics(7.8e9, 100, 0, 0)}, want: want{outcome: health.Fail, message: "near the 8 GB read-only limit (97.5%)"}},
 		{name: "server errors", edits: []edit{metrics(1<<30, 10000, 250, 0)}, want: want{outcome: health.Warn, message: "elevated API server error rate (2.50% 5xx)"}},
 		{name: "throttling", edits: []edit{metrics(1<<30, 10000, 0, 150)}, want: want{outcome: health.Warn, message: "throttling requests (1.5% 429)"}},
-		{name: "errors below the request floor", edits: []edit{metrics(1<<30, 100, 50, 50)}, want: want{outcome: health.Pass, message: "etcd 12% of 8 GiB"}},
+		{name: "errors below the request floor", edits: []edit{metrics(1<<30, 100, 50, 50)}, want: want{outcome: health.Pass, message: "etcd 13% of 8 GB"}},
 		{name: "no metrics emitted", edits: []edit{func(s *fleettest.State, _ *fleettest.Cluster) {
 			s.Metrics = slices.DeleteFunc(s.Metrics, func(m fleettest.Metric) bool { return m.Namespace == "AWS/EKS" })
 		}}, want: want{outcome: health.Skipped, message: "not emitted"}},
@@ -364,18 +368,18 @@ func TestControlPlane_Tier(t *testing.T) {
 			s.Metrics = append(s.Metrics, eksMetrics("prod", etcd, 100, 0, 0)...)
 		}
 	}
-	const unknown = "the control-plane tier \"tier-16xl\" is not known; the check uses the 8 GiB limit of Standard mode"
+	const unknown = "the control-plane tier \"tier-16xl\" is not known; the check uses the 8 GB limit of Standard mode"
 	tests := []struct {
 		name   string
 		edit   edit
 		want   want
 		detail string
 	}{
-		{name: "no scaling config", edit: tier("", 7.7*(1<<30)), want: want{outcome: health.Fail, message: "near the 8 GiB read-only limit (96.2%)"}},
-		{name: "standard", edit: tier("standard", 7.7*(1<<30)), want: want{outcome: health.Fail, message: "near the 8 GiB read-only limit (96.2%)"}},
-		{name: "XL, past the limit of Standard mode", edit: tier("tier-xl", 7.7*(1<<30)), want: want{outcome: health.Pass, message: "etcd 48% of 16 GiB"}},
-		{name: "8XL, near its limit", edit: tier("tier-8xl", 15.4*(1<<30)), want: want{outcome: health.Fail, message: "near the 16 GiB read-only limit (96.2%)"}},
-		{name: "a tier refresh does not know", edit: tier("tier-16xl", 7.7*(1<<30)), want: want{outcome: health.Fail, message: "near the 8 GiB read-only limit"}, detail: unknown},
+		{name: "no scaling config", edit: tier("", 7.7e9), want: want{outcome: health.Fail, message: "near the 8 GB read-only limit (96.2%)"}},
+		{name: "standard", edit: tier("standard", 7.7e9), want: want{outcome: health.Fail, message: "near the 8 GB read-only limit (96.2%)"}},
+		{name: "XL, past the limit of Standard mode", edit: tier("tier-xl", 7.7e9), want: want{outcome: health.Pass, message: "etcd 48% of 16 GB"}},
+		{name: "8XL, near its limit", edit: tier("tier-8xl", 15.4e9), want: want{outcome: health.Fail, message: "near the 16 GB read-only limit (96.2%)"}},
+		{name: "a tier refresh does not know", edit: tier("tier-16xl", 7.7e9), want: want{outcome: health.Fail, message: "near the 8 GB read-only limit"}, detail: unknown},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

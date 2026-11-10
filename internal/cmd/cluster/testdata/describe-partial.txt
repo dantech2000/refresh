@@ -37,7 +37,7 @@ HEALTH  9
   NAME           OUTCOME         MESSAGE
   Nodes          [?] Unreadable  the nodegroups could not all be read
   Capacity       [?] Unreadable  the instances of 1 nodegroup could not be read: old
-  ControlPlane   [OK] Pass       etcd 12% of 8 GiB
+  ControlPlane   [OK] Pass       etcd 13% of 8 GB
   Workloads      Skipped         pass --check-readiness to run the Kubernetes checks
   DrainBlockers  Skipped         pass --check-readiness to run the Kubernetes checks
   PDBCoverage    Skipped         pass --check-readiness to run the Kubernetes checks

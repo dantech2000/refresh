@@ -166,7 +166,7 @@ func TestControlPlane_AStray429Passes(t *testing.T) {
 		requests, throttled float64
 		want                want
 	}{
-		{"one of 4348", 4348, 1, want{outcome: health.Pass, message: "etcd 12% of 8 GiB"}},
+		{"one of 4348", 4348, 1, want{outcome: health.Pass, message: "etcd 13% of 8 GB"}},
 		{"just below one percent", 10000, 99, want{outcome: health.Pass}},
 		{"one percent", 10000, 100, want{outcome: health.Warn, message: "throttling requests (1.0% 429)"}},
 	}

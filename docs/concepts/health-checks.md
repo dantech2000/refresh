@@ -172,12 +172,16 @@ minutes.
 | The cluster emits no control-plane metrics | `Skipped` |
 | The read fails | `Unreadable`; the gate asks |
 
-The etcd limit depends on the mode of the control plane. It is 8 GiB in
-Standard mode, and 16 GiB on a tier of the
+The etcd limit depends on the mode of the control plane. It is 8 GB in
+Standard mode, and 16 GB on a tier of the
 [Provisioned Control Plane](https://docs.aws.amazon.com/eks/latest/userguide/eks-provisioned-control-plane.html)
 (XL, 2XL, 4XL, 8XL). The check reads the tier from `DescribeCluster`. If the
-tier is not known or the cluster could not be read, the check uses 8 GiB
+tier is not known or the cluster could not be read, the check uses 8 GB
 and says so in its details.
+
+AWS does not say whether a GB is 10^9 or 2^30 bytes. The check uses 10^9
+bytes (8,000,000,000 and 16,000,000,000), the smaller limit, so that it
+blocks early rather than late.
 
 ## Workloads
 
