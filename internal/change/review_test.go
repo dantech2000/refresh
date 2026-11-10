@@ -105,7 +105,7 @@ var uncomparedStepFields = map[string]func(s *Step){
 }
 
 // stepFieldRows has one row for each field of Step and of ScaleSizes that
-// Diff compares: a change of that field alone, in a step with work. A
+// diffPlans compares: a change of that field alone, in a step with work. A
 // field with no row here and none in uncomparedStepFields fails
 // TestDiff_EveryStepField, so a new field cannot go uncompared unseen.
 var stepFieldRows = map[string]func(s *Step){
@@ -143,7 +143,7 @@ var stepFieldRows = map[string]func(s *Step){
 	},
 }
 
-// Diff reports a change of any one field of a step, for every kind of
+// diffPlans reports a change of any one field of a step, for every kind of
 // step that a plan has, and none of them goes on without an answer.
 func TestDiff_EveryStepField(t *testing.T) {
 	var fields []string
@@ -170,14 +170,14 @@ func TestDiff_EveryStepField(t *testing.T) {
 	}
 	kinds := map[string]Kind{"add-on": AddonUpdate, "scale": NodegroupScale}
 	for kind, base := range steps {
-		if got := Diff(planOf(kinds[kind], base), planOf(kinds[kind], base)); len(got) != 0 {
+		if got := diffPlans(planOf(kinds[kind], base), planOf(kinds[kind], base)); len(got) != 0 {
 			t.Errorf("%s: the same step differs: %v", kind, got)
 		}
 		for field, change := range stepFieldRows {
 			t.Run(kind+"/"+field, func(t *testing.T) {
 				cur := base
 				change(&cur)
-				got := Diff(planOf(kinds[kind], base), planOf(kinds[kind], cur))
+				got := diffPlans(planOf(kinds[kind], base), planOf(kinds[kind], cur))
 				if len(got) == 0 {
 					t.Fatalf("Diff reports nothing for a step whose %s changed", field)
 				}
@@ -189,7 +189,7 @@ func TestDiff_EveryStepField(t *testing.T) {
 		for field, change := range uncomparedStepFields {
 			cur := base
 			change(&cur)
-			if got := Diff(planOf(kinds[kind], base), planOf(kinds[kind], cur)); len(got) != 0 {
+			if got := diffPlans(planOf(kinds[kind], base), planOf(kinds[kind], cur)); len(got) != 0 {
 				t.Errorf("%s: Diff reports a changed %s: %v", kind, field, got)
 			}
 		}
@@ -200,7 +200,7 @@ func TestDiff_EveryStepField(t *testing.T) {
 	busy.InFlight = "AddonUpdate"
 	other := busy
 	other.InFlight = ""
-	if got := Diff(planOf(AddonUpdate, busy), planOf(AddonUpdate, other)); len(got) != 0 {
+	if got := diffPlans(planOf(AddonUpdate, busy), planOf(AddonUpdate, other)); len(got) != 0 {
 		t.Errorf("Diff reports another update in flight on a busy target: %v", got)
 	}
 }
@@ -214,7 +214,7 @@ func TestDiff_GoalAndWidening(t *testing.T) {
 	}
 	down := scale
 	down.Sizes = &ScaleSizes{Before: scale.Sizes.Before, After: Sizes{Desired: 1, Min: 1, Max: 3}}
-	got := Diff(planOf(NodegroupScale, scale), planOf(NodegroupScale, down))
+	got := diffPlans(planOf(NodegroupScale, scale), planOf(NodegroupScale, down))
 	want := []Change{{Step: scale.Ref, Kind: SizesChanged, Message: "nodegroup web now goes to desired 1, min 1, max 3, not desired 3, min 1, max 3"}}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("a changed goal (-want +got):\n%s", diff)
@@ -222,7 +222,7 @@ func TestDiff_GoalAndWidening(t *testing.T) {
 
 	attach := addonStep("vpc-cni", Attach, InFlight, "v2", "v2")
 	submit := addonStep("vpc-cni", Submit, Repair, "v2", "v2")
-	got = Diff(planOf(AddonUpdate, attach), planOf(AddonUpdate, submit))
+	got = diffPlans(planOf(AddonUpdate, attach), planOf(AddonUpdate, submit))
 	want = []Change{{Step: attach.Ref, Kind: StepDiffers, Message: "add-on vpc-cni is now changed by this run, not waited for"}}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("attach to submit (-want +got):\n%s", diff)

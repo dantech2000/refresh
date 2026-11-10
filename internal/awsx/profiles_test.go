@@ -55,11 +55,11 @@ sso_start_url = https://acme.awsapps.com/start
 		t.Fatal(err)
 	}
 	t.Setenv("AWS_CONFIG_FILE", path)
-	if got := SSOProfiles(); len(got) != 5 {
-		t.Fatalf("SSOProfiles = %v", got)
+	if got := ssoProfiles(); len(got) != 5 {
+		t.Fatalf("ssoProfiles = %v", got)
 	}
 	t.Setenv("AWS_CONFIG_FILE", filepath.Join(t.TempDir(), "missing"))
-	if got := SSOProfiles(); got != nil {
+	if got := ssoProfiles(); got != nil {
 		t.Fatalf("missing file: %v", got)
 	}
 }
@@ -78,7 +78,7 @@ func TestProfilesReadsBothFiles(t *testing.T) {
 	t.Setenv("AWS_CONFIG_FILE", cfg)
 	t.Setenv("AWS_SHARED_CREDENTIALS_FILE", creds)
 	var names []string
-	for _, p := range Profiles() {
+	for _, p := range profiles() {
 		names = append(names, p.Name)
 		if p.Name == "sso" != p.SSO {
 			t.Errorf("%s: SSO = %v", p.Name, p.SSO)
@@ -168,7 +168,7 @@ sso_region = us-east-1
 	t.Setenv("AWS_CONFIG_FILE", cfg)
 	t.Setenv("AWS_SHARED_CREDENTIALS_FILE", filepath.Join(dir, "none"))
 	for profile, want := range map[string]string{"sso-base": "sso-base", "admin": "sso-base", "chained": "sso-base", "keys": "", "missing": "", "both": "sso-base", "loop-target": "loop-a", "sso-process": "sso-process"} {
-		if got := SSOLoginProfile(t.Context(), profile); got != want {
+		if got := ssoLoginProfile(t.Context(), profile); got != want {
 			t.Errorf("%s: got %q, want %q", profile, got, want)
 		}
 	}
@@ -204,7 +204,7 @@ func TestMissingSourceProfileAndCredentialsSections(t *testing.T) {
 		t.Fatalf("no profile: err = %v", err)
 	}
 	var names []string
-	for _, p := range Profiles() {
+	for _, p := range profiles() {
 		names = append(names, p.Name)
 	}
 	if slices.Contains(names, "profile wrong") || !slices.Contains(names, "real") {

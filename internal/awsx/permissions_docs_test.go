@@ -32,7 +32,7 @@ func TestRequiredPermissionsMatchDocs(t *testing.T) {
 	const heading = "## Required IAM permissions\n"
 	_, section, ok := strings.Cut(string(data), heading)
 	if !ok {
-		t.Fatalf("%s has no %q section; PermissionsDocURL links to it", path, strings.TrimSpace(heading))
+		t.Fatalf("%s has no %q section; permissionsDocURL links to it", path, strings.TrimSpace(heading))
 	}
 
 	var docs []Permission

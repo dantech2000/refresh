@@ -17,7 +17,7 @@ import (
 	"github.com/dantech2000/refresh/internal/fleet"
 )
 
-// Busy applies the busy rule to a snapshot and returns the refusals and
+// busyRefusals applies the busy rule to a snapshot and returns the refusals and
 // the notices. ours are the steps of the caller: the steps of the whole
 // plan in the plan step, and the steps of a phase before that phase.
 //
@@ -37,7 +37,7 @@ import (
 //
 // A cluster, a nodegroup list, or an add-on list that was not read in
 // full cannot show that nothing is changing: an Unread blocker.
-func Busy(snap *fleet.Snapshot, kind Kind, ours []Step) (refuse []Blocker, notices []string) {
+func busyRefusals(snap *fleet.Snapshot, kind Kind, ours []Step) (refuse []Blocker, notices []string) {
 	cluster := snap.Cluster.Name
 	for _, g := range []struct {
 		state fleet.State
@@ -229,8 +229,8 @@ func lookupInFlight(ctx context.Context, c *awsx.Clients, res Resource, status s
 	return u.Type, u.Type
 }
 
-// InFlightUpdate is an EKS update of a resource that is in progress.
-type InFlightUpdate struct {
+// inFlight is an EKS update of a resource that is in progress.
+type inFlight struct {
 	ID string
 	// Type is the EKS update type, such as VersionUpdate.
 	Type      string
@@ -250,7 +250,7 @@ type InFlightUpdate struct {
 // fan-out, and no more describe calls start once one of them is in
 // progress. A failed describe is the error only when no update is in
 // progress.
-func inFlightUpdate(ctx context.Context, c *awsx.Clients, r Resource) (InFlightUpdate, error) {
+func inFlightUpdate(ctx context.Context, c *awsx.Clients, r Resource) (inFlight, error) {
 	list := &eks.ListUpdatesInput{Name: aws.String(r.Cluster)}
 	describe := &eks.DescribeUpdateInput{Name: aws.String(r.Cluster)}
 	switch r.Kind {
@@ -267,11 +267,10 @@ func inFlightUpdate(ctx context.Context, c *awsx.Clients, r Resource) (InFlightU
 		func(out *eks.ListUpdatesOutput) ([]string, *string) { return out.UpdateIds, out.NextToken },
 	)
 	if err != nil || len(ids) == 0 {
-		return InFlightUpdate{}, err
+		return inFlight{}, err
 	}
 	type described struct {
-		ran      bool
-		update   InFlightUpdate
+		update   inFlight
 		progress bool
 		err      error
 	}
@@ -281,19 +280,19 @@ func inFlightUpdate(ctx context.Context, c *awsx.Clients, r Resource) (InFlightU
 		out, err := c.EKS.DescribeUpdate(ctx, &in)
 		switch {
 		case err != nil:
-			return described{ran: true, err: err}
+			return described{err: err}
 		case out.Update == nil:
-			return described{ran: true, err: fmt.Errorf("EKS returned no update for %s", id)}
+			return described{err: fmt.Errorf("EKS returned no update for %s", id)}
 		case out.Update.Status != ekstypes.UpdateStatusInProgress:
-			return described{ran: true}
+			return described{}
 		}
-		u := InFlightUpdate{ID: aws.ToString(out.Update.Id), Type: string(out.Update.Type), CreatedAt: aws.ToTime(out.Update.CreatedAt)}
+		u := inFlight{ID: aws.ToString(out.Update.Id), Type: string(out.Update.Type), CreatedAt: aws.ToTime(out.Update.CreatedAt)}
 		for _, p := range out.Update.Params {
 			if p.Type == ekstypes.UpdateParamTypeVersion {
 				u.Version = aws.ToString(p.Value)
 			}
 		}
-		return described{ran: true, update: u, progress: true}
+		return described{update: u, progress: true}
 	}
 	last := read(ctx, ids[len(ids)-1])
 	if last.progress {
@@ -301,29 +300,31 @@ func inFlightUpdate(ctx context.Context, c *awsx.Clients, r Resource) (InFlightU
 	}
 	found, stop := context.WithCancel(ctx)
 	defer stop()
-	results := fanout.ForEach(found, ids[:len(ids)-1], 0, func(ctx context.Context, id string) described {
+	results, started := fanout.ForEachIn(found, make(chan struct{}, fanout.DefaultConcurrency), ids[:len(ids)-1], func(ctx context.Context, id string) described {
 		d := read(ctx, id)
 		if d.progress {
 			stop()
 		}
 		return d
 	})
-	results = append(results, last)
 	for _, r := range results {
 		if r.progress {
 			return r.update, nil
 		}
 	}
+	// The items that did not start are results[started:], and last
+	// comes after them.
+	results = append(results, last)
 	for i, r := range results {
 		switch {
 		case r.err != nil:
-			return InFlightUpdate{}, r.err
-		case !r.ran:
+			return inFlight{}, r.err
+		case i >= started && i < len(results)-1:
 			// Nothing was found, so it was ctx that ended.
-			return InFlightUpdate{}, fmt.Errorf("describing update %s: %w", ids[i], context.Cause(ctx))
+			return inFlight{}, fmt.Errorf("describing update %s: %w", ids[i], context.Cause(ctx))
 		}
 	}
-	return InFlightUpdate{}, nil
+	return inFlight{}, nil
 }
 
 // busyRule makes phase the one phase of the plan of an independent kind
@@ -334,7 +335,7 @@ func inFlightUpdate(ctx context.Context, c *awsx.Clients, r Resource) (InFlightU
 func (cp *ClusterPlan) busyRule(ctx context.Context, clients *awsx.Clients, kind Kind, phase Phase) (refused bool) {
 	cp.markBusy(ctx, clients, phase.Steps)
 	cp.Phases = []Phase{phase}
-	refuse, notices := Busy(cp.snapshot, kind, phase.Steps)
+	refuse, notices := busyRefusals(cp.snapshot, kind, phase.Steps)
 	cp.Blockers = append(cp.Blockers, refuse...)
 	cp.Notices = append(cp.Notices, notices...)
 	return len(refuse) > 0

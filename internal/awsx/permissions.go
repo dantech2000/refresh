@@ -12,8 +12,8 @@ type Permission struct {
 	UsedBy  string
 }
 
-// PermissionsDocURL is the published version of the IAM permissions table.
-const PermissionsDocURL = "https://drod.dev/refresh/concepts/configuration/#required-iam-permissions"
+// permissionsDocURL is the published version of the IAM permissions table.
+const permissionsDocURL = "https://drod.dev/refresh/concepts/configuration/#required-iam-permissions"
 
 // RequiredPermissions returns the AWS actions that refresh calls, each with
 // the commands that need it. It is the one source of that list: the

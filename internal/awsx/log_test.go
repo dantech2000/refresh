@@ -41,7 +41,7 @@ func TestLogAttempts(t *testing.T) {
 			slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: tt.level})))
 			t.Cleanup(func() { slog.SetDefault(prev) })
 
-			client := NewHTTPClient(8)
+			client := defaultHTTPClient(8)
 			defer client.GetTransport().CloseIdleConnections()
 			cfg := aws.Config{
 				Region:       "us-east-1",

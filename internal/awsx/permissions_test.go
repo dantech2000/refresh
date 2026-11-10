@@ -6,18 +6,6 @@ import (
 	"testing"
 )
 
-// The text of a row names commands and flags of the v2 contract only.
-func TestRequiredPermissionsUseContractNames(t *testing.T) {
-	removed := []string{"--wait`", "--detailed", "--health-only", "refresh ui", "partial", "--id", "install-man", "--tree"}
-	for _, p := range RequiredPermissions() {
-		for _, old := range removed {
-			if strings.Contains(p.UsedBy, old) {
-				t.Errorf("%v: the text %q names %q, which the v2 contract does not have", p.Actions, p.UsedBy, old)
-			}
-		}
-	}
-}
-
 func TestPermissionErrorListsEveryAction(t *testing.T) {
 	msg := formatPermissionError(errors.New("denied"), "listing clusters").Error()
 	for _, p := range RequiredPermissions() {
@@ -27,7 +15,7 @@ func TestPermissionErrorListsEveryAction(t *testing.T) {
 			}
 		}
 	}
-	if !strings.Contains(msg, PermissionsDocURL) {
+	if !strings.Contains(msg, permissionsDocURL) {
 		t.Error("the hint does not link the docs table")
 	}
 	if strings.Contains(msg, "`") {

@@ -155,13 +155,13 @@ func TestDecideScale(t *testing.T) {
 // TestScaleSettled is the confirmation of a scale after its update
 // reported Successful: the sizes and the status together.
 func TestScaleSettled(t *testing.T) {
-	at := func(status string, desired, lowest, most int32) Settled {
-		return Settled{Status: status, Sizes: Sizes{Desired: desired, Min: lowest, Max: most}}
+	at := func(status string, desired, lowest, most int32) settledResource {
+		return settledResource{Status: status, Sizes: Sizes{Desired: desired, Min: lowest, Max: most}}
 	}
 	tests := []struct {
 		name     string
 		req      ScaleRequest
-		got      Settled
+		got      settledResource
 		wantDone bool
 		wantErr  string
 	}{

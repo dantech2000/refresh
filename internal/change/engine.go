@@ -53,7 +53,7 @@ func (r *runner) runEngine(cp *ClusterPlan) []StepResult {
 			// A step that the plan gave no work was never going to be
 			// attempted: it is Skipped, whatever ended the run.
 			for i, s := range ph.Steps {
-				if !s.work() && s.Action != Blocked {
+				if !s.work() {
 					results[i].Status = StepSkipped
 					r.reportStep(results[i])
 				}
@@ -92,27 +92,22 @@ func waitPassedBefore(what string) string {
 
 // runEnginePhase runs one phase and fills results, which has one
 // NotAttempted row per step. It returns false when the run ends here.
+//
+// The plan has no Blocked step: a Blocked step comes with a blocker, and a
+// plan with a blocker is refused before it runs (runner.next).
 func (r *runner) runEnginePhase(cp *ClusterPlan, ph Phase, results []StepResult) bool {
 	skipAll := func() {
 		for i, s := range ph.Steps {
 			if !s.work() {
 				results[i].Status = StepSkipped
-				if s.Action != Blocked {
-					r.reportStep(results[i])
-				}
+				r.reportStep(results[i])
 			}
 		}
 	}
 	if !slices.ContainsFunc(ph.Steps, Step.work) {
 		// Nothing to run or to attach to: skipped, with no read and no
-		// busy rule. A Blocked step has a blocker, which refused the plan.
+		// busy rule.
 		skipAll()
-		for i, s := range ph.Steps {
-			if s.Action == Blocked {
-				results[i].Status = StepBlocked
-				return false
-			}
-		}
 		r.emit(Event{Kind: PhaseEnded, Phase: ph.Ref, Skipped: true})
 		return true
 	}
@@ -232,7 +227,7 @@ func (r *runner) phaseRead(cp *ClusterPlan) (*fleet.Snapshot, error) {
 // too: nothing then shows that no change is running. It returns true
 // with the result when the run must stop.
 func (r *runner) phaseBusy(cp *ClusterPlan, res StepResult, snap *fleet.Snapshot, steps []Step) (StepResult, bool) {
-	refuse, notices := Busy(snap, r.req.kind(), steps)
+	refuse, notices := busyRefusals(snap, r.req.kind(), steps)
 	for _, n := range notices {
 		// It is said once for the step.
 		if !slices.Contains(r.step.busySaid, n) {
@@ -261,10 +256,10 @@ func (r *runner) phaseBusy(cp *ClusterPlan, res StepResult, snap *fleet.Snapshot
 // step that it stopped: the step names itself where the plan says that
 // nothing was started.
 func busyStepMessage(b Blocker, ref StepRef) string {
-	if b.Cause == "" {
+	if b.cause == "" {
 		return b.Message
 	}
-	return b.Cause + "; " + stepName(ref) + " was not changed" + busyAgain
+	return b.cause + "; " + stepName(ref) + " was not changed" + busyAgain
 }
 
 // rederive derives the steps of a phase again from a read of the cluster.
@@ -595,7 +590,7 @@ func (r *runner) resumeHint(res Result) string {
 // clusterSettled is the done function of a wait for a control plane:
 // ACTIVE is done, and a cluster that is FAILED or DELETING never becomes
 // ACTIVE.
-func clusterSettled(s Settled) (bool, error) {
+func clusterSettled(s settledResource) (bool, error) {
 	switch s.Status {
 	case string(ekstypes.ClusterStatusActive):
 		return true, nil
@@ -608,6 +603,6 @@ func clusterSettled(s Settled) (bool, error) {
 // nodegroupSettled is the done function of a wait for a nodegroup that is
 // changing: any status but UPDATING and CREATING ends it, and the caller
 // judges the version first and the status second.
-func nodegroupSettled(s Settled) (bool, error) {
+func nodegroupSettled(s settledResource) (bool, error) {
 	return s.Status != string(ekstypes.NodegroupStatusUpdating) && s.Status != string(ekstypes.NodegroupStatusCreating), nil
 }

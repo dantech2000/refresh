@@ -3,6 +3,7 @@ package health
 import (
 	"context"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -155,7 +156,7 @@ func fetchControlPlaneMetrics(ctx context.Context, in *Input, cluster string) (c
 		m.any = true
 		switch aws.ToString(r.Id) {
 		case "etcd":
-			m.etcdBytes, m.etcdKnown = maxOf(r.Values), true
+			m.etcdBytes, m.etcdKnown = slices.Max(r.Values), true
 		case "req_total":
 			m.reqTotal = sumOf(r.Values)
 		case "req_5xx":
@@ -163,7 +164,7 @@ func fetchControlPlaneMetrics(ctx context.Context, in *Input, cluster string) (c
 		case "req_429":
 			m.req429 = sumOf(r.Values)
 		case "pending":
-			m.pending, m.pendingKnown = maxOf(r.Values), true
+			m.pending, m.pendingKnown = slices.Max(r.Values), true
 		}
 	}
 	return m, nil
@@ -228,14 +229,4 @@ func sumOf(values []float64) float64 {
 		total += v
 	}
 	return total
-}
-
-func maxOf(values []float64) float64 {
-	m := 0.0
-	for i, v := range values {
-		if i == 0 || v > m {
-			m = v
-		}
-	}
-	return m
 }

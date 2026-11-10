@@ -295,7 +295,7 @@ func TestRollPanel_FromObserver(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tracker.Observe(first)
+	tracker.Observe(first, time.Time{})
 
 	// A new node joins, and an old one is cordoned.
 	if _, err := client.CoreV1().Nodes().Create(ctx, node("ip-4", false, false), metav1.CreateOptions{}); err != nil {
@@ -308,7 +308,7 @@ func TestRollPanel_FromObserver(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tracker.Observe(snap)
+	tracker.Observe(snap, time.Time{})
 
 	p := RollProgress{Nodegroup: "spot-burst", OldVersion: "ami-old", NewVersion: "ami-new", Snapshot: snap, Recent: tracker.Recent(0), Watching: obs.Watching()}
 	want := []string{

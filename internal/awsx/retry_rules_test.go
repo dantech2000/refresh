@@ -64,8 +64,8 @@ func TestIsRetryable_DialFailures(t *testing.T) {
 			if got := IsDialFailure(tt.err); got != tt.dial {
 				t.Errorf("IsDialFailure = %t, want %t", got, tt.dial)
 			}
-			if got := IsRetryable(tt.err); got != tt.retryable {
-				t.Errorf("IsRetryable = %t, want %t", got, tt.retryable)
+			if got := isRetryable(tt.err); got != tt.retryable {
+				t.Errorf("isRetryable = %t, want %t", got, tt.retryable)
 			}
 			// A wait polls through every error that is not a permanent
 			// answer of the API, and none of these is an answer.

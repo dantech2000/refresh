@@ -52,7 +52,7 @@ Exit codes:
   # The configuration values alone
   refresh addon describe coredns -c prod -o json | jq -r .addon.configuration`,
 		Args:              cobra.MatchAll(cobra.ExactArgs(1), cmdutil.NoEmptyArgs),
-		ValidArgsFunction: fleetcmd.CompleteAddons(f, &o.cluster),
+		ValidArgsFunction: fleetcmd.CompleteAddons(f, &o.cluster, 1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := o.complete(args); err != nil {
 				return err

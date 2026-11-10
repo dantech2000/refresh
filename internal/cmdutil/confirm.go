@@ -24,8 +24,7 @@ func RequireYes(ios *IOStreams, format Format, yes, dryRun bool) error {
 
 // Confirm asks question on stderr, as "question [y/N]: ", and reads one
 // line. It answers true for "y" or "yes", in any case; anything else, the
-// end of the input included, is no. It honours the cancellation of ctx,
-// and under a context from WithTimeout the deadline stops while it waits.
+// end of the input included, is no. It honours the cancellation of ctx.
 func Confirm(ctx context.Context, ios *IOStreams, question string) (bool, error) {
 	// Nothing can report a failed write to stderr.
 	_, _ = fmt.Fprint(ios.ErrOut, question+" [y/N]: ")

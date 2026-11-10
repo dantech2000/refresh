@@ -21,7 +21,7 @@ func TestObserver_InformerRollTransitions(t *testing.T) {
 		mkNode("ip-3", oldAMI, true, false),
 		other,
 	)
-	obs := watching(t, client, Identity{TargetAMI: newAMI}, newClock())
+	obs := watching(t, client, Identity{}, newClock())
 	changed := cacheChanges(t, obs)
 
 	// Before the roll: three old nodes. The watch of the nodes has the
@@ -68,7 +68,7 @@ func TestObserver_InformerWarningsAndEviction(t *testing.T) {
 		},
 		warning("e1", "FailedDraining", "ip-1", clock.now()),
 	)
-	obs := watching(t, client, Identity{TargetAMI: newAMI}, clock)
+	obs := watching(t, client, Identity{}, clock)
 	changed := cacheChanges(t, obs)
 
 	s := waitForSnapshot(t, obs, changed, func(s Snapshot) bool {
@@ -90,7 +90,7 @@ func TestClose_Idempotent(t *testing.T) {
 
 	listing(t, client, Identity{}, newClock()).Close() // it never watched
 
-	obs := watching(t, client, Identity{TargetAMI: newAMI}, newClock())
+	obs := watching(t, client, Identity{}, newClock())
 	obs.Close()
 	obs.Close() // twice
 	if obs.Watching() {
@@ -112,7 +112,7 @@ func TestClose_WaitsForInformers(t *testing.T) {
 	defer goleak.VerifyNone(t)
 	client := fake.NewClientset(mkNode("ip-1", oldAMI, true, false))
 	for range 2 {
-		obs := watching(t, client, Identity{TargetAMI: newAMI}, newClock())
+		obs := watching(t, client, Identity{}, newClock())
 		f := obs.inf.factories
 		informers := []interface{ IsStopped() bool }{
 			f[0].Core().V1().Nodes().Informer(),

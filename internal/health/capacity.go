@@ -3,8 +3,10 @@ package health
 import (
 	"context"
 	"fmt"
+	"maps"
 	"math"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -42,7 +44,7 @@ func Capacity() Check {
 func runCapacity(ctx context.Context, in *Input) Result {
 	ids, unread := instanceIDs(in.Snapshot)
 	if len(unread) > 0 {
-		return Result{Outcome: Unreadable, Message: "the instances of " + plural(len(unread), "nodegroup") + " could not be read: " + joinNames(unread)}
+		return Result{Outcome: Unreadable, Message: "the instances of " + plural(len(unread), "nodegroup") + " could not be read: " + strings.Join(unread, ", ")}
 	}
 	if len(ids) == 0 {
 		return Result{Outcome: Skipped, Message: "no managed nodegroup instances"}
@@ -136,13 +138,7 @@ func evaluateCapacity(byInstance map[string]float64, instances int) Result {
 	if len(byInstance) == 0 {
 		return Result{Outcome: Warn, Message: fmt.Sprintf("no CPU metrics reported for the %s in the last 10 minutes", plural(instances, "instance"))}
 	}
-	values := slices.Sorted(func(yield func(float64) bool) {
-		for _, v := range byInstance {
-			if !yield(v) {
-				return
-			}
-		}
-	})
+	values := slices.Sorted(maps.Values(byInstance))
 	mean := sumOf(values) / float64(len(values))
 	peak := values[len(values)-1]
 	spread := 0.0

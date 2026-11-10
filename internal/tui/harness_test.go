@@ -313,7 +313,7 @@ func report() *health.ReadinessReport {
 // with a readiness report, when n allows.
 func fleetState(n int) state.State {
 	st := state.State{Version: 1, Now: now, ReadOnly: true, Profile: "prod-admin", Context: "prod",
-		Sweep: state.Sweep{Regions: 2, Answered: []string{"eu-west-1", "us-east-1"}, StartedAt: now.Add(-3 * time.Second), EndedAt: now, Count: 1, Interval: time.Minute}}
+		Sweep: state.Sweep{Regions: 2, Answered: []string{"eu-west-1", "us-east-1"}, StartedAt: now.Add(-3 * time.Second), EndedAt: now, Count: 1}}
 	for i := range n {
 		region := "us-east-1"
 		if i%2 == 1 {

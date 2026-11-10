@@ -148,7 +148,7 @@ func stepCode(s StepResult) (code int, ok bool) {
 	return 0, false
 }
 
-// ExitCode returns the exit code of the run, in three moves.
+// ExitCode returns the exit code of the run, in four moves.
 //
 //  1. Every step has a code, and a failure that belongs to no step counts
 //     as 4. A warning of the gate that --yes or an answer accepted is not

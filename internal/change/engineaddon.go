@@ -46,7 +46,7 @@ func (r *runner) runEngineAddon(cp *ClusterPlan, s Step) StepResult {
 		res.Attached, res.StartedAt = true, r.d.now()
 		ctx, wait := r.waitBudget()
 		r.read.pause()
-		settled, err := WaitSettled(ctx, poll, resource, addonSettled, r.waitOptions(s, wait))
+		settled, err := waitSettled(ctx, poll, resource, addonSettled, r.waitOptions(s, wait))
 		if err != nil {
 			// No update follows an attachment that failed.
 			return r.waitFailed(ctx, cp, res, err)
@@ -91,7 +91,7 @@ func (r *runner) runEngineAddon(cp *ClusterPlan, s Step) StepResult {
 	r.reportStep(res)
 	ctx, wait := r.waitBudget()
 	r.read.pause()
-	if err := WaitUpdate(ctx, poll, resource, id, r.waitOptions(s, wait)); err != nil {
+	if err := waitUpdate(ctx, poll, resource, id, r.waitOptions(s, wait)); err != nil {
 		return r.waitFailed(ctx, cp, res, err)
 	}
 	settled, err := describe(ctx, clients, resource)

@@ -11,10 +11,8 @@ import (
 // is Ready.
 //
 // baseline holds the old nodes of the roll, by identity (see nodeKey): a
-// node that is not in it is new. With a nil baseline the image label
-// decides: a node is new when it was launched with targetAMI. An Observer always has a
-// baseline; the label rule is kept for a caller that knows the AMI.
-func classify(n *corev1.Node, targetAMI string, baseline map[string]bool) NodeView {
+// node that is not in it is new.
+func classify(n *corev1.Node, baseline map[string]bool) NodeView {
 	ready := nodeReady(n)
 	phase := PhaseReady
 	switch {
@@ -23,14 +21,10 @@ func classify(n *corev1.Node, targetAMI string, baseline map[string]bool) NodeVi
 	case !ready:
 		phase = PhaseJoining
 	}
-	onTarget := n.Labels[LabelImage] == targetAMI
-	if baseline != nil {
-		onTarget = !baseline[nodeKey(n)]
-	}
 	return NodeView{
 		key:      nodeKey(n),
 		Name:     n.Name,
-		OnTarget: onTarget,
+		OnTarget: !baseline[nodeKey(n)],
 		Ready:    ready,
 		Phase:    phase,
 		Pressure: pressureConditions(n),

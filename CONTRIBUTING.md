@@ -49,10 +49,10 @@ These mirror `CLAUDE.md` (the agent/contributor guide):
   `--wait`/`--no-wait`) and `-H` is **show-health-only** (not `--health-only`
   /`--health-check`) — the mutating update commands spell those out in long
   form. When in doubt, leave a flag long-form rather than reuse a short letter.
-- **AWS calls:** wrap in `common.WithRetry`; format errors with
-  `awsinternal.FormatAWSError`; set
-  `ClientRequestToken: aws.String(common.IdempotencyToken())` on mutating
-  (`Update*`) calls.
+- **AWS calls:** use the clients of `awsx.Clients`, whose SDK retryer is the
+  only retry layer, and format errors with `awsx.FormatAWSError`. The SDK
+  fills the client request token of a mutating (`Update*`) call. CLAUDE.md
+  ("AWS calls") has the rules.
 - **Concurrency:** fan out per-item AWS calls with `common.ForEachParallel`
   (bounded) and thread `ctx` everywhere.
 - **Output structs:** add **both** `json:` and `yaml:` tags — `yaml.v3` ignores

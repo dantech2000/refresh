@@ -62,7 +62,7 @@ func planRoll(ctx context.Context, d Deps, req RollRequest) (*Plan, error) {
 // order of every plan:
 //
 //  1. One read of the whole cluster, with the AMIs and the instance IDs.
-//  2. The step of every target, from DecideAMIUpdate.
+//  2. The step of every target, from decideAMIUpdate.
 //  3. The update in flight of each target that is already changing.
 //  4. The busy rule, with every step as a step of the run.
 //  5. The health gate over all the nodegroups that would be rolled, and
@@ -158,7 +158,7 @@ func rollTargets(snap *fleet.Snapshot, req RollRequest) ([]string, error) {
 // both as the snapshot read them. Force is --force. The four are set only
 // on a step that submits.
 //
-// Two rows come after the table of DecideAMIUpdate, for a step that it
+// Two rows come after the table of decideAMIUpdate, for a step that it
 // would submit. A nodegroup with no Kubernetes version cannot be pinned:
 // Blocked, with an Unread blocker. A nodegroup that is not ACTIVE is not
 // rolled, whatever the flags: Blocked, with a NotReady blocker. The fresh
@@ -173,7 +173,7 @@ func (cp *ClusterPlan) rollStep(phase PhaseRef, name string, req RollRequest) St
 		return step
 	}
 	n := snap.Nodegroups[i]
-	d := DecideAMIUpdate(n, req.Reroll)
+	d := decideAMIUpdate(n, req.Reroll)
 	step.Action, step.Reason = d.Action, d.Reason
 	step.From, step.To = n.Version.String(), n.Version.String()
 	switch {

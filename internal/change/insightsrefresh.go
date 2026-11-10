@@ -135,7 +135,7 @@ func (ir *insightsRefresher) refresh(ctx context.Context, t Target, live string)
 		_, err := clients.EKS.StartInsightsRefresh(wctx, &eks.StartInsightsRefreshInput{ClusterName: name})
 		return err
 	}
-	o := WaitOptions{Interval: ir.poll, After: ir.d.after, budget: limit}
+	o := waitOptions{Interval: ir.poll, After: ir.d.after, budget: limit}
 	before, err := ir.before(ctx, wctx, poll, t, o)
 	switch {
 	case ctx.Err() != nil:
@@ -211,7 +211,7 @@ func (ir *insightsRefresher) refresh(ctx context.Context, t Target, live string)
 
 // pause waits one poll interval of o. It returns the error that ends the
 // wait when ctx or the limit of the refresh (wctx) ends first.
-func (st *refreshStart) pause(ctx, wctx context.Context, o WaitOptions, t Target) error {
+func (st *refreshStart) pause(ctx, wctx context.Context, o waitOptions, t Target) error {
 	if !o.over(wctx) && o.pause(wctx) {
 		return nil
 	}
@@ -266,7 +266,7 @@ type refreshStart struct {
 // other error ends the wait: without the answer, an older refresh could
 // pass as the one of the run. wctx is the limit of the refresh, and ctx
 // the context of the run.
-func (ir *insightsRefresher) before(ctx, wctx context.Context, poll awsx.PollClients, t Target, o WaitOptions) (*eks.DescribeInsightsRefreshOutput, error) {
+func (ir *insightsRefresher) before(ctx, wctx context.Context, poll awsx.PollClients, t Target, o waitOptions) (*eks.DescribeInsightsRefreshOutput, error) {
 	for {
 		out, err := poll.EKS.DescribeInsightsRefresh(wctx, &eks.DescribeInsightsRefreshInput{ClusterName: aws.String(t.Cluster)})
 		switch {

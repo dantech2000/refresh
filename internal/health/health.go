@@ -139,7 +139,12 @@ type Result struct {
 // "kube-system/coredns-1 (Pending)". A check builds its Findings from the
 // names and its message from the texts, so it never cuts a name out of a
 // text.
-type finding struct{ name, text string }
+type finding struct {
+	name, text string
+	// refused is the rule by which the eviction API refuses every pod that
+	// the budget of a drain blocker gates; refusesNone otherwise.
+	refused refusal
+}
 
 // findingNames returns the names of fs, sorted, or nil for none.
 func findingNames(fs []finding) []string {
@@ -198,7 +203,9 @@ func Run(ctx context.Context, checks []Check, in *Input) []Result {
 	for i, c := range checks {
 		results[i].Name, results[i].Blocking, results[i].FailClosed, results[i].Forceable = c.Name, c.Blocking && !results[i].advisory, c.FailClosed, c.Forceable
 		if results[i].Outcome == "" {
-			results[i] = unreadableCheck(ctx, results[i])
+			// Every check of the package decides; this is a check that a
+			// test built and that returned nothing.
+			results[i].Outcome, results[i].Message = Unreadable, "the check returned no result"
 		}
 		Locate(results[i].Failures, in.Snapshot.Cluster.Name, in.Snapshot.Cluster.Region)
 	}
@@ -235,22 +242,8 @@ func skip(c Check, in *Input) (Result, bool) {
 	return Result{}, false
 }
 
-// unreadableCheck returns the result of a check that returned nothing,
-// which happens when its context ended before it decided.
-func unreadableCheck(ctx context.Context, r Result) Result {
-	err := ctx.Err()
-	if err == nil {
-		r.Outcome, r.Message = Unreadable, "the check returned no result"
-		return r
-	}
-	f := fleet.FailureFromError(apidoc.FailureCluster, "", err)
-	r.Outcome, r.Message = Unreadable, "not checked: "+f.Error
-	r.Failures = append(r.Failures, f)
-	return r
-}
-
-// Document returns the document form of a result.
-func Document(r Result) apidoc.HealthResult {
+// document returns the document form of a result.
+func document(r Result) apidoc.HealthResult {
 	return apidoc.HealthResult{
 		Name:     r.Name,
 		Outcome:  apidoc.HealthOutcome(r.Outcome),
@@ -265,7 +258,7 @@ func Document(r Result) apidoc.HealthResult {
 func Documents(results []Result) []apidoc.HealthResult {
 	out := make([]apidoc.HealthResult, len(results))
 	for i, r := range results {
-		out[i] = Document(r)
+		out[i] = document(r)
 	}
 	return out
 }

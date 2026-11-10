@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"slices"
-	"sort"
 	"strings"
 	"time"
 
@@ -59,14 +58,13 @@ func TakeBaseline(ctx context.Context, kube kubernetes.Interface, cluster string
 		pods     *corev1.PodList
 		nodesErr error
 		podsErr  error
-		done     = make(chan struct{})
 	)
-	go func() {
-		defer close(done)
-		nodes, nodesErr = kube.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
-	}()
-	pods, podsErr = kube.CoreV1().Pods("").List(ctx, metav1.ListOptions{FieldSelector: "status.phase=Pending"})
-	<-done
+	together(
+		func() { nodes, nodesErr = kube.CoreV1().Nodes().List(ctx, metav1.ListOptions{}) },
+		func() {
+			pods, podsErr = kube.CoreV1().Pods("").List(ctx, metav1.ListOptions{FieldSelector: "status.phase=Pending"})
+		},
+	)
 	var names map[string]struct{}
 	if nodesErr != nil {
 		f := kubeFailure(cluster, "listing nodes before the roll", nodesErr)
@@ -159,8 +157,8 @@ func Verify(nodegroups []string, base Baseline, wait WaitOptions) []Check {
 		{Name: "NodesReady", Blocking: true, FailClosed: true, Needs: Needs{Kube: true}, Run: func(ctx context.Context, in *Input) Result {
 			return runNodesReady(ctx, in, nodegroups, base, wait)
 		}},
-		{Name: "NewPendingPods", Blocking: true, FailClosed: true, Needs: Needs{Kube: true}, Run: func(_ context.Context, in *Input) Result {
-			return runNewPendingPods(in, base)
+		{Name: "NewPendingPods", Blocking: true, FailClosed: true, Needs: Needs{Kube: true}, Run: func(ctx context.Context, in *Input) Result {
+			return runNewPendingPods(ctx, in, base)
 		}},
 	}
 }
@@ -192,12 +190,12 @@ func runNodegroupActive(in *Input, nodegroups []string) Result {
 		case i < 0 || in.Snapshot.Nodegroups[i].State != fleet.Collected:
 			unread = append(unread, name)
 		case in.Snapshot.Nodegroups[i].Status != "ACTIVE":
-			issues = append(issues, finding{name, fmt.Sprintf("%s is %s", name, in.Snapshot.Nodegroups[i].Status)})
+			issues = append(issues, finding{name: name, text: fmt.Sprintf("%s is %s", name, in.Snapshot.Nodegroups[i].Status)})
 		default:
 			active = append(active, name)
 		}
 	}
-	r := Result{Findings: slices.Sorted(slices.Values(slices.Concat(unread, findingNames(issues))))}
+	r := Result{Findings: sorted(unread, findingNames(issues))}
 	switch {
 	case len(issues) > 0:
 		r.Outcome, r.Message = Fail, strings.Join(findingTexts(issues), ", ")+" (expected ACTIVE)"
@@ -277,7 +275,7 @@ func newNodeState(list *corev1.NodeList, nodegroups []string, base Baseline) (ne
 			notReady = append(notReady, node.Name)
 		}
 	}
-	sort.Strings(notReady)
+	slices.Sort(notReady)
 	return newNodes, notReady
 }
 
@@ -285,7 +283,7 @@ func newNodeState(list *corev1.NodeList, nodegroups []string, base Baseline) (ne
 // the baseline lacks. Phase Pending also covers a pod that is bound to a
 // node and pulls its images, which every pod moved by a roll goes through.
 // Such a pod is progressing, not stuck: see stuckReason.
-func runNewPendingPods(in *Input, base Baseline) Result {
+func runNewPendingPods(ctx context.Context, in *Input, base Baseline) Result {
 	if !base.Taken {
 		return Result{Outcome: Skipped, Message: "no baseline of the Pending pods before the roll"}
 	}
@@ -301,7 +299,7 @@ func runNewPendingPods(in *Input, base Baseline) Result {
 	together(
 		func() { _, _ = in.reads.Nodes() },
 		func() {
-			pods, podsErr = in.Kube.CoreV1().Pods("").List(in.reads.ctx, metav1.ListOptions{FieldSelector: "status.phase=Pending"})
+			pods, podsErr = in.Kube.CoreV1().Pods("").List(ctx, metav1.ListOptions{FieldSelector: "status.phase=Pending"})
 		},
 	)
 	nodes, err := in.reads.Nodes()
@@ -357,9 +355,9 @@ func newStuckPods(nodes *corev1.NodeList, pods *corev1.PodList, base Baseline) [
 	return stuck
 }
 
-// stuckWaiting are the reasons of a waiting container that does not start
-// without a change: its image cannot be pulled, or its configuration (a
-// Secret or a ConfigMap) cannot be read. A bad AMI can cause each of them,
+// stuckWaiting are the reasons of a waiting container that usually need a
+// change before it starts: its image cannot be pulled, or its configuration
+// (a Secret or a ConfigMap) cannot be read. A bad AMI can cause each of them,
 // for example through the image credentials of the node.
 var stuckWaiting = []string{"ImagePullBackOff", "ErrImagePull", "CreateContainerConfigError"}
 

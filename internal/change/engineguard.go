@@ -21,7 +21,7 @@ import (
 //     too.
 //  2. A rollback is judged again against the target of the plan: the
 //     rollback window, the offer of the target version, and the rollback
-//     insights. See RollbackStillEligible. A target that changed refuses,
+//     insights. See rollbackStillEligible. A target that changed refuses,
 //     and no answer accepts it.
 //  3. The busy rule on that read, with the steps of the phase as the
 //     steps of the run, and this step as a Submit: an update of the
@@ -101,7 +101,7 @@ func (r *runner) guardSubmit(cp *ClusterPlan, s Step, res StepResult) (StepResul
 // them first and says that it waited: the caller reads the cluster again,
 // and the gate on that read reuses the refresh. A refresh that failed is
 // the read: the gate blocks on it, and nothing is tried again.
-func (r *runner) gateInsights(cp *ClusterPlan, s Step, snap *fleet.Snapshot) (insights func(fleet.Version) InsightsRead, waited bool) {
+func (r *runner) gateInsights(cp *ClusterPlan, s Step, snap *fleet.Snapshot) (insights func(fleet.Version) insightsRead, waited bool) {
 	live := snap.Cluster.Version.String()
 	insights = upgradeInsights(r.readCtx, r.d.AWS.Clients(cp.Region), cp.Target, live, r.refresh)
 	req, ok := r.req.(UpgradeRequest)
@@ -110,7 +110,7 @@ func (r *runner) gateInsights(cp *ClusterPlan, s Step, snap *fleet.Snapshot) (in
 		return insights, false
 	}
 	if err := r.refresh.refresh(r.readCtx, cp.Target, live); err != nil {
-		return func(fleet.Version) InsightsRead { return InsightsRead{Refreshed: true, RefreshErr: err} }, false
+		return func(fleet.Version) insightsRead { return insightsRead{Refreshed: true, RefreshErr: err} }, false
 	}
 	return insights, true
 }
@@ -140,7 +140,7 @@ func (r *runner) guardRollback(cp *ClusterPlan, res StepResult, snap *fleet.Snap
 	if !ok {
 		return res, true
 	}
-	blockers, failures, err := RollbackStillEligible(snap, req, rollbackInputs(r.readCtx, r.d, r.d.AWS.Clients(cp.Region), cp.Cluster, nil), cp.To)
+	blockers, failures, err := rollbackStillEligible(snap, req, rollbackInputs(r.readCtx, r.d, r.d.AWS.Clients(cp.Region), cp.Cluster, nil), cp.To)
 	if ended := r.readCtx.Err(); ended != nil {
 		return r.unsent(cp, res, ended), false
 	}
@@ -179,7 +179,7 @@ func blockerMessages(blockers []Blocker) string {
 //     from the minor version before its goal, and a rollback only from
 //     the one after it.
 //  3. The gate of the phase refuses: Blocked. See controlPlaneGate.
-func (r *runner) guardControlPlane(cp *ClusterPlan, res StepResult, s Step, snap *fleet.Snapshot, insights func(fleet.Version) InsightsRead) (StepResult, bool) {
+func (r *runner) guardControlPlane(cp *ClusterPlan, res StepResult, s Step, snap *fleet.Snapshot, insights func(fleet.Version) insightsRead) (StepResult, bool) {
 	kind, live := r.req.kind(), snap.Cluster.Version.String()
 	switch {
 	case versionDone(kind, live, s.To):
@@ -207,9 +207,10 @@ func (r *runner) guardControlPlane(cp *ClusterPlan, res StepResult, s Step, snap
 //     the catalogue of that hop. A plan with --only addons has no
 //     control-plane step, and its plan read the control plane some time
 //     ago. A rollback judges its target in guardRollback.
-//  6. The request would go the wrong way: Blocked. A rollback never sends
-//     a version above the live one, and an upgrade never one below it.
-//     Someone moved the add-on since the plan.
+//  6. A rollback, and the request would go the wrong way: Blocked. A
+//     rollback never sends a version above the live one. Someone moved
+//     the add-on since the plan. An upgrade needs no such row: an add-on
+//     at or above its goal is Skipped by row 4.
 func (r *runner) guardAddon(cp *ClusterPlan, res StepResult, s Step, snap *fleet.Snapshot) (StepResult, bool) {
 	name := s.Ref.Name
 	i := slices.IndexFunc(snap.Addons, func(a fleet.Addon) bool { return a.Name == name })
@@ -237,19 +238,12 @@ func (r *runner) guardAddon(cp *ClusterPlan, res StepResult, s Step, snap *fleet
 		return r.blockStep(cp, res, StepBlocked, apidoc.ReasonUnknown, fmt.Sprintf(
 			"the control plane of %s runs %s, and add-on %s would move to %s, a version for Kubernetes %s: the control plane must be at %s; it was not changed",
 			cp.Cluster, orUnknown(snap.Cluster.Version.String()), name, s.To, hop, hop)), false
-	case !addonDirection(r.req.kind(), a.Version, s.To):
-		return r.blockStep(cp, res, StepBlocked, apidoc.ReasonUnknown, wrongAddonDirection(r.req.kind(), name, a.Version, s.To)), false
+	case r.req.kind() == ClusterRollback && !addonDirection(ClusterRollback, a.Version, s.To):
+		return r.blockStep(cp, res, StepBlocked, apidoc.ReasonUnknown, fmt.Sprintf(
+			"add-on %s is at %s now, and the plan moves it to %s, which is newer: a rollback does not upgrade an add-on; it was not changed. Run the command again",
+			name, a.Version, s.To)), false
 	}
 	return res, true
-}
-
-// wrongAddonDirection is the message of an add-on step whose request
-// would go the wrong way from the live version.
-func wrongAddonDirection(kind Kind, name, live, goal string) string {
-	if kind == ClusterRollback {
-		return fmt.Sprintf("add-on %s is at %s now, and the plan moves it to %s, which is newer: a rollback does not upgrade an add-on; it was not changed. Run the command again", name, live, goal)
-	}
-	return fmt.Sprintf("add-on %s is at %s now, and the plan moves it to %s, which is older: an upgrade does not downgrade an add-on; it was not changed. Run the command again", name, live, goal)
 }
 
 // guardNodegroup is what the roll of a nodegroup needs, on the read of
@@ -301,7 +295,7 @@ func (r *runner) guardNodegroup(cp *ClusterPlan, res StepResult, s Step, snap *f
 	switch {
 	case nodegroupInFlight(n.Status):
 		return r.blockStep(cp, res, StepBlocked, apidoc.ReasonBusy,
-			fmt.Sprintf("nodegroup %s started changing after its health gate (%s); it was not rolled. Run the command again to wait for that change", name, n.Status)), false, false
+			fmt.Sprintf("nodegroup %s started changing before its roll was sent (%s); it was not rolled. Run the command again to wait for that change", name, n.Status)), false, false
 	case n.Status != nodegroupActive:
 		return r.blockStep(cp, res, StepBlocked, apidoc.ReasonUnknown, notRollable(name, n.Status)), false, false
 	case versionDone(kind, version, s.To):

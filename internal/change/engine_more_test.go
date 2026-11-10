@@ -263,7 +263,7 @@ func TestRollIdentity(t *testing.T) {
 	}{
 		{name: "an upgrade roll", step: Step{From: "1.32", To: "1.33"}, want: noderoll.Identity{TargetVersion: "1.33", StartedAt: at}},
 		{name: "a rollback roll", step: Step{From: "1.33", To: "1.32"}, want: noderoll.Identity{TargetVersion: "1.32", StartedAt: at}},
-		{name: "an AMI roll", step: Step{From: "1.32", To: "1.32", ToImage: "ami-1"}, want: noderoll.Identity{TargetAMI: "ami-1", StartedAt: at}},
+		{name: "an AMI roll", step: Step{From: "1.32", To: "1.32", ToImage: "ami-1"}, want: noderoll.Identity{StartedAt: at}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -1,4 +1,4 @@
-package awsx_test
+package awsx
 
 import (
 	"context"
@@ -11,15 +11,14 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws/retry"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 
-	"github.com/dantech2000/refresh/internal/awsx"
 	"github.com/dantech2000/refresh/internal/awsx/awsxtest"
 	"github.com/dantech2000/refresh/internal/fleet/fleettest"
 )
 
 // limited returns a provider that reaches srv with a request limit, and
 // with backoff in place of the delay between attempts when it is not nil.
-func limited(srv *awsxtest.Server, limit int, backoff func()) *awsx.Provider {
-	return awsx.NewProvider(srv.Config(region), func(o *awsx.ProviderOptions) {
+func limited(srv *awsxtest.Server, limit int, backoff func()) *Provider {
+	return NewProvider(srv.Config(region), func(o *ProviderOptions) {
 		o.MaxInFlight = limit
 		o.Backoff = retry.BackoffDelayerFunc(func(int, error) (time.Duration, error) {
 			if backoff != nil {
@@ -30,7 +29,7 @@ func limited(srv *awsxtest.Server, limit int, backoff func()) *awsx.Provider {
 	})
 }
 
-func describe(ctx context.Context, c *awsx.Clients) error {
+func describe(ctx context.Context, c *Clients) error {
 	_, err := c.EKS.DescribeCluster(ctx, &eks.DescribeClusterInput{Name: aws.String("prod")})
 	return err
 }
@@ -67,7 +66,7 @@ func TestRequestLimit_OneLimitForARegion(t *testing.T) {
 	provider := limited(srv, limit, nil)
 	ctx := testContext(t)
 
-	sets := []*awsx.Clients{
+	sets := []*Clients{
 		provider.Clients(region),
 		provider.SweepClients(region).Clients,
 		provider.PollClients(region).Clients,
@@ -117,7 +116,7 @@ func TestRequestLimit_PerRegion(t *testing.T) {
 // occupy sends one request that takes the only slot and holds it until the
 // returned function is called. It returns once the request is at the
 // server.
-func occupy(t *testing.T, srv *awsxtest.Server, provider *awsx.Provider) (release func()) {
+func occupy(t *testing.T, srv *awsxtest.Server, provider *Provider) (release func()) {
 	t.Helper()
 	atServer := make(chan struct{})
 	hold := make(chan struct{})
@@ -151,14 +150,14 @@ func TestRequestLimit_NotSent(t *testing.T) {
 	ctx, cancel := context.WithTimeout(testContext(t), 50*time.Millisecond)
 	defer cancel()
 	err := describe(ctx, provider.Clients(region))
-	if !errors.Is(err, awsx.ErrNotSent) {
+	if !errors.Is(err, ErrNotSent) {
 		t.Fatalf("error = %v, want ErrNotSent in its chain", err)
 	}
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Errorf("error = %v, want the context error in its chain", err)
 	}
-	if got := awsx.Classify(err); got != awsx.ClassNotAttempted {
-		t.Errorf("Classify = %s, want %s", got, awsx.ClassNotAttempted)
+	if got := Classify(err); got != ClassNotAttempted {
+		t.Errorf("Classify = %s, want %s", got, ClassNotAttempted)
 	}
 	if got := count(srv, fleettest.EKSDescribeCluster); got != 1 {
 		t.Errorf("DescribeCluster requests = %d, want 1: only the one that holds the slot", got)
@@ -171,7 +170,7 @@ func TestRequestLimit_RetryWithoutSlotIsNotUnsent(t *testing.T) {
 	world, srv, _ := newServer(t)
 	world.SetFault(fleettest.EKSDescribeCluster, fleettest.Fault{Throttle: 1})
 
-	var provider *awsx.Provider
+	var provider *Provider
 	var release func()
 	// The backoff runs after the throttled attempt gave its slot back. It
 	// lets another request take the slot before the retry asks for it.
@@ -185,14 +184,14 @@ func TestRequestLimit_RetryWithoutSlotIsNotUnsent(t *testing.T) {
 	ctx, cancel := context.WithTimeout(testContext(t), 200*time.Millisecond)
 	defer cancel()
 	err := describe(ctx, provider.Clients(region))
-	if errors.Is(err, awsx.ErrNotSent) {
+	if errors.Is(err, ErrNotSent) {
 		t.Fatalf("error = %v: a call whose first attempt was answered is not \"not sent\"", err)
 	}
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("error = %v, want the deadline of the context", err)
 	}
-	if got := awsx.Classify(err); got != awsx.ClassTimeout {
-		t.Errorf("Classify = %s, want %s", got, awsx.ClassTimeout)
+	if got := Classify(err); got != ClassTimeout {
+		t.Errorf("Classify = %s, want %s", got, ClassTimeout)
 	}
 }
 
@@ -201,7 +200,7 @@ func TestRequestLimit_SlotIsFreeDuringBackoff(t *testing.T) {
 	world, srv, _ := newServer(t)
 	world.SetFault(fleettest.EKSListClusters, fleettest.Fault{Throttle: 1})
 
-	var provider *awsx.Provider
+	var provider *Provider
 	var between error
 	provider = limited(srv, 1, func() {
 		ctx, cancel := context.WithTimeout(testContext(t), 5*time.Second)

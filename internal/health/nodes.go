@@ -90,7 +90,7 @@ func runNodes(_ context.Context, in *Input) Result {
 
 // countNodes is the rule for counts from the Kubernetes API.
 func countNodes(total, ready int, joining, notReady, problems, inProgress []string, targetFail bool) Result {
-	findings := slices.Sorted(slices.Values(slices.Concat(notReady, joining, problems)))
+	findings := sorted(notReady, joining, problems)
 	r := Result{Findings: findings}
 	if len(inProgress) > 0 {
 		r.Details = append(r.Details, "nodegroups mid-change (not a finding): "+strings.Join(inProgress, ", "))
@@ -122,7 +122,7 @@ func countNodes(total, ready int, joining, notReady, problems, inProgress []stri
 // estimateNodes is the rule for the estimate from the nodegroups. It never
 // applies the minimum: a desired size says nothing about the nodes.
 func estimateNodes(total, ready int, problems, inProgress []string, targetFail bool) Result {
-	r := Result{Findings: slices.Sorted(slices.Values(problems)), Details: []string{"estimated from the desired size of the nodegroups (no Kubernetes access)"}}
+	r := Result{Findings: sorted(problems), Details: []string{"estimated from the desired size of the nodegroups (no Kubernetes access)"}}
 	if len(inProgress) > 0 {
 		r.Details = append(r.Details, "nodegroups mid-change (not a finding): "+strings.Join(inProgress, ", "))
 	}
@@ -171,5 +171,3 @@ func nodeJoining(node *corev1.Node, now time.Time) bool {
 	}
 	return true
 }
-
-func joinNames(names []string) string { return strings.Join(names, ", ") }

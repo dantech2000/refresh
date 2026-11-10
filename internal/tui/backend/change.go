@@ -117,6 +117,21 @@ func (b *Live) command(region string, req change.Request) string {
 	return change.Command(change.FollowUpFor(b.opts.Profile, region, b.opts.Kubeconfig, b.opts.KubeContext), req)
 }
 
+// depsFor returns the dependencies of a change in region. A command that a
+// notice of the change names reaches that region: outside the home region
+// it carries --region, which the follow-up words of the command line may
+// not have, since the UI sweeps regions that no -r named.
+func (b *Live) depsFor(region string) change.Deps {
+	d := b.deps
+	if b.provider == nil || region == b.provider.Region() {
+		return d
+	}
+	fu := change.FollowUpFor(b.opts.Profile, region, b.opts.Kubeconfig, b.opts.KubeContext)
+	fu.Resume, fu.Profile = d.FollowUp.Resume, d.FollowUp.Profile
+	d.FollowUp = fu
+	return d
+}
+
 // Plan is the dry run of an action: the plan, its gate, and the CLI
 // command, under the read budget. It changes nothing. The proposal it
 // returns is the one that Start accepts, until the next Plan.
@@ -133,7 +148,7 @@ func (b *Live) Plan(ctx context.Context, a state.Action) (state.Proposal, error)
 	}
 	ctx, cancel := b.withTimeoutOf(ctx)
 	defer cancel()
-	plan, err := change.NewPlan(ctx, b.deps, req)
+	plan, err := change.NewPlan(ctx, b.depsFor(a.Cluster.Region), req)
 	if err != nil {
 		return state.Proposal{}, err
 	}
@@ -150,7 +165,8 @@ func (b *Live) Plan(ctx context.Context, a state.Action) (state.Proposal, error)
 	}, request: req}
 	b.proposal = p
 	b.mu.Unlock()
-	b.bump()
+	// The proposal is not part of the state: the caller has it, and no
+	// state changed.
 	return p.Proposal, nil
 }
 
@@ -178,7 +194,7 @@ func (b *Live) Start(_ context.Context, id state.ProposalID) (state.ChangeID, er
 		return 0, ErrClosing
 	}
 	b.proposal = nil
-	h := change.Start(b.ctx, b.deps, change.WithExpect(p.request, p.Plan))
+	h := change.Start(b.ctx, b.depsFor(p.Action.Cluster.Region), change.WithExpect(p.request, p.Plan))
 	e := b.add(h, p.Action.Cluster, false, change.Resource{})
 	e.command = p.Command
 	b.say(p.Action.Cluster, view.Progress, "started "+p.Action.Describe(false))
@@ -394,7 +410,7 @@ func (b *Live) adopt() {
 				kind = change.ClusterUpgrade
 			}
 			// The node view is for one roll, as the run has it.
-			h := change.Watch(b.ctx, b.deps, r, change.WatchOptions{Nodes: rolling == 1, Limits: b.limits(kind)})
+			h := change.Watch(b.ctx, b.depsFor(c.Region), r, change.WatchOptions{Nodes: rolling == 1, Limits: b.limits(kind)})
 			b.add(h, c.Key, true, r)
 		}
 	}

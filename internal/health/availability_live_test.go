@@ -4,7 +4,6 @@ package health_test
 
 import (
 	"context"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -21,8 +20,8 @@ import (
 
 // TestLiveAvailability runs the instance-type check of a roll against the
 // subnets of the default VPC, with a nodegroup of common types and one
-// type that does not exist. A read that fails makes the check Skipped,
-// which a command shows as no warning, so here it fails the test. The
+// type that does not exist. A read that fails gives a command no notice,
+// so here it fails the test. The
 // type that does not exist must be reported in every zone. An account
 // with no default VPC has nothing to check, and the test is skipped.
 //
@@ -56,18 +55,18 @@ func TestLiveAvailability(t *testing.T) {
 		InstanceTypes: []string{"m5.large", "t3.medium", "m7g.large", "p5.48xlarge", unknown},
 		Subnets:       ids,
 	}}}
-	results := health.Run(ctx, []health.Check{health.Availability()}, &health.Input{
-		Snapshot: snap, Targets: []string{"live"}, Clients: clients, Now: time.Now(),
-	})
-	r := results[0]
-	t.Logf("%s: %s", r.Outcome, r.Message)
-	if r.Outcome != health.Warn {
-		t.Fatalf("outcome %s (%s), want Warn: %s is offered nowhere", r.Outcome, r.Message, unknown)
+	notices, err := health.InstanceTypeNotices(ctx, clients, snap, []string{"live"})
+	if err != nil {
+		t.Fatalf("a read failed: %v", err)
 	}
-	if n := strings.Count(r.Message, unknown+" in "); n != len(ids) {
-		t.Errorf("the check names %s in %d zones, want all %d", unknown, n, len(ids))
+	t.Logf("%q", notices)
+	if len(notices) != 1 {
+		t.Fatalf("notices = %q, want one for the nodegroup live: %s is offered nowhere", notices, unknown)
 	}
-	if !slices.Equal(r.Findings, []string{"live"}) {
-		t.Errorf("findings = %v, want the nodegroup live", r.Findings)
+	if n := strings.Count(notices[0], unknown+" in "); n != len(ids) {
+		t.Errorf("the notice names %s in %d zones, want all %d", unknown, n, len(ids))
+	}
+	if !strings.Contains(notices[0], "nodegroup live ") {
+		t.Errorf("the notice does not name the nodegroup live: %s", notices[0])
 	}
 }

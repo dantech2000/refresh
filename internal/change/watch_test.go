@@ -149,7 +149,7 @@ func TestWatchKind(t *testing.T) {
 		{ng, "ConfigUpdate", NodegroupScale, true},
 		{Resource{Target: handleTarget, Kind: StepAddon, Name: "coredns"}, "AddonUpdate", AddonUpdate, true},
 	} {
-		kind, _, ok := watchKind(tc.r, InFlightUpdate{Type: tc.typ})
+		kind, _, ok := watchKind(tc.r, inFlight{Type: tc.typ})
 		if kind != tc.kind || ok != tc.ok {
 			t.Errorf("%s %q = %s, %v; want %s, %v", tc.r.Kind, tc.typ, kind, ok, tc.kind, tc.ok)
 		}

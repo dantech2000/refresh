@@ -828,8 +828,10 @@ func TestUpdate_FleetRegions(t *testing.T) {
 		e := cmdtest.NewFake(t, world(), "")
 		t.Setenv("REFRESH_EKS_REGIONS", east)
 		err := e.Run(cmdutiltest.Context(t), "nodegroup", "update", "--all-clusters", "--dry-run")
-		if err == nil || !strings.Contains(err.Error(), "no AWS region") {
-			t.Errorf("error = %v, want the no-region error", err)
+		// REFRESH_EKS_REGIONS is set and does not count: the error says
+		// to pass -r.
+		if err == nil || !strings.Contains(err.Error(), "no AWS region: pass -r/--region") || !strings.Contains(err.Error(), "REFRESH_EKS_REGIONS") {
+			t.Errorf("error = %v, want the no-region error that says to pass -r", err)
 		}
 		if n := len(e.Server.Requests()); n != 0 {
 			t.Errorf("%d requests, want none: %v", n, e.Operations())

@@ -1,7 +1,6 @@
 package change
 
 import (
-	"slices"
 	"strings"
 	"testing"
 
@@ -129,72 +128,36 @@ func TestVersionList(t *testing.T) {
 	}
 }
 
-// The tests of the dependency order, as the old tree had them.
-
-func TestSortByDependency_VPCCNIFirst(t *testing.T) {
-	ordered := sortByDependency([]string{"coredns", "kube-proxy", "vpc-cni"})
-	cni, dns, proxy := slices.Index(ordered, "vpc-cni"), slices.Index(ordered, "coredns"), slices.Index(ordered, "kube-proxy")
-	if cni == -1 || dns == -1 || proxy == -1 {
-		t.Fatalf("an add-on is missing from %v", ordered)
+// The dependency order: an add-on comes after the add-ons that it
+// depends on, when they are in the list. A dependency that is not in the
+// list is no edge, and the names that do not depend on one another keep
+// their order, so the order is the same on every run.
+func TestSortByDependency(t *testing.T) {
+	tests := []struct {
+		name string
+		in   []string
+		want []string
+	}{
+		{
+			name: "every kind of add-on",
+			in:   []string{"adot", "aws-ebs-csi-driver", "coredns", "kube-proxy", "my-addon", "vpc-cni"},
+			want: []string{"my-addon", "vpc-cni", "coredns", "kube-proxy", "adot", "aws-ebs-csi-driver"},
+		},
+		{
+			// coredns and kube-proxy depend on vpc-cni, which is not in
+			// the list: they keep their order, before my-addon.
+			name: "a dependency that is not in the list",
+			in:   []string{"kube-proxy", "coredns", "my-addon"},
+			want: []string{"kube-proxy", "coredns", "my-addon"},
+		},
+		{name: "nothing", in: nil, want: []string{}},
 	}
-	if cni > dns {
-		t.Errorf("vpc-cni (%d) must come before coredns (%d)", cni, dns)
-	}
-	if cni > proxy {
-		t.Errorf("vpc-cni (%d) must come before kube-proxy (%d)", cni, proxy)
-	}
-}
-
-func TestSortByDependency_StorageAfterCoreDNS(t *testing.T) {
-	ordered := sortByDependency([]string{"aws-ebs-csi-driver", "coredns", "vpc-cni"})
-	dns, ebs := slices.Index(ordered, "coredns"), slices.Index(ordered, "aws-ebs-csi-driver")
-	if dns == -1 || ebs == -1 {
-		t.Fatalf("an add-on is missing from %v", ordered)
-	}
-	if dns > ebs {
-		t.Errorf("coredns (%d) must come before aws-ebs-csi-driver (%d)", dns, ebs)
-	}
-}
-
-func TestSortByDependency_UnknownAddonAppended(t *testing.T) {
-	if got := sortByDependency([]string{"my-custom-addon", "vpc-cni"}); len(got) != 2 {
-		t.Fatalf("got %v, want 2 add-ons", got)
-	}
-}
-
-func TestSortByDependency_MissingDepSkipped(t *testing.T) {
-	// coredns depends on vpc-cni, which is not in the list.
-	if got := sortByDependency([]string{"coredns", "kube-proxy"}); len(got) != 2 {
-		t.Fatalf("got %v, want 2 add-ons", got)
-	}
-}
-
-func TestSortByDependency_PreservesAll(t *testing.T) {
-	input := []string{"aws-ebs-csi-driver", "coredns", "kube-proxy", "vpc-cni", "amazon-cloudwatch-observability"}
-	ordered := sortByDependency(input)
-	if len(ordered) != len(input) {
-		t.Errorf("got %d add-ons, want %d", len(ordered), len(input))
-	}
-	for _, name := range input {
-		if !slices.Contains(ordered, name) {
-			t.Errorf("%s is missing from %v", name, ordered)
-		}
-	}
-}
-
-func TestSortByDependency_EmptyInput(t *testing.T) {
-	if got := sortByDependency(nil); len(got) != 0 {
-		t.Errorf("got %v, want nothing", got)
-	}
-}
-
-// The order is the same on every run: the names that do not depend on
-// one another keep their order.
-func TestSortByDependency_Order(t *testing.T) {
-	got := sortByDependency([]string{"adot", "aws-ebs-csi-driver", "coredns", "kube-proxy", "my-addon", "vpc-cni"})
-	want := []string{"my-addon", "vpc-cni", "coredns", "kube-proxy", "adot", "aws-ebs-csi-driver"}
-	if diff := cmp.Diff(want, got); diff != "" {
-		t.Errorf("order (-want +got):\n%s", diff)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if diff := cmp.Diff(tt.want, sortByDependency(tt.in)); diff != "" {
+				t.Errorf("order (-want +got):\n%s", diff)
+			}
+		})
 	}
 }
 

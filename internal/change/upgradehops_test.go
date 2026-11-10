@@ -38,7 +38,7 @@ func TestHops(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.from+" to "+tt.to, func(t *testing.T) {
-			hops, err := Hops(ver(tt.from), ver(tt.to))
+			hops, err := hopsBetween(ver(tt.from), ver(tt.to))
 			var refusal *RefusalError
 			if tt.refusal != "" {
 				if !errors.As(err, &refusal) || refusal.Reason != tt.refusal {
@@ -64,7 +64,7 @@ func TestHops(t *testing.T) {
 			}
 		})
 	}
-	if _, err := Hops(fleet.Version{}, ver("1.33")); err == nil {
+	if _, err := hopsBetween(fleet.Version{}, ver("1.33")); err == nil {
 		t.Error("a version that is not known gave hops")
 	}
 }
@@ -95,7 +95,7 @@ func FuzzUpgradeVersions(f *testing.F) {
 		if errA != nil || errB != nil {
 			return
 		}
-		hops, err := Hops(from, to)
+		hops, err := hopsBetween(from, to)
 		switch {
 		case from.IsZero() || to.IsZero(), from.Major != to.Major, to.Minor < from.Minor, to.Minor-from.Minor > maxHops:
 			if err == nil {

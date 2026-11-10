@@ -61,7 +61,7 @@ Exit codes:
   # With the EC2 instances
   refresh nodegroup describe web -c prod --show-instances`,
 		Args:              cobra.MatchAll(cobra.ExactArgs(1), cmdutil.NoEmptyArgs),
-		ValidArgsFunction: fleetcmd.CompleteNodegroups(f, &o.cluster),
+		ValidArgsFunction: fleetcmd.CompleteNodegroups(f, &o.cluster, 1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := o.complete(args); err != nil {
 				return err

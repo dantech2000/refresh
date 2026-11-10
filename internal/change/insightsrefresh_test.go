@@ -212,7 +212,9 @@ func TestInsightsRefresh_ErrorText(t *testing.T) {
 
 // InvalidRequestException also means a cluster state such as DELETING. A
 // start that is still refused when the wait ends is named in the blocker,
-// which is then more than a timeout.
+// which is then more than a timeout. A refresh that failed is not run a
+// second time by the same plan: the run blocks after one wait of five
+// minutes.
 func TestInsightsRefresh_StillRefusedNamesTheRefusal(t *testing.T) {
 	world := engineWorld(nil)
 	e := newEnv(t, world)
@@ -228,6 +230,9 @@ func TestInsightsRefresh_StillRefusedNamesTheRefusal(t *testing.T) {
 	}
 	if n := e.count(fleettest.EKSListInsights); n != 0 {
 		t.Errorf("%d reads of the insights after a refresh that never started, want none", n)
+	}
+	if got := e.world.Now().Sub(fleettest.New().Now()); got != insightsRefreshLimit {
+		t.Errorf("the run waited %s for the refresh, want %s", got, insightsRefreshLimit)
 	}
 }
 
@@ -329,19 +334,6 @@ func TestInsightsRefresh_NewClusterSaysWhenToRetry(t *testing.T) {
 	refuseStart(e.world, codeNotFound)
 	res := mustRun(t, e, upgradeTo("1.33"), Hooks{})
 	wantRefreshBlocked(t, e, res, "has not made cluster insights available for prod yet", "run again later")
-}
-
-// A refresh that failed is not run a second time by the same plan. A
-// start that stays refused blocks after one wait of five minutes.
-func TestInsightsRefresh_FailedRefreshRunsOnce(t *testing.T) {
-	e := newEnv(t, engineWorld(nil))
-	refuseStart(e.world, codeInvalidRequest)
-	hideRefresh(e.world)
-	res := mustRun(t, e, upgradeTo("1.33"), Hooks{})
-	wantRefreshBlocked(t, e, res)
-	if got := e.world.Now().Sub(fleettest.New().Now()); got != insightsRefreshLimit {
-		t.Errorf("the run waited %s for the refresh, want %s", got, insightsRefreshLimit)
-	}
 }
 
 // Ctrl+C or the deadline of the caller while the refresh of the plan is

@@ -23,7 +23,7 @@ func TestDefaultStallLimits(t *testing.T) {
 	if got := defaultStallLimits(); got != want {
 		t.Errorf("defaultStallLimits() = %+v, want %+v", got, want)
 	}
-	tr := NewHTTPClient(8).GetTransport()
+	tr := defaultHTTPClient(8).GetTransport()
 	if tr.ResponseHeaderTimeout != want.headers || tr.HTTP2 == nil ||
 		tr.HTTP2.SendPingTimeout != want.pingAfter || tr.HTTP2.PingTimeout != want.pingTimeout {
 		t.Errorf("the client of a real run does not carry the default limits: header timeout %v, HTTP/2 %+v", tr.ResponseHeaderTimeout, tr.HTTP2)
@@ -82,7 +82,7 @@ func TestBodyIdleLimit(t *testing.T) {
 			if errors.Is(err, context.Canceled) {
 				t.Error("the error reads as an interrupt")
 			}
-			if !IsRetryable(err) {
+			if !isRetryable(err) {
 				t.Error("the timeout is not transient for the retry policy")
 			}
 			if waited := time.Since(start); waited != idle {
@@ -214,7 +214,7 @@ func TestStalledCallFails(t *testing.T) {
 			if msg := FormatAWSError(err, "listing clusters").Error(); !strings.HasPrefix(msg, "network connectivity issue while listing clusters") {
 				t.Errorf("formatted error = %q, want the network help, not the --timeout hint", msg)
 			}
-			if !IsRetryable(err) || !IsNetworkError(err) {
+			if !isRetryable(err) || !isNetworkError(err) {
 				t.Errorf("error = %v, want a transient network error", err)
 			}
 			if got := requests.Load(); got != tt.wantRequests {

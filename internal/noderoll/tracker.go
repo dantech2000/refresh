@@ -70,11 +70,8 @@ func trackKey(n NodeView) string {
 // Observe compares s with the snapshot before it and adds an event for
 // each difference. The first snapshot is the starting point and gives no
 // event, so a roll that is already running does not replay its history.
-func (t *Tracker) Observe(s Snapshot) { t.ObserveAt(s, time.Time{}) }
-
-// ObserveAt is Observe with the time of the snapshot, which each event
-// that it adds carries.
-func (t *Tracker) ObserveAt(s Snapshot, at time.Time) {
+// at is the time of the snapshot, which each event that it adds carries.
+func (t *Tracker) Observe(s Snapshot, at time.Time) {
 	cur := make(map[string]tracked, len(s.Nodes))
 	for _, n := range s.Nodes {
 		cur[trackKey(n)] = tracked{name: n.Name, phase: n.Phase}

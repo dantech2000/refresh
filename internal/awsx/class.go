@@ -78,29 +78,29 @@ func Classify(err error) ErrorClass {
 	case isContextDeadline(err):
 		return ClassTimeout
 	// A credential code must win over the HTTP 403 check of
-	// IsPermissionError: STS returns ExpiredToken with status 403.
+	// isPermissionError: STS returns ExpiredToken with status 403.
 	case IsCredentialError(err):
 		return ClassCredentialError
-	case IsPermissionError(err):
+	case isPermissionError(err):
 		return ClassAccessDenied
-	case IsRegionDisabled(err):
+	case isRegionDisabled(err):
 		return ClassRegionUnavailable
 	case IsThrottling(err):
 		return ClassThrottled
 	case IsNotFound(err):
 		return ClassNotFound
-	case IsValidation(err):
+	case isValidation(err):
 		return ClassInvalidRequest
-	case IsServerError(err):
+	case isServerError(err):
 		return ClassServiceError
 	case ErrorCode(err) != "":
 		// Any other answer of the API: the code says more than a class.
 		return ClassUnknown
 	// A missing region, or an AWS endpoint host that does not resolve,
 	// before the general network check: NXDOMAIN is a net error too.
-	case IsRegionError(err):
+	case isRegionError(err):
 		return ClassRegionUnavailable
-	case IsNetworkError(err):
+	case isNetworkError(err):
 		return ClassNetworkError
 	}
 	return ClassUnknown

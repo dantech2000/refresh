@@ -62,13 +62,13 @@ func newRollbackWorld() *planWorld {
 	return w
 }
 
-func (w *planWorld) rollbackInsights() InsightsRead {
+func (w *planWorld) rollbackInsights() insightsRead {
 	w.insightCalls++
-	return InsightsRead{Insights: slices.Clone(w.insights), Err: w.insightsErr}
+	return insightsRead{Insights: slices.Clone(w.insights), Err: w.insightsErr}
 }
 
-func (w *planWorld) rollbackInputs() RollbackInputs {
-	return RollbackInputs{Now: w.now, Version: w.offered, AddonVersions: w.versions, Insights: w.rollbackInsights}
+func (w *planWorld) rollbackInputs() rollbackReads {
+	return rollbackReads{Now: w.now, Version: w.offered, AddonVersions: w.versions, Insights: w.rollbackInsights}
 }
 
 // rollback plans a rollback of the world and returns the plan of its
@@ -76,9 +76,9 @@ func (w *planWorld) rollbackInputs() RollbackInputs {
 func (w *planWorld) rollback(t *testing.T, req RollbackRequest) *ClusterPlan {
 	t.Helper()
 	req.Target = Target{Region: east, Cluster: w.name}
-	p, err := PlanRollback(w.snapshot(), req, w.rollbackInputs())
+	p, err := rollbackPlan(w.snapshot(), req, w.rollbackInputs())
 	if err != nil {
-		t.Fatalf("PlanRollback: %v", err)
+		t.Fatalf("rollbackPlan: %v", err)
 	}
 	if p.Kind != ClusterRollback || len(p.Clusters) != 1 || !p.At.Equal(w.now) {
 		t.Fatalf("plan = kind %s, %d clusters, at %s", p.Kind, len(p.Clusters), p.At)
@@ -177,24 +177,26 @@ func TestRollbackPlan_Ineligible(t *testing.T) {
 		{
 			"extended support without the policy", func(w *planWorld) {
 				w.policy = "STANDARD"
-				w.offer = func(fleet.Version) VersionOffer { return VersionOffer{Offered: true, Tier: apidoc.SupportExtended} }
+				w.offer = func(fleet.Version) versionOffered { return versionOffered{Offered: true, Tier: apidoc.SupportExtended} }
 			},
 			BlockerUnavailable, "the cluster's upgrade policy is STANDARD: change it to EXTENDED first",
 		},
 		{
 			"extended support with no policy", func(w *planWorld) {
-				w.offer = func(fleet.Version) VersionOffer { return VersionOffer{Offered: true, Tier: apidoc.SupportExtended} }
+				w.offer = func(fleet.Version) versionOffered { return versionOffered{Offered: true, Tier: apidoc.SupportExtended} }
 			},
 			BlockerUnavailable, "the cluster's upgrade policy is not set: change it to EXTENDED first",
 		},
 		{
 			"unsupported target", func(w *planWorld) {
-				w.offer = func(fleet.Version) VersionOffer { return VersionOffer{Offered: true, Tier: apidoc.SupportUnsupported} }
+				w.offer = func(fleet.Version) versionOffered {
+					return versionOffered{Offered: true, Tier: apidoc.SupportUnsupported}
+				}
 			},
 			BlockerUnavailable, "1.32 is no longer supported by EKS",
 		},
 		{
-			"a target that EKS does not list", func(w *planWorld) { w.offer = func(fleet.Version) VersionOffer { return VersionOffer{} } },
+			"a target that EKS does not list", func(w *planWorld) { w.offer = func(fleet.Version) versionOffered { return versionOffered{} } },
 			BlockerUnavailable, "EKS does not offer 1.32",
 		},
 		{
@@ -243,7 +245,7 @@ func TestRollbackPlan_Ineligible(t *testing.T) {
 func TestRollbackPlan_ExtendedSupportWithPolicy(t *testing.T) {
 	w := newRollbackWorld()
 	w.policy = "EXTENDED"
-	w.offer = func(fleet.Version) VersionOffer { return VersionOffer{Offered: true, Tier: apidoc.SupportExtended} }
+	w.offer = func(fleet.Version) versionOffered { return versionOffered{Offered: true, Tier: apidoc.SupportExtended} }
 	cp := w.rollback(t, RollbackRequest{})
 	if len(cp.Blockers) > 0 {
 		t.Fatalf("blocked: %s", blockerText(cp))
@@ -327,7 +329,7 @@ func TestRollbackPlan_SkippedAndCustomNodegroupsAreManual(t *testing.T) {
 		}
 	}
 
-	_, err := PlanRollback(w.snapshot(), RollbackRequest{SkipNodegroups: []string{"new"}}, w.rollbackInputs())
+	_, err := rollbackPlan(w.snapshot(), RollbackRequest{SkipNodegroups: []string{"new"}}, w.rollbackInputs())
 	var notFound *NotFoundError
 	if !errors.As(err, &notFound) || notFound.Name != "new" || !slices.Equal(notFound.Names, []string{"custom", "ng-new", "ng-old"}) {
 		t.Errorf("a part of a name: err = %v, want a NotFoundError with the names of the cluster", err)
@@ -452,7 +454,7 @@ func TestRollbackPlan_AttachesToItsOwnRollback(t *testing.T) {
 	}
 	// The busy rule takes the cluster that is updating as the step that
 	// attaches.
-	if refuse, _ := Busy(w.snapshot(), ClusterRollback, cp.Steps()); len(refuse) != 0 {
+	if refuse, _ := busyRefusals(w.snapshot(), ClusterRollback, cp.Steps()); len(refuse) != 0 {
 		t.Errorf("the busy rule refused the plan: %+v", refuse)
 	}
 }
@@ -472,10 +474,10 @@ func TestRollbackPlan_BlockedPlanRefuses(t *testing.T) {
 // The planner checks the timeout before it reads anything.
 func TestRollbackPlan_TimeoutIsCheckedFirst(t *testing.T) {
 	w := newRollbackWorld()
-	_, err := PlanRollback(w.snapshot(), RollbackRequest{RollbackTimeout: time.Hour}, w.rollbackInputs())
+	_, err := rollbackPlan(w.snapshot(), RollbackRequest{RollbackTimeout: time.Hour}, w.rollbackInputs())
 	var refusal *RefusalError
 	if !errors.As(err, &refusal) || refusal.Reason != RefusalRollbackTimeout {
-		t.Errorf("PlanRollback with a timeout of 1h: err = %v", err)
+		t.Errorf("rollbackPlan with a timeout of 1h: err = %v", err)
 	}
 	if len(w.offerCalls)+len(w.catalogueCalls)+w.insightCalls != 0 {
 		t.Errorf("the planner read before it refused the timeout")
@@ -558,7 +560,7 @@ func TestRollbackPlan_UnreadableChecksBlock(t *testing.T) {
 	})
 	t.Run("support status", func(t *testing.T) {
 		w := newRollbackWorld()
-		w.offer = func(fleet.Version) VersionOffer { return VersionOffer{Err: accessDenied()} }
+		w.offer = func(fleet.Version) versionOffered { return versionOffered{Err: accessDenied()} }
 		cp := w.rollback(t, RollbackRequest{SkipInsights: true})
 		if len(cp.Blockers) != 1 || cp.Blockers[0].Kind != BlockerUnread || !strings.Contains(cp.Blockers[0].Message, "could not check that EKS still supports 1.32") {
 			t.Errorf("blockers = %+v, want one Unread blocker", cp.Blockers)
@@ -614,7 +616,7 @@ func TestRollbackPlan_UnreadableChecksBlock(t *testing.T) {
 func TestRollbackControlPlaneBlockers(t *testing.T) {
 	stopAtControlPlane := func(w *planWorld) func(Step) bool {
 		return func(s Step) bool {
-			return s.Ref.Kind == StepControlPlane && len(RollbackControlPlaneBlockers(w.snapshot(), ver("1.32"))) > 0
+			return s.Ref.Kind == StepControlPlane && len(rollbackControlPlaneBlockers(w.snapshot(), ver("1.32"))) > 0
 		}
 	}
 	req := RollbackRequest{SkipNodegroups: []string{"ng-new"}, SkipInsights: true}
@@ -629,7 +631,7 @@ func TestRollbackControlPlaneBlockers(t *testing.T) {
 		if ok || !slices.Equal(events, []string{"addon kube-proxy→" + latestFor("1.32")}) || w.version != "1.33" {
 			t.Fatalf("changes = %v, control plane at %s; want only the add-on", events, w.version)
 		}
-		blockers := RollbackControlPlaneBlockers(w.snapshot(), ver("1.32"))
+		blockers := rollbackControlPlaneBlockers(w.snapshot(), ver("1.32"))
 		if len(blockers) != 1 || blockers[0].Kind != BlockerNotReady || !strings.Contains(blockers[0].Message, "ng-new at 1.33") {
 			t.Fatalf("blockers = %+v, want one that names ng-new", blockers)
 		}
@@ -650,7 +652,7 @@ func TestRollbackControlPlaneBlockers(t *testing.T) {
 	t.Run("every nodegroup is at the target or below", func(t *testing.T) {
 		w := newRollbackWorld()
 		w.nodegroup("ng-new").version = "1.31"
-		if blockers := RollbackControlPlaneBlockers(w.snapshot(), ver("1.32")); len(blockers) != 0 {
+		if blockers := rollbackControlPlaneBlockers(w.snapshot(), ver("1.32")); len(blockers) != 0 {
 			t.Fatalf("blockers = %+v, want none", blockers)
 		}
 	})
@@ -661,7 +663,7 @@ func TestRollbackControlPlaneBlockers(t *testing.T) {
 	t.Run("the nodegroups could not be read", func(t *testing.T) {
 		w := newRollbackWorld()
 		w.nodegroup("ng-new").unread = true
-		blockers := RollbackControlPlaneBlockers(w.snapshot(), ver("1.32"))
+		blockers := rollbackControlPlaneBlockers(w.snapshot(), ver("1.32"))
 		if len(blockers) != 1 || blockers[0].Kind != BlockerUnread {
 			t.Fatalf("blockers = %+v, want one Unread blocker", blockers)
 		}
@@ -680,12 +682,12 @@ func TestRollbackPlan_SecondPlanShowsWhatChanged(t *testing.T) {
 	plans := func(edit func(w *planWorld)) (reviewed, fresh *Plan) {
 		w := newRollbackWorld()
 		req := RollbackRequest{Target: Target{Region: east, Cluster: w.name}, SkipInsights: true}
-		reviewed, err := PlanRollback(w.snapshot(), req, w.rollbackInputs())
+		reviewed, err := rollbackPlan(w.snapshot(), req, w.rollbackInputs())
 		if err != nil {
 			t.Fatal(err)
 		}
 		edit(w)
-		fresh, err = PlanRollback(w.snapshot(), req, w.rollbackInputs())
+		fresh, err = rollbackPlan(w.snapshot(), req, w.rollbackInputs())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -695,24 +697,24 @@ func TestRollbackPlan_SecondPlanShowsWhatChanged(t *testing.T) {
 		reviewed, fresh := plans(func(w *planWorld) {
 			w.nodegroups = append(w.nodegroups, &planNodegroup{name: "ng-late", version: "1.33"})
 		})
-		changes := Diff(reviewed, fresh)
+		changes := diffPlans(reviewed, fresh)
 		if len(changes) != 1 || changes[0].Kind != Added || changes[0].Step.Name != "ng-late" || changes[0].Effect() != AskAgain {
 			t.Fatalf("changes = %+v, want ng-late added, with a question", changes)
 		}
-		if err := RollbackTargetChanged(reviewed, fresh); err != nil {
-			t.Errorf("RollbackTargetChanged = %v, want nil: the target is the same", err)
+		if err := rollbackTargetChanged(reviewed, fresh); err != nil {
+			t.Errorf("rollbackTargetChanged = %v, want nil: the target is the same", err)
 		}
 	})
 	t.Run("another installed add-on version", func(t *testing.T) {
 		reviewed, fresh := plans(func(w *planWorld) { w.addons["kube-proxy"] = "v1.33.9-eksbuild.9" })
-		changes := Diff(reviewed, fresh)
+		changes := diffPlans(reviewed, fresh)
 		if len(changes) != 1 || changes[0].Kind != StepDiffers || !strings.Contains(changes[0].Message, "v1.33.9-eksbuild.9") {
 			t.Fatalf("changes = %+v, want the new version of kube-proxy named", changes)
 		}
 	})
 	t.Run("the same cluster", func(t *testing.T) {
 		reviewed, fresh := plans(func(*planWorld) {})
-		if changes := Diff(reviewed, fresh); len(changes) != 0 {
+		if changes := diffPlans(reviewed, fresh); len(changes) != 0 {
 			t.Fatalf("changes = %+v, want none", changes)
 		}
 	})
@@ -724,7 +726,7 @@ func TestRollbackPlan_SecondPlanShowsWhatChanged(t *testing.T) {
 			w.version = "1.34"
 			w.updates = append(w.updates, versionUpdate("u-again", "VersionUpdate", "1.34", planNow))
 		})
-		err := RollbackTargetChanged(reviewed, fresh)
+		err := rollbackTargetChanged(reviewed, fresh)
 		var refusal *RefusalError
 		if !errors.As(err, &refusal) || refusal.Reason != RefusalTargetChanged || !strings.Contains(err.Error(), "changed from 1.32 to 1.33") {
 			t.Fatalf("err = %v, want a refusal that names both targets", err)
@@ -757,14 +759,14 @@ func TestRollbackPlan_DegradedNodegroupAtTargetIsVerified(t *testing.T) {
 
 func TestRollbackPlan_Refusals(t *testing.T) {
 	w := worldOf("1.0")
-	_, err := PlanRollback(w.snapshot(), RollbackRequest{}, w.rollbackInputs())
+	_, err := rollbackPlan(w.snapshot(), RollbackRequest{}, w.rollbackInputs())
 	var refusal *RefusalError
 	if !errors.As(err, &refusal) || refusal.Reason != RefusalNoPreviousVersion {
 		t.Errorf("a cluster on the first minor version: err = %v", err)
 	}
 	snap := newRollbackWorld().snapshot()
 	snap.Have.Cluster = fleet.Failed
-	if _, err := PlanRollback(snap, RollbackRequest{}, w.rollbackInputs()); !errors.As(err, &refusal) || refusal.Reason != RefusalVersionUnknown {
+	if _, err := rollbackPlan(snap, RollbackRequest{}, w.rollbackInputs()); !errors.As(err, &refusal) || refusal.Reason != RefusalVersionUnknown {
 		t.Errorf("a cluster that was not read: err = %v", err)
 	}
 }

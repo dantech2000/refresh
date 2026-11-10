@@ -22,6 +22,9 @@ const (
 	oldAMI = "ami-0a1b"
 	newAMI = "ami-0f9e"
 	ng     = "spot-burst"
+	// labelImage is the label that EKS sets to the AMI of a node. The
+	// observer does not read it; the fake nodes carry it as real ones do.
+	labelImage = "eks.amazonaws.com/nodegroup-image"
 )
 
 // clock is the clock of an observer in a test. It moves only when the
@@ -129,7 +132,7 @@ func mkNode(name, ami string, ready, cordoned bool) *corev1.Node {
 	return &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   name,
-			Labels: map[string]string{LabelNodegroup: ng, LabelImage: ami},
+			Labels: map[string]string{LabelNodegroup: ng, labelImage: ami},
 		},
 		Spec: corev1.NodeSpec{Unschedulable: cordoned},
 		Status: corev1.NodeStatus{

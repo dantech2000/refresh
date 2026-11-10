@@ -35,8 +35,8 @@ func TestUI_UsageErrors(t *testing.T) {
 	}
 }
 
-// The flags of the contract are registered, and the ones that do nothing
-// yet say so.
+// The flags of the contract are registered, and the help says that the
+// UI is experimental and read-only without --allow-changes.
 func TestUI_FlagsSayWhatTheyDo(t *testing.T) {
 	f, _, out, _ := cmdutiltest.NewFactory()
 	cmd := root.NewCmdRoot(f)

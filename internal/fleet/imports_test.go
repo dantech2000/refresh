@@ -15,7 +15,7 @@ func TestFleetImports(t *testing.T) {
 	// allowed are the refresh packages that the package may import.
 	allowed := []string{"internal/apidoc", "internal/awsx", "internal/fanout", "internal/fleet/fleetdata"}
 	// testOnly are the ones that only its tests may import.
-	testOnly := []string{"internal/awsx/awsxtest", "internal/fleet", "internal/fleet/fleettest"}
+	testOnly := []string{"internal/awsx/awsxtest", "internal/fleet", "internal/fleet/fleettest", "internal/kube/kubetest"}
 	pkg, err := build.ImportDir(".", 0)
 	if err != nil {
 		t.Fatal(err)

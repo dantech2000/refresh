@@ -33,7 +33,7 @@ func headerTimeoutError(t *testing.T) error {
 	return err
 }
 
-// The classifiers of an error are Classify, IsRetryable, IsNetworkError,
+// The classifiers of an error are Classify, isRetryable, isNetworkError,
 // and FormatAWSError. Each of them answers for one error set here, so a
 // change to one of them that the others do not follow fails this test.
 func TestClassifiersAgree(t *testing.T) {
@@ -74,11 +74,11 @@ func TestClassifiersAgree(t *testing.T) {
 			if got := Classify(tt.err); got != tt.class {
 				t.Errorf("Classify = %s, want %s", got, tt.class)
 			}
-			if got := IsRetryable(tt.err); got != tt.retryable {
-				t.Errorf("IsRetryable = %t, want %t", got, tt.retryable)
+			if got := isRetryable(tt.err); got != tt.retryable {
+				t.Errorf("isRetryable = %t, want %t", got, tt.retryable)
 			}
-			if got := IsNetworkError(tt.err); got != tt.network {
-				t.Errorf("IsNetworkError = %t, want %t", got, tt.network)
+			if got := isNetworkError(tt.err); got != tt.network {
+				t.Errorf("isNetworkError = %t, want %t", got, tt.network)
 			}
 			msg := FormatAWSError(tt.err, "listing clusters").Error()
 			for _, kind := range []string{network, timedOut, denied, region} {

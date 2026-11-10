@@ -18,13 +18,7 @@ import (
 // The read itself cannot be stopped. After a cancellation it stays blocked
 // in the background until the input gives a line or ends. On a terminal
 // that is when the process exits, which is what follows an interrupt.
-//
-// Under a context from WithTimeout, the clock of that timeout stops while
-// ReadLine waits, and ReadLine waits on the signal context: a deadline does
-// not end a prompt.
 func ReadLine(ctx context.Context, ios *IOStreams) (string, error) {
-	ctx, done := promptContext(ctx)
-	defer done()
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}

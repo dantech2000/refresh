@@ -33,7 +33,7 @@ func atCheckpoint(before PhaseKind, change func()) func(context.Context, StepRef
 		if next.Phase.Kind == before && next.Kind == "" && !done {
 			done = true
 			change()
-			return Checkpoint{Waited: true}, nil
+			return Checkpoint{}, nil
 		}
 		return Checkpoint{}, nil
 	}
@@ -572,7 +572,7 @@ func TestDiff_ForceIsWordedAsTheFlag(t *testing.T) {
 		{StepNodegroup, "ng-a", "with --force, not without it"},
 	}
 	for _, tt := range tests {
-		diff := Diff(plan(tt.kind, tt.name, false), plan(tt.kind, tt.name, true))
+		diff := diffPlans(plan(tt.kind, tt.name, false), plan(tt.kind, tt.name, true))
 		if len(diff) != 1 || !strings.Contains(diff[0].Message, tt.want) {
 			t.Errorf("%s: diff = %+v, want one change that says %q", tt.kind, diff, tt.want)
 		}
@@ -834,7 +834,7 @@ func beforeHop(hop string, change func()) func(context.Context, StepRef) (Checkp
 		if next.Phase.Kind == PhaseControlPlane && next.Phase.Hop.String() == hop && next.Kind == "" && !done {
 			done = true
 			change()
-			return Checkpoint{Waited: true}, nil
+			return Checkpoint{}, nil
 		}
 		return Checkpoint{}, nil
 	}
