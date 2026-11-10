@@ -25,7 +25,23 @@ if [ $# -ne 1 ]; then
 	echo "usage: $0 BINARY" >&2
 	exit 2
 fi
+# A missing or unreadable file must fail: a failed redirect inside the
+# pipeline below would give an empty size, and set -e does not see it.
+if [ ! -f "$1" ] || [ ! -r "$1" ]; then
+	echo "$1: no such readable file" >&2
+	exit 1
+fi
 size=$(wc -c <"$1" | tr -d ' ')
+case $size in
+'' | *[!0-9]*)
+	echo "$1: cannot read its size (got \"$size\")" >&2
+	exit 1
+	;;
+esac
+if [ "$size" -eq 0 ]; then
+	echo "$1: empty file" >&2
+	exit 1
+fi
 limit=$((LIMIT_MB * 1000 * 1000))
 mb=$(awk -v s="$size" 'BEGIN { printf "%.1f", s / 1e6 }')
 if [ "$size" -gt "$limit" ]; then
