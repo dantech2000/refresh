@@ -242,7 +242,7 @@ func runQuotas(ctx context.Context, in *Input, ls launches) Result {
 		usage, complete, vcpus, useErr = instanceUsage(ctx, in, limit, vcpus)
 		if useErr != nil {
 			f := fleet.FailureFromError(apidoc.FailureCluster, cluster, useErr)
-			return Result{Outcome: Skipped, Message: "the AWS/Usage vCPU metric is not reported, and the instance list could not be read: " + f.Error + failureAction(f)}
+			return Result{Outcome: Unreadable, Message: "the AWS/Usage vCPU metric is not reported, and the instance list could not be read: " + f.Error + failureAction(f), Failures: []apidoc.Failure{f}}
 		}
 		source = "the vCPUs in use come from the instance list, not from CloudWatch: the AWS/Usage metric has no data points, so the check sums the vCPUs of the running On-Demand instances of the Standard families"
 		if !complete {

@@ -113,14 +113,17 @@ the cluster.
 - If no kubeconfig context points at the cluster, or the API does not connect,
   the `Kubernetes` result is `Warn`. The gate asks. `--yes` accepts and the
   result records it. `--require-healthy` blocks. A dry run exits `2`. "Does
-  not connect" includes a refused connection, no route, and a connection
-  attempt that times out. A private-only API endpoint seen from outside its
-  VPC is this case.
+  not connect" includes a refused connection, no route, a host name that
+  does not resolve, and a connection attempt that times out. A private-only
+  API endpoint seen from outside its VPC is this case. `Nodes` then
+  estimates, as it does without a context.
 - If the API answers 401, 403, or 5xx, the checks that need it are
   `Unreadable`. That blocks for `Nodes`, `Workloads`, and `DrainBlockers`.
-- If the API connects but answers no read in time, the checks that need it
-  are `Unreadable`, and the `Kubernetes` result is `Warn`: the API did not
-  answer.
+- Any other failure is not "does not connect", and the checks that need the
+  API are `Unreadable`: a kubeconfig credential plugin that fails (such as an
+  expired SSO session), a certificate that does not verify, a connection that
+  breaks after it opened, or an API that connects and answers no read in
+  time. The `Kubernetes` result is `Warn`: the API did not answer.
 
 EKS still honours PodDisruptionBudgets during a managed nodegroup roll, with
 or without the checks.
@@ -295,8 +298,8 @@ desired size minus the current one.
 | Usage at 95 percent or more | `Fail` (advisory: the gate asks) |
 | Usage at 85 percent or more | `Warn` |
 | The quota is not reported | `Skipped` |
-| The usage metric has no data points, and the instance list cannot be read | `Skipped` |
 | The quota, the usage metric, or the vCPUs of an instance type cannot be read | `Unreadable` |
+| The usage metric has no data points, and the instance list cannot be read | `Unreadable` |
 
 The worse of the two rules decides. Only a surge blocks: a roll or a scale-up
 that does not fit the quota would stall on `VcpuLimitExceeded`. The rules of

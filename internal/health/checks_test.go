@@ -631,7 +631,12 @@ func TestQuotas_InstanceList(t *testing.T) {
 				in := h.input(ctx)
 				h.world.SetFault(op, fleettest.Fault{Deny: true})
 				got := health.Run(ctx, []health.Check{health.Quotas()}, in)[0]
-				check(t, got, want{outcome: health.Skipped, message: "AWS/Usage vCPU metric is not reported, and the instance list could not be read"})
+				// A read that failed is never a pass: Unreadable, with
+				// the failure, so the gate asks and the run exits 4.
+				check(t, got, want{outcome: health.Unreadable, message: "AWS/Usage vCPU metric is not reported, and the instance list could not be read", failures: 1})
+				if v := health.Gate([]health.Result{got}, health.Policy{Yes: true}); v.Decision != health.Go || v.Exit != 4 {
+					t.Errorf("verdict with --yes = %+v, want Go with exit 4", v)
+				}
 			})
 		}
 	})
@@ -964,9 +969,10 @@ func testRunUnreachable(t *testing.T) {
 	results := health.Run(ctx, health.Preflight(), in)
 	for _, r := range results {
 		switch r.Name {
-		case "Nodes", "Workloads", "DrainBlockers", "PDBCoverage", "Utilization":
-			// The node check too: its read did not connect, and there is
-			// no estimate for a client that is there and does not answer.
+		case "Nodes":
+			// As without a client: the estimate from the nodegroups.
+			check(t, r, want{outcome: health.Pass, message: "4/4 nodes ready (estimated)"})
+		case "Workloads", "DrainBlockers", "PDBCoverage", "Utilization":
 			check(t, r, want{outcome: health.Skipped, message: "Kubernetes API unreachable"})
 		case health.AccessCheck:
 			check(t, r, want{outcome: health.Warn, message: "Kubernetes API unreachable"})
