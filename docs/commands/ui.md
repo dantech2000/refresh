@@ -55,7 +55,7 @@ Press ++question++ in the UI for the keys of the current screen.
 | ++shift+b++ | Dry-run the rollback of the control plane (`cluster rollback`). Offered after a readiness run found a rollback window. |
 | ++ctrl+r++ | Sweep the fleet now. |
 | ++ctrl+l++ | Redraw the screen. |
-| ++q++ ++ctrl+c++ | Quit. |
+| ++q++ ++ctrl+c++ | Quit. While a change of this UI runs, the first ++q++ says what stops, and a second ++q++ quits. ++ctrl+c++ quits at once. |
 
 In a dry run:
 
@@ -69,7 +69,7 @@ On the Change screen, while the change offers them:
 
 | Key | Action |
 |---|---|
-| ++y++ ++n++ | Answer the open question: go on, or stop. |
+| ++y++ ++n++ | Answer the open question: go on, or stop. The keys work one second after the question shows, so the ++y++ that started the change cannot answer it. |
 | ++shift+p++ | Pause before the next phase; again to resume. |
 | ++shift+s++ | Stop before the next phase. What has started finishes. |
 | ++space++ | Freeze the log; again to follow. |
@@ -98,10 +98,13 @@ consent is given.
   `UPDATING`. It is marked "started elsewhere · watch only": the UI follows
   it and never stops, pauses, or answers it. A control-plane update that is
   not a version change (logging, networking) is not watched.
-- Quitting the UI does not stop a change. On the way out the UI names the
-  changes still running, with their update IDs. The commands can watch them:
-  `refresh nodegroup update` and `refresh cluster upgrade` attach to an
-  update in flight.
+- Quitting the UI does not stop an update in flight in EKS, but a change of
+  this UI does not go on: the steps that it had not started do not run. So
+  while a change of this UI runs, ++q++ asks first. On the way out the UI
+  names the updates still running in EKS, with their IDs, and the changes
+  of this UI that stopped, with the steps they did not start and the
+  command of their dry run. The commands can watch an update in flight:
+  `refresh nodegroup update` and `refresh cluster upgrade` attach to it.
 - The UI keeps no record on disk: when it quits, the log of a change is gone.
   For a record of a change, run the command that its dry run names with
   `-o json` and keep the document.
@@ -109,12 +112,16 @@ consent is given.
 ## Terminal
 
 - The UI needs a terminal of at least 100 by 24 cells. In a smaller terminal
-  it shows one line that says so, and it comes back when you resize.
+  it shows one line that says so, and it comes back when you resize. Only
+  ++q++ and ++ctrl+c++ work while the screen is too small: no key acts on
+  what you cannot see.
 - `--no-color`, `NO_COLOR`, and `TERM=dumb` turn the colors off. The marks and
   labels still carry every status.
 - While the UI runs, the standard error of `refresh` and of the programs that
   it starts, such as a kubeconfig credential plugin, goes to the null device.
-  So their messages cannot write over the screen.
+  So their messages cannot write over the screen. If the UI stops on a panic,
+  it writes the panic and its stack to standard error after it restores the
+  terminal.
 
 ## Trying the UI without an account
 

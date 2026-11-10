@@ -99,9 +99,12 @@ func (m Model) changeHeader(c state.Change, w int) Block {
 	out := Block{{}, joinRight(title, right, w)}
 	if q := c.Question; q != nil {
 		line := Line{sp(1), m.mark(view.Warn), sp(1), bold(view.RoleWarn, q.Text), sp(2)}
-		if c.Controls.Answer {
+		switch {
+		case m.answerable(c):
 			line = append(line, chip("y"), sp(1), sub("go on"), sp(2), chip("n"), sp(1), sub("stop"))
-		} else {
+		case c.Controls.Answer:
+			line = append(line, dim("read it; y and n answer in a moment"))
+		default:
 			line = append(line, dim("answered elsewhere"))
 		}
 		out = append(out, line.Fit(w))
@@ -344,7 +347,7 @@ type logLine struct {
 // shows the entries up to the freeze.
 func (m Model) changeLog(c state.Change, w, h int) Block {
 	follow := Line{m.tok(view.Healthy, "following")}
-	if m.frozen != 0 {
+	if m.frozen != nil {
 		follow = Line{statusSeg(view.Warn, m.th.Mark(view.Warn)+" frozen")}
 	}
 	if m.warnOnly {
@@ -367,12 +370,36 @@ func (m Model) changeLog(c state.Change, w, h int) Block {
 	return out.fit(w, h)
 }
 
+// freeze is where space held the log: the lifecycle entries up to seq,
+// and the node events up to at.
+type freeze struct {
+	seq uint64
+	at  time.Time
+}
+
+// freezeLog holds the log of c as it is on screen now. The sequence
+// number is the one of the last entry the state has, which can be above
+// LastSeq of the view; the time is the clock of the screen, or the
+// newest line when that is later.
+func (m Model) freezeLog(c state.Change) freeze {
+	f := freeze{at: m.now}
+	if n := len(c.Log); n > 0 {
+		f.seq = c.Log[n-1].Seq
+	}
+	for _, l := range m.logLines(c) {
+		if l.at.After(f.at) {
+			f.at = l.at
+		}
+	}
+	return f
+}
+
 // logLines merges the log and the node events of a change into lines by
-// time, up to the frozen sequence number.
+// time, up to the freeze.
 func (m Model) logLines(c state.Change) []logLine {
 	var lines []logLine
 	for _, e := range c.Log {
-		if m.frozen != 0 && e.Seq > m.frozen {
+		if m.frozen != nil && e.Seq > m.frozen.seq {
 			break
 		}
 		status, text := eventText(e.Event)
@@ -383,7 +410,7 @@ func (m Model) logLines(c state.Change) []logLine {
 	}
 	for _, events := range c.Nodes {
 		for _, e := range events {
-			if m.frozen != 0 && len(lines) > 0 && e.At.After(lines[len(lines)-1].at) {
+			if m.frozen != nil && e.At.After(m.frozen.at) {
 				continue
 			}
 			s, text := nodeEventText(e.Kind)

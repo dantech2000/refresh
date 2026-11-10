@@ -398,7 +398,9 @@ func TestChangeKeysFollowTheControls(t *testing.T) {
 		t.Fatalf("calls = %v, want %v", h.b.calls, want)
 	}
 	h.contains("stop requested")
-	// The question of the roll: y and n answer it; P and S are off.
+	// The question of the roll, once it has shown for answerDelay: y and n
+	// answer it; P and S are off.
+	h.tick(now.Add(answerDelay))
 	h.keys("]", "P", "S", "y")
 	if want := []string{"pause 4", "stop 4", "answer 5 3 true"}; !slices.Equal(h.b.calls, want) {
 		t.Fatalf("calls = %v, want %v", h.b.calls, want)
@@ -435,6 +437,48 @@ func TestChangeKeysFollowTheControls(t *testing.T) {
 	h.contains("stop: the change has ended")
 }
 
+// Found in review: the y that starts a change also answers its health
+// gate. The model moves to the Change screen by itself, so a y pressed
+// again, or held, accepted a warning that showed for less than a second.
+// y and n answer a question only once it has shown for answerDelay.
+func TestTheStartKeyDoesNotAcceptTheGate(t *testing.T) {
+	h := newHarness(t, 160, 42, colorTheme)
+	h.state(writable(fleetState(3)))
+	h.b.proposal = proposalOf(5, state.Action{Kind: state.ActionRoll, Cluster: h.m.cluster().Key, Nodegroup: "web"}, rollPlan())
+	h.b.started = 9
+	st := writable(fleetState(3))
+	st.Clusters[0] = stale(st.Clusters[0])
+	h.state(st)
+	h.keys("p", "y")
+	if len(h.b.starts) != 1 {
+		t.Fatalf("starts = %v", h.b.starts)
+	}
+	// The change asks at once, and the screen moves to it.
+	asking := withChanges(writable(fleetState(3)), rollChange(9, true))
+	asking.Version = 2
+	h.state(asking)
+	if h.m.screen != screenChange {
+		t.Fatal("the started change did not open the Change screen")
+	}
+	h.keys("y", "y", "n")
+	if len(h.b.calls) != 0 {
+		t.Fatalf("a y right after the start answered the gate: %v", h.b.calls)
+	}
+	h.contains("The health gate warns. Go on?", "y and n answer in a moment")
+	h.lacks("go on")
+	h.tick(now.Add(answerDelay - time.Millisecond))
+	h.keys("y")
+	if len(h.b.calls) != 0 {
+		t.Fatalf("y answered before answerDelay: %v", h.b.calls)
+	}
+	h.tick(now.Add(answerDelay))
+	h.contains("go on")
+	h.keys("y")
+	if want := []string{"answer 9 3 true"}; !slices.Equal(h.b.calls, want) {
+		t.Fatalf("calls = %v, want %v", h.b.calls, want)
+	}
+}
+
 // space freezes the log at its sequence number: later entries stay out
 // until space again.
 func TestSpaceFreezesTheLog(t *testing.T) {
@@ -442,8 +486,8 @@ func TestSpaceFreezesTheLog(t *testing.T) {
 	c := upgradeChange(1, false)
 	h.state(withChanges(fleetState(3), c))
 	h.keys("3", "space")
-	if h.m.frozen != c.LastSeq {
-		t.Fatalf("frozen at %d, want %d", h.m.frozen, c.LastSeq)
+	if last := c.Log[len(c.Log)-1].Seq; h.m.frozen == nil || h.m.frozen.seq != last {
+		t.Fatalf("frozen at %+v, want the sequence number %d", h.m.frozen, last)
 	}
 	h.contains("frozen")
 	later := upgradeChange(1, false)
@@ -456,6 +500,35 @@ func TestSpaceFreezesTheLog(t *testing.T) {
 	h.keys("w")
 	h.lacks("Control plane started")
 	h.contains("warnings only", "a line after the freeze")
+}
+
+// Found in review: freezing the log of a roll removed the node events
+// that were on screen, and a view whose LastSeq is 0 or behind its log
+// froze nothing. The freeze keeps every line on screen, and holds out
+// the lifecycle entries and the node events that come after it.
+func TestSpaceFreezesTheNodeEventsToo(t *testing.T) {
+	h := newHarness(t, 160, 42, colorTheme)
+	c := rollChange(1, false)
+	c.LastSeq = 0 // the view was read before the last log entries
+	h.state(withChanges(fleetState(3), c))
+	h.keys("3")
+	shown := []string{"came online (Ready)", "cordoned, draining", "joining", "launched i-0abc"}
+	h.contains(shown...)
+	h.keys("space")
+	h.contains("frozen")
+	h.contains(shown...)
+	later := rollChange(1, false)
+	later.Log = append(later.Log, change.LogEntry{Seq: 6, Event: change.Event{At: now.Add(10 * time.Second), Kind: change.Notice, Text: "a notice after the freeze"}})
+	step := later.Steps[0].Ref
+	later.Nodes = map[change.StepRef][]noderoll.Event{step: append(slices.Clone(later.Nodes[step]),
+		noderoll.Event{Node: "ip-10-0-9-99.ec2.internal", Kind: noderoll.EvtJoining, At: now.Add(20 * time.Second)})}
+	st := withChanges(fleetState(3), later)
+	st.Version, st.Now = 2, now.Add(30*time.Second)
+	h.state(st)
+	h.contains(shown...)
+	h.lacks("a notice after the freeze", "ip-10-0-9-99")
+	h.keys("space")
+	h.contains("following", "a notice after the freeze", "ip-10-0-9-99")
 }
 
 // The Change screen follows its change across versions, and the clock

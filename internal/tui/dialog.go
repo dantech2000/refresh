@@ -63,10 +63,10 @@ func (m *Model) plan(a state.Action) tea.Cmd {
 	m.focusAfter = 0
 	m.notice = ""
 	seq, b := m.planSeq, m.b
-	return func() tea.Msg {
+	return m.guard(func() tea.Msg {
 		p, err := b.Plan(ctx, a)
 		return proposalMsg{seq: seq, p: p, err: err}
-	}
+	})
 }
 
 // cancelPlan drops the dry run on its way and says so.
@@ -84,10 +84,10 @@ func (m *Model) cancelPlan() {
 func (m *Model) start() tea.Cmd {
 	id, b, ctx := m.confirm.ID, m.b, m.ctx
 	m.starting, m.confirmErr = true, ""
-	return func() tea.Msg {
+	return m.guard(func() tea.Msg {
 		cid, err := b.Start(ctx, id)
 		return startedMsg{id: cid, err: err}
-	}
+	})
 }
 
 // describeAction names an action for a notice.

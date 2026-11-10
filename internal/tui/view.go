@@ -13,6 +13,7 @@ import (
 
 // View implements tea.Model.
 func (m Model) View() tea.View {
+	defer m.crash.catch()
 	v := tea.NewView(m.render())
 	v.AltScreen = true
 	if c, ok := m.th.Color(view.RoleBase); ok {
@@ -42,9 +43,13 @@ func (m Model) frame() Block {
 	if w == 0 || h == 0 {
 		return nil
 	}
-	if w < minWidth || h < minHeight {
-		msg := Line{sub(fmt.Sprintf("refresh ui needs a %d×%d terminal (now %d×%d).", minWidth, minHeight, w, h))}
-		return Block{msg}.fit(w, h)
+	if m.tooSmall() {
+		// Only q works here; the notice says what a q does now.
+		b := Block{{sub(fmt.Sprintf("refresh ui needs a %d×%d terminal (now %d×%d).", minWidth, minHeight, w, h))}}
+		if m.noticeShows() {
+			b = append(b, Line{m.mark(m.noticeStatus), sp(1), tx(m.notice)})
+		}
+		return b.fit(w, h)
 	}
 	body := h - 3
 	var main Block
@@ -144,7 +149,7 @@ func (m Model) logStrip(w int) Line {
 	if p := m.planning; p != nil {
 		return Line{sp(1), m.tok(view.Progress, "dry run of "+describeAction(p.action)), sp(2), chip("esc"), sp(1), dim("cancel")}.Fit(w)
 	}
-	if m.notice != "" && m.now.Before(m.noticeTill) {
+	if m.noticeShows() {
 		return Line{sp(1), m.mark(m.noticeStatus), sp(1), tx(m.notice)}.Fit(w)
 	}
 	l := Line{sp(1), dim("log"), sp(2)}

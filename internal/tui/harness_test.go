@@ -102,9 +102,16 @@ func newHarness(t *testing.T, w, h int, th view.Theme) *harness {
 	t.Helper()
 	b := &scripted{}
 	hs := &harness{t: t, b: b, m: New(t.Context(), b, th)}
+	// The clock is the test's: a scheduled tick is held, and the test
+	// ticks with h.tick.
+	hs.m.tick = func() tea.Cmd { return func() tea.Msg { return heldTick{} } }
 	hs.update(tea.WindowSizeMsg{Width: w, Height: h})
 	return hs
 }
+
+// heldTick is what a tick that the model schedules delivers in the
+// harness: nothing.
+type heldTick struct{}
 
 var (
 	colorTheme = view.Theme{Depth: view.TrueColor, Unicode: true}
@@ -119,8 +126,11 @@ func (h *harness) update(msg tea.Msg) {
 	for len(queue) > 0 {
 		m := queue[0]
 		queue = queue[1:]
-		if _, ok := m.(tea.QuitMsg); ok {
+		switch m.(type) {
+		case tea.QuitMsg:
 			h.quit = true
+			continue
+		case heldTick:
 			continue
 		}
 		if batch, ok := m.(tea.BatchMsg); ok {

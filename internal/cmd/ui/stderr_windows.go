@@ -5,12 +5,14 @@ package ui
 import (
 	"fmt"
 	"os"
+	"sync"
 )
 
 // detachStderr points os.Stderr at the null device, which is what client-go
 // hands a kubeconfig exec plugin, and returns the function that puts it
 // back. Windows has no descriptor to redirect, so a program that writes to
-// its own standard error handle can still write over the UI.
+// its own standard error handle can still write over the UI. The restore
+// runs once, however often it is called.
 func detachStderr() (restore func(), err error) {
 	null, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
 	if err != nil {
@@ -18,8 +20,8 @@ func detachStderr() (restore func(), err error) {
 	}
 	stderr := os.Stderr
 	os.Stderr = null
-	return func() {
+	return sync.OnceFunc(func() {
 		os.Stderr = stderr
 		_ = null.Close()
-	}, nil
+	}), nil
 }

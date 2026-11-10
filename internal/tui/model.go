@@ -12,7 +12,9 @@ package tui
 import (
 	"context"
 	"fmt"
+	"runtime/debug"
 	"strings"
+	"sync"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -98,14 +100,25 @@ type Model struct {
 	scroll   int // the first body row shown in the open dialog
 
 	// chg is the index of the change on the Change screen. frozen holds
-	// its log at a sequence number (space), 0 follows; warnOnly filters
-	// the log to warnings and failures.
+	// its log (space), nil follows; warnOnly filters the log to warnings
+	// and failures.
 	chg      int
-	frozen   uint64
+	frozen   *freeze
 	warnOnly bool
 	// focusAfter is a change the model started: the next state that
 	// carries it opens the Change screen on it.
 	focusAfter state.ChangeID
+	// asked is when the model first had each open question. y and n
+	// answer one only after answerDelay, so that the y that started a
+	// change, pressed again or held, cannot accept its health gate.
+	asked map[question]time.Time
+	// quitArmed is set by a q while a change of this UI runs: a second q
+	// quits, any other key keeps the UI.
+	quitArmed bool
+	// tick is the command of the clock; the tests hold it.
+	tick func() tea.Cmd
+	// crash keeps the first panic of the model, shared by every copy.
+	crash *crash
 
 	// The dialogs. pick chooses what to dry-run; planning is a dry run on
 	// its way; confirm is a dry run on screen, and starting is set from y
@@ -117,14 +130,30 @@ type Model struct {
 	confirmErr string
 	starting   bool
 
+	// notice shows in the log strip until noticeTill. A zero noticeTill
+	// is a notice that no tick or state has seen yet: the first one sets
+	// it, so that a notice shows for noticeFor however long the model was
+	// idle before it.
 	notice       string
 	noticeStatus view.Status
 	noticeTill   time.Time
 }
 
+// question names an open question of a change.
+type question struct {
+	change state.ChangeID
+	id     change.QuestionID
+}
+
+// noticeFor is how long a notice shows.
+const noticeFor = 20 * time.Second
+
+// answerDelay is how long a question shows before y and n answer it.
+const answerDelay = time.Second
+
 // New returns a model over b that draws with th. Calls to b use ctx.
 func New(ctx context.Context, b Backend, th view.Theme) Model {
-	m := Model{ctx: ctx, b: b, th: th, bd: th.Border(), p: newPainter(th), feedAll: true}
+	m := Model{ctx: ctx, b: b, th: th, bd: th.Border(), p: newPainter(th), feedAll: true, tick: tick, crash: &crash{}}
 	if !th.Unicode {
 		m.ascii = strings.NewReplacer("…", m.bd.Ellipsis, "·", "-", "→", ">", "←", "<", "↑", "^", "↓", "v", "×", "x")
 	}
@@ -153,13 +182,53 @@ type (
 	}
 )
 
+// crash is the first panic of the model and its stack. Bubble Tea
+// recovers a panic and prints it to os.Stderr, which is the null device
+// while the UI runs, and it returns from Run before a command goroutine
+// has printed; the command reads the trace from here once the terminal
+// is restored.
+type crash struct {
+	mu    sync.Mutex
+	trace string
+}
+
+// catch records a panic and panics again, for Bubble Tea to recover. It
+// must be deferred.
+func (c *crash) catch() {
+	if r := recover(); r != nil {
+		c.mu.Lock()
+		if c.trace == "" {
+			c.trace = fmt.Sprintf("panic: %v\n\n%s", r, debug.Stack())
+		}
+		c.mu.Unlock()
+		panic(r)
+	}
+}
+
+// Panic returns the first panic of the model, in Update, in View, or in a
+// command of the model, with its stack, or "".
+func (m Model) Panic() string {
+	m.crash.mu.Lock()
+	defer m.crash.mu.Unlock()
+	return m.crash.trace
+}
+
+// guard runs cmd so that a panic in it is recorded.
+func (m Model) guard(cmd tea.Cmd) tea.Cmd {
+	c := m.crash
+	return func() tea.Msg {
+		defer c.catch()
+		return cmd()
+	}
+}
+
 // next waits for the state after version after, in a command.
 func (m Model) next(after uint64) tea.Cmd {
 	ctx, b := m.ctx, m.b
-	return func() tea.Msg {
+	return m.guard(func() tea.Msg {
 		st, err := b.Next(ctx, after)
 		return stateMsg{st: st, err: err}
-	}
+	})
 }
 
 func tick() tea.Cmd {
@@ -171,6 +240,7 @@ func (m Model) Init() tea.Cmd { return m.next(0) }
 
 // Update implements tea.Model.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	defer m.crash.catch()
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.w, m.h = msg.Width, msg.Height
@@ -183,22 +253,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.at.After(m.now) {
 			m.now = msg.at
 		}
+		m.seeNotice()
 		cmd := m.scheduleTick()
 		return m, cmd
 	case doneMsg:
 		if msg.err != nil {
 			m.say(view.Fail, "%v", msg.err)
 		}
-		return m, nil
+		cmd := m.scheduleTick()
+		return m, cmd
 	case proposalMsg:
 		m.applyProposal(msg)
-		return m, nil
+		cmd := m.scheduleTick()
+		return m, cmd
 	case startedMsg:
 		m.applyStarted(msg)
-		return m, nil
+		cmd := m.scheduleTick()
+		return m, cmd
 	case tea.KeyPressMsg:
 		next, cmd := m.key(msg.String())
-		return next, cmd
+		// A notice that the key said needs the clock to go away.
+		clock := next.scheduleTick()
+		return next, tea.Batch(cmd, clock)
 	}
 	return m, nil
 }
@@ -221,6 +297,8 @@ func (m Model) applyState(msg stateMsg) (tea.Model, tea.Cmd) {
 	if msg.st.Now.After(m.now) {
 		m.now = msg.st.Now
 	}
+	m.seeNotice()
+	m.seeQuestions()
 	// The selection stays on its cluster, wherever the row moved to; the
 	// Change screen stays on its change.
 	for i, c := range m.st.Clusters {
@@ -234,7 +312,7 @@ func (m Model) applyState(msg stateMsg) (tea.Model, tea.Cmd) {
 	if m.focusAfter != 0 {
 		if i := m.changeIndex(m.focusAfter); i >= 0 {
 			m.chg, m.screen, m.focusAfter = i, screenChange, 0
-			m.frozen = 0
+			m.frozen = nil
 		}
 	}
 	m.clamp()
@@ -279,12 +357,45 @@ func (m *Model) applyStarted(msg startedMsg) {
 	m.confirm, m.confirmErr = nil, ""
 	m.focusAfter = msg.id
 	if i := m.changeIndex(msg.id); i >= 0 {
-		m.chg, m.screen, m.focusAfter, m.frozen = i, screenChange, 0, 0
+		m.chg, m.screen, m.focusAfter, m.frozen = i, screenChange, 0, nil
 	}
 }
 
-// needsTick reports whether something on screen shows an elapsed time.
+// seeQuestions records when the model first had each open question, and
+// forgets the ones that closed.
+func (m *Model) seeQuestions() {
+	asked := map[question]time.Time{}
+	for _, c := range m.st.Changes {
+		if c.Question == nil {
+			continue
+		}
+		q := question{change: c.ID, id: c.Question.ID}
+		at, ok := m.asked[q]
+		if !ok {
+			at = m.now
+		}
+		asked[q] = at
+	}
+	m.asked = asked
+}
+
+// answerable reports whether y and n answer the question of c now: the
+// handle offers the answer, and the question has shown for answerDelay.
+func (m Model) answerable(c state.Change) bool {
+	if !c.Controls.Answer || c.Question == nil {
+		return false
+	}
+	at, ok := m.asked[question{change: c.ID, id: c.Question.ID}]
+	return ok && m.now.Sub(at) >= answerDelay
+}
+
+// needsTick reports whether something on screen shows an elapsed time, or
+// a notice waits to go away. A question waits for its keys on a change
+// that runs, which ticks.
 func (m Model) needsTick() bool {
+	if m.noticeShows() {
+		return true
+	}
 	if !m.loaded {
 		return false
 	}
@@ -311,7 +422,7 @@ func (m *Model) scheduleTick() tea.Cmd {
 		return nil
 	}
 	m.ticking = true
-	return tick()
+	return m.tick()
 }
 
 // redrawAfter reports whether st ends a sweep that should redraw the
@@ -330,6 +441,10 @@ func (m *Model) redrawAfter(st state.State) bool {
 // minRedraw is the least time between two full redraws after sweeps.
 const minRedraw = 30 * time.Second
 
+// tooSmall reports whether the terminal is below the least size, where
+// the screen shows only the resize message.
+func (m Model) tooSmall() bool { return m.w < minWidth || m.h < minHeight }
+
 func (m *Model) clamp() {
 	m.sel = min(max(0, m.sel), max(0, len(m.st.Clusters)-1))
 	m.checkSel = min(max(0, m.checkSel), max(0, len(m.checks())-1))
@@ -344,10 +459,24 @@ func (m Model) cluster() state.Cluster {
 	return state.Cluster{}
 }
 
+// say shows a notice. Its time starts at the next tick or state: m.now is
+// as old as the last one, which is long ago when the UI is idle.
 func (m *Model) say(s view.Status, format string, args ...any) {
 	m.notice = fmt.Sprintf(format, args...)
 	m.noticeStatus = s
-	m.noticeTill = m.now.Add(20 * time.Second)
+	m.noticeTill = time.Time{}
+}
+
+// seeNotice starts the time of a notice that no tick or state has seen.
+func (m *Model) seeNotice() {
+	if m.notice != "" && m.noticeTill.IsZero() {
+		m.noticeTill = m.now.Add(noticeFor)
+	}
+}
+
+// noticeShows reports whether the notice is on screen.
+func (m Model) noticeShows() bool {
+	return m.notice != "" && (m.noticeTill.IsZero() || m.now.Before(m.noticeTill))
 }
 
 // progressStatus is the status of a notice about work in progress.
