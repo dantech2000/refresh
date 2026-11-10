@@ -1,20 +1,15 @@
 name: Lint
 
-# Lint runs on PRs only. Lint already passed on the PR, so a merge to main does
-# not re-run it: the merge only drives release-please. A post-merge run once
-# reported false positives from a stale analysis cache, so it added noise, not
-# safety. A push to main runs only `linter-cache`, which builds the linter
-# binary once per version and saves it where every PR can restore it (a cache
-# that a PR saves serves that PR only).
+# PR-only. Lint already passed on the PR, so a merge to main does not re-run
+# it: the merge only drives release-please. A post-merge run once reported
+# false positives from a stale analysis cache, so it added noise, not safety.
 on:
   pull_request:
-    branches: ["main"]
-  push:
     branches: ["main"]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -22,7 +17,6 @@ permissions:
 jobs:
   golangci-lint:
     name: Run golangci-lint
-    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -57,7 +51,9 @@ jobs:
       # that built the binary, and v2.13+ release binaries are built with Go
       # 1.27. A build from source keeps CI's gofmt equal to `task fmt` under the
       # go.mod toolchain. The build takes about a minute, so the binary is
-      # cached by linter version and Go version.
+      # cached by linter version and Go version. The test job of test.yml
+      # saves it on main, where every PR can restore it; a PR saves its own
+      # only on a miss.
       - name: Restore the golangci-lint binary
         id: lint-cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -74,38 +70,9 @@ jobs:
         with:
           # The binary of the steps above, from PATH.
           install-mode: none
+          # No analysis cache. Its key is the OS, the week, and a hash of
+          # go.mod only, so it survives a go.sum bump and a linter bump: the
+          # stale-cache class of the earlier false positives. It is about 1 MB.
+          skip-cache: true
           args: --timeout=5m
 
-  linter-cache:
-    name: Cache golangci-lint
-    if: github.event_name == 'push'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Set up Go
-        id: go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
-          cache: false
-
-      - name: Read the golangci-lint version
-        id: lint-version
-        run: |
-          version="$(awk '$1 == "GOLANGCI_LINT_VERSION:" {print $2}' Taskfile.yml)"
-          echo "version=${version:?no GOLANGCI_LINT_VERSION in Taskfile.yml}" >> "$GITHUB_OUTPUT"
-
-      # Same path and key as in golangci-lint. On a hit nothing is saved.
-      - name: Restore the golangci-lint binary
-        id: lint-cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/go/bin/golangci-lint
-          key: golangci-lint-${{ runner.os }}-${{ steps.lint-version.outputs.version }}-go${{ steps.go.outputs.go-version }}
-
-      - name: Build golangci-lint
-        if: steps.lint-cache.outputs.cache-hit != 'true'
-        run: go install "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${{ steps.lint-version.outputs.version }}"
