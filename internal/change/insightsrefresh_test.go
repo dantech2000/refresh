@@ -530,6 +530,59 @@ func TestInsightsRefresh_EarlierRefreshAfterAnAcceptedStart(t *testing.T) {
 	})
 }
 
+// A transient error of the describe is polled again on every path of the
+// wait, as the wait polls: before the first start, and while the start is
+// refused for a scheduled refresh. EKS throttles this call in practice.
+func TestInsightsRefresh_TransientDescribeErrors(t *testing.T) {
+	t.Run("before the first start", func(t *testing.T) {
+		world := engineWorld(nil)
+		e := newEnv(t, world)
+		world.SetFault(fleettest.EKSDescribeInsightsRefresh, fleettest.Fault{Throttle: 1})
+		res := mustRun(t, e, upgradeTo("1.33"), Hooks{})
+		if res.Status != Succeeded || res.ExitCode() != exitcode.OK {
+			t.Fatalf("status = %s, exit %d, err %v; want Succeeded", res.Status, res.ExitCode(), res.Err)
+		}
+		if diff := cmp.Diff(wholeUpgrade(), e.sent()); diff != "" {
+			t.Errorf("requests (-want +got):\n%s", diff)
+		}
+	})
+	t.Run("while the start is refused for a scheduled refresh", func(t *testing.T) {
+		world := engineWorld(nil)
+		e := newEnv(t, world)
+		refuseStart(world, codeInvalidRequest)
+		hideRefresh(world)
+		// The third describe is throttled once. The scheduled refresh
+		// ends before the fourth.
+		e.onRequest(fleettest.EKSDescribeInsightsRefresh, func(n int) {
+			switch n {
+			case 3:
+				world.SetFault(fleettest.EKSDescribeInsightsRefresh, fleettest.Fault{Throttle: 1})
+			case 4:
+				world.SetFault(fleettest.EKSStartInsightsRefresh, fleettest.Fault{})
+				world.SetFault(fleettest.EKSDescribeInsightsRefresh, fleettest.Fault{})
+			}
+		})
+		if err := refreshOnce(testContext(t), e); err != nil {
+			t.Fatalf("err = %v; one throttled describe ended the wait for a scheduled refresh", err)
+		}
+	})
+	t.Run("a describe that is denied while the start is refused ends the wait", func(t *testing.T) {
+		world := engineWorld(nil)
+		e := newEnv(t, world)
+		refuseStart(world, codeInvalidRequest)
+		hideRefresh(world)
+		e.onRequest(fleettest.EKSDescribeInsightsRefresh, func(n int) {
+			if n == 2 {
+				world.SetFault(fleettest.EKSDescribeInsightsRefresh, fleettest.Fault{Deny: true})
+			}
+		})
+		err := refreshOnce(testContext(t), e)
+		if err == nil || awsx.ErrorCode(err) != "AccessDeniedException" || !strings.Contains(err.Error(), "checking the insights refresh of cluster prod") {
+			t.Errorf("err = %v; want the denied describe", err)
+		}
+	})
+}
+
 // EKS throttles a DescribeInsightsRefresh sent right after the start. The
 // first poll waits one poll interval after the start that EKS accepted,
 // and a throttled poll is polled again with no progress line: the wait
