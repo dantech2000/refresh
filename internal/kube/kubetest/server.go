@@ -116,9 +116,26 @@ type Answer struct {
 	Reason string
 	// Dropped is set when the connection was dropped in place of an answer.
 	Dropped bool
-	// Observed summarises the items of a list: one word per item with the
-	// part of it a decision can rest on. It is empty for a watch.
-	Observed string
+	// Items are the items of a list, in the order of the answer, with the
+	// part of each that a decision can rest on. It is nil for a watch.
+	Items []Item
+}
+
+// Item is one item of a list answer: its name, and its state as a
+// decision reads it.
+type Item struct {
+	// Namespace is "" for an item of no namespace. For an event, Name is
+	// the object the event is about, as kind/name.
+	Namespace, Name string
+	// State is, by kind of item: the Ready condition of a node, Ready or
+	// NotReady, with ",cordoned" for an unschedulable one; the phase of a
+	// pod, with ",notReady" for a Running pod that is not ready; the
+	// disruptions a budget allows; the replicas of a deployment; the type
+	// and reason of an event, as type:reason; the CPU in use of a node's
+	// metrics, such as 400m. It is "" for a namespace.
+	State string
+	// Node is the node a pod runs on, or "".
+	Node string
 }
 
 // Handler answers Kubernetes API requests for one cluster of a World.

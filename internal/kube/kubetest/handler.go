@@ -39,10 +39,10 @@ type item struct {
 	labels          map[string]string
 	// fields are the values a field selector can ask for.
 	fields map[string]string
-	// object is the Kubernetes API object. summary is the word for it in
-	// Answer.Observed.
-	object  any
-	summary string
+	// object is the Kubernetes API object, and state what Answer.Items
+	// reports of it.
+	object any
+	state  Item
 }
 
 // routes maps the path of a collection, without a namespace, to its
@@ -164,13 +164,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	objects := make([]any, 0, len(items))
-	words := make([]string, 0, len(items))
+	states := make([]Item, 0, len(items))
 	for _, it := range items {
 		objects = append(objects, it.object)
-		words = append(words, it.summary)
+		states = append(states, it.state)
 	}
 	h.remember(listed{collection: res.kind + " " + sel.String(), generation: generation, objects: encodeAll(items)})
-	h.answered(req, Answer{Observed: strings.Join(words, " ")})
+	h.answered(req, Answer{Items: states})
 	writeJSON(w, http.StatusOK, map[string]any{
 		"kind": res.kind + "List", "apiVersion": res.apiVersion,
 		"metadata": map[string]any{"resourceVersion": strconv.FormatInt(generation, 10)},

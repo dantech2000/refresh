@@ -3,6 +3,7 @@
 package parity
 
 import (
+	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -290,10 +291,10 @@ var behaviourChecks = map[Behaviour][]Check{
 	LostResponse:    {exits(0), oneUpdatePerLostResponse},
 	ThrottledRead:   {exits(0), changes, sawThrottle},
 
-	DrainBlocked:         {fails, noRolls, sawKubeAnswer(fleettest.KubeListPDBs, "=allows0")},
-	DrainForced:          {rolls, sawKubeAnswer(fleettest.KubeListPDBs, "=allows0")},
-	GateUnreadable:       {fails, noRolls, sawKubeAnswer(fleettest.KubeListPDBs, "error=Forbidden")},
-	GateUnreadableForced: {rolls, sawKubeAnswer(fleettest.KubeListPDBs, "error=Forbidden")},
+	DrainBlocked:         {fails, noRolls, sawKubeFact(fleettest.KubeListPDBs, "", "allowed", "0")},
+	DrainForced:          {rolls, sawKubeFact(fleettest.KubeListPDBs, "", "allowed", "0")},
+	GateUnreadable:       {fails, noRolls, sawKubeFact(fleettest.KubeListPDBs, "", "read", "error=Forbidden")},
+	GateUnreadableForced: {rolls, sawKubeFact(fleettest.KubeListPDBs, "", "read", "error=Forbidden")},
 }
 
 // dryRunReads are the reads a dry run of each command must make: the state
@@ -538,9 +539,6 @@ func sawAnswer(op fleettest.Operation, text string) Check {
 	}}
 }
 
-// sawKube: the binary made the Kubernetes request at least once.
-func sawKube(op fleettest.Operation) Check { return sawKubeAnswer(op, "") }
-
 // isRoll reports whether a mutation changes the nodes of a nodegroup.
 func isRoll(m *Mutation) bool {
 	return m != nil && (m.Operation == fleettest.EKSUpdateNodegroupVersion || m.Operation == fleettest.EKSUpdateNodegroupConfig)
@@ -577,25 +575,52 @@ func worldSays(text string) Check {
 	}}
 }
 
-// sawKubeAnswer: the binary had an answer to the Kubernetes request that
-// contained the text before it first sent a change to a nodegroup, or
-// without sending one. It is how a scenario shows that a gate read the state
-// it then decided on.
-func sawKubeAnswer(op fleettest.Operation, text string) Check {
+// beforeRoll returns the answers to op that the binary had before it first
+// sent a change to a nodegroup, or all of them when it sent none.
+func beforeRoll(t Trace, op fleettest.Operation) []Record {
+	roll := 0
+	for _, r := range t.Requests {
+		if isRoll(r.Mutation) {
+			roll = r.Arrived
+			break
+		}
+	}
+	var out []Record
+	for _, r := range t.Requests {
+		if r.Operation == op && r.Completed != 0 && (roll == 0 || r.Completed < roll) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// sawKube: the binary had an answer to the Kubernetes request before
+// it first sent a change to a nodegroup, or without sending one.
+func sawKube(op fleettest.Operation) Check {
 	return Check{Field: FieldEvidence, Run: func(t Trace) error {
-		roll := 0
-		for _, r := range t.Requests {
-			if isRoll(r.Mutation) {
-				roll = r.Arrived
-				break
+		if len(beforeRoll(t, op)) == 0 {
+			return fmt.Errorf("no %s answer before the first nodegroup change", op)
+		}
+		return nil
+	}}
+}
+
+// sawKubeFact: an answer to the Kubernetes list said, before the binary
+// first sent a change to a nodegroup or without sending one, that an item
+// had the attribute at the value. item names it as the fact's subject
+// ends ("default/web", "b-2"); "" matches any item, and the list itself
+// for the attribute "read". It is how a scenario shows that a gate read
+// the state it then decided on.
+func sawKubeFact(op fleettest.Operation, item, attribute, value string) Check {
+	return Check{Field: FieldEvidence, Run: func(t Trace) error {
+		for _, r := range beforeRoll(t, op) {
+			for _, f := range r.Facts {
+				if f.Attribute == attribute && f.Value == value && (item == "" || strings.HasSuffix(f.Subject, "/"+item)) {
+					return nil
+				}
 			}
 		}
-		for _, r := range t.Requests {
-			if r.Operation == op && r.Completed != 0 && (roll == 0 || r.Completed < roll) && strings.Contains(r.Observed, text) {
-				return nil
-			}
-		}
-		return fmt.Errorf("no %s answer with %q before the first nodegroup change", op, text)
+		return fmt.Errorf("no %s answer said %s %s=%s before the first nodegroup change", op, cmp.Or(item, "an item"), attribute, value)
 	}}
 }
 

@@ -105,12 +105,12 @@ func kubeNodegroupUpdate() []Scenario {
 			// One node of the other nodegroup is NotReady: a warning, which
 			// --yes accepts.
 			Name: "nodegroup-update-node-not-ready", Kube: true, Legacy: with("--yes"), V2: v2("--yes"),
-			Checks: []Check{exits(0), updatesAre(a), sawKubeAnswer(fleettest.KubeListNodes, "b-2=NotReady")},
+			Checks: []Check{exits(0), updatesAre(a), sawKubeFact(fleettest.KubeListNodes, "b-2", "condition", "NotReady")},
 			Seed:   fleet(workloads, scripts(slow), func(_ *fleettest.State, c *fleettest.Cluster) { c.Nodes[3].NotReady = true }),
 		},
 		{
 			Name: "nodegroup-update-node-not-ready-require-healthy", Kube: true, Legacy: with("--yes", "--require-healthy"), V2: v2("--yes", "--require-healthy"),
-			Checks: []Check{exits(2), noMutations, sawKubeAnswer(fleettest.KubeListNodes, "b-2=NotReady")},
+			Checks: []Check{exits(2), noMutations, sawKubeFact(fleettest.KubeListNodes, "b-2", "condition", "NotReady")},
 			Seed:   fleet(workloads, func(_ *fleettest.State, c *fleettest.Cluster) { c.Nodes[3].NotReady = true }),
 		},
 		{
@@ -198,7 +198,7 @@ func kubeNodegroupUpdate() []Scenario {
 				w.Edit(func(s *fleettest.State) { tighten(s.Cluster(Region, "prod"), "web") })
 				return nil
 			},
-			Checks: []Check{fails, noUpdates, sawKubeAnswer(fleettest.KubeListPDBs, "default/web=allows0")},
+			Checks: []Check{fails, noUpdates, sawKubeFact(fleettest.KubeListPDBs, "default/web", "allowed", "0")},
 		},
 	}
 }
@@ -220,7 +220,7 @@ func kubeNodegroupScale() []Scenario {
 		},
 		{
 			Name: "nodegroup-scale-pdb-blocked", Behaviour: Blocked, Kube: true, Seed: fleet(workloads, tight("web")), Legacy: to("1")("--yes"), V2: v2To("1")("--yes"),
-			Checks: []Check{exits(3), noMutations, sawKubeAnswer(fleettest.KubeListPDBs, "default/web=allows0")},
+			Checks: []Check{exits(3), noMutations, sawKubeFact(fleettest.KubeListPDBs, "default/web", "allowed", "0")},
 		},
 		{
 			Name: "nodegroup-scale-pdb-forced", Behaviour: DrainForced, Kube: true, Seed: fleet(workloads, tight("web")),

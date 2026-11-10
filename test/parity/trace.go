@@ -13,6 +13,7 @@ import (
 
 	"github.com/dantech2000/refresh/internal/awsx/awsxtest"
 	"github.com/dantech2000/refresh/internal/fleet/fleettest"
+	"github.com/dantech2000/refresh/internal/kube/kubetest"
 )
 
 // Trace is what one run did.
@@ -508,17 +509,13 @@ func kubeFacts(cluster string, e *event) []Fact {
 	}
 	facts := []Fact{{Subject: collection, Attribute: "read", Value: "ok"}}
 	pending := []string{}
-	for _, word := range strings.Fields(a.Observed) {
-		name, value, _ := strings.Cut(word, "=")
-		if op == fleettest.KubeListPods {
-			value, _, _ = strings.Cut(value, "@") // where it runs is not its state
-			if value == "Pending" {
-				pending = append(pending, name)
-			}
+	for _, it := range a.Items {
+		name := itemName(it)
+		if op == fleettest.KubeListPods && it.State == "Pending" {
+			pending = append(pending, name)
 		}
 		if item, ok := kubeItems[op]; ok {
-			value = strings.TrimPrefix(value, "allows")
-			facts = append(facts, Fact{Subject: item[0] + " " + cluster + "/" + name, Attribute: item[1], Value: value})
+			facts = append(facts, Fact{Subject: item[0] + " " + cluster + "/" + name, Attribute: item[1], Value: it.State})
 		}
 	}
 	whole := e.kube.Namespace == "" && e.kube.LabelSelector == "" && (e.kube.FieldSelector == "" || e.kube.FieldSelector == "status.phase=Pending")
@@ -557,10 +554,6 @@ func awsFacts(r awsxtest.Request, a awsxtest.Answer, target string) []Fact {
 		return []Fact{{Subject: subject, Attribute: "read", Value: "error=" + a.Code}}
 	case a.Dropped || a.JSON == nil || json.Unmarshal(a.JSON, &body) != nil:
 		return nil
-	}
-	obj := func(m map[string]any, key string) map[string]any {
-		v, _ := m[key].(map[string]any)
-		return v
 	}
 	facts := []Fact{{Subject: subject, Attribute: "read", Value: "ok"}}
 	add := func(subject, attribute string, value any) {
@@ -605,6 +598,12 @@ func awsFacts(r awsxtest.Request, a awsxtest.Answer, target string) []Fact {
 	return facts
 }
 
+// obj returns the object member of a decoded JSON answer, or nil.
+func obj(m map[string]any, key string) map[string]any {
+	v, _ := m[key].(map[string]any)
+	return v
+}
+
 // issuesIn renders the codes of the health issues of a resource in an
 // answer, or nothing for none.
 func issuesIn(m map[string]any) string {
@@ -637,9 +636,39 @@ func observeKube(e *event) string {
 	case a.Reason != "":
 		b.WriteString("error=" + a.Reason)
 	default:
-		b.WriteString(a.Observed)
+		words := make([]string, 0, len(a.Items))
+		for _, it := range a.Items {
+			words = append(words, itemWord(e.kube.Operation, it))
+		}
+		b.WriteString(strings.Join(words, " "))
 	}
 	return strings.TrimSpace(b.String())
+}
+
+// itemName is the name of a list item, with its namespace when it has one.
+func itemName(it kubetest.Item) string {
+	if it.Namespace == "" {
+		return it.Name
+	}
+	return it.Namespace + "/" + it.Name
+}
+
+// itemWord renders a list item for the line of a trace: its name, its
+// state after "=", and the node of a pod after "@". The line is for a
+// person; the facts of the trace carry the same state, field by field.
+func itemWord(op fleettest.Operation, it kubetest.Item) string {
+	word := itemName(it)
+	if it.State != "" {
+		state := it.State
+		if op == fleettest.KubeListPDBs {
+			state = "allows" + state
+		}
+		word += "=" + state
+	}
+	if it.Node != "" {
+		word += "@" + it.Node
+	}
+	return word
 }
 
 // observe returns the EKS resource a request names and the part of its
@@ -675,10 +704,6 @@ func observe(r awsxtest.Request, a awsxtest.Answer) (target, observed string) {
 
 // observedIn reads the decisive part of a successful JSON answer.
 func observedIn(r awsxtest.Request, body map[string]any) string {
-	obj := func(m map[string]any, key string) map[string]any {
-		v, _ := m[key].(map[string]any)
-		return v
-	}
 	issues := issuesIn
 	names := func(key string) string { return fmt.Sprint(body[key]) }
 
