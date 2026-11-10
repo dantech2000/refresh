@@ -42,3 +42,38 @@ func TestAddonHealth(t *testing.T) {
 		}
 	}
 }
+
+// The count of the HEALTH column of refresh status: every issue of the
+// control plane, of each nodegroup and add-on that was read, and one for
+// a DEGRADED add-on that lists none.
+func TestHealthIssues(t *testing.T) {
+	issues := func(n int) []Issue { return make([]Issue, n) }
+	tests := []struct {
+		name string
+		snap Snapshot
+		want int
+	}{
+		{name: "nothing", want: 0},
+		{
+			name: "every part",
+			snap: Snapshot{
+				Cluster:    Cluster{HealthIssues: issues(1)},
+				Nodegroups: []Nodegroup{{State: Collected, HealthIssues: issues(2)}, {State: Failed, HealthIssues: issues(5)}},
+				Addons: []Addon{
+					{State: Collected, Status: "DEGRADED", Issues: issues(2)},
+					{State: Collected, Status: "DEGRADED"},
+					{State: Collected, Status: "ACTIVE"},
+					{State: Failed, Status: "DEGRADED", Issues: issues(5)},
+				},
+			},
+			want: 6,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.snap.HealthIssues(); got != tt.want {
+				t.Errorf("HealthIssues() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
