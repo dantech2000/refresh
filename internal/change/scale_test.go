@@ -1046,6 +1046,9 @@ func TestRunScale_BusyTarget(t *testing.T) {
 			s.Failure.Error != "nodegroup web is DELETING; it was not changed. Run the command again once that finishes" {
 			t.Errorf("step = %s, in flight %q, failure %+v; want Busy with the status alone", s.Status, s.InFlight, s.Failure)
 		}
+		if n := e.count(fleettest.EKSListUpdates); n != 0 {
+			t.Errorf("%d ListUpdates requests, want none for a target that EKS is deleting", n)
+		}
 	})
 }
 
