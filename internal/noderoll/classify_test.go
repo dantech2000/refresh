@@ -5,6 +5,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/types"
 )
 
 // The pressure conditions of a node are reported in a fixed order, a
@@ -41,6 +42,11 @@ func TestClassify(t *testing.T) {
 	}
 	noCondition := mkNode("ip-1", oldAMI, true, false)
 	noCondition.Status.Conditions = nil
+	withUID := func(uid string) *corev1.Node {
+		n := mkNode("ip-1", oldAMI, true, false)
+		n.UID = types.UID(uid)
+		return n
+	}
 	tests := []struct {
 		name      string
 		node      *corev1.Node
@@ -58,8 +64,12 @@ func TestClassify(t *testing.T) {
 		{name: "a deletion candidate of the autoscaler", node: tainted("DeletionCandidateOfClusterAutoscaler"), wantPhase: PhaseDraining},
 		{name: "another taint", node: tainted("dedicated"), wantPhase: PhaseReady},
 		{name: "the image label: the target AMI", node: mkNode("ip-1", newAMI, true, false), wantPhase: PhaseReady, wantNew: true},
-		{name: "the baseline: an old node", node: mkNode("ip-1", newAMI, true, false), baseline: map[string]bool{"ip-1": true}, wantPhase: PhaseReady},
-		{name: "the baseline: a node that came later", node: mkNode("ip-1", oldAMI, true, false), baseline: map[string]bool{"ip-0": true}, wantPhase: PhaseReady, wantNew: true},
+		{name: "the baseline: an old node", node: mkNode("ip-1", newAMI, true, false), baseline: map[string]bool{"name:ip-1": true}, wantPhase: PhaseReady},
+		{name: "the baseline: a node that came later", node: mkNode("ip-1", oldAMI, true, false), baseline: map[string]bool{"name:ip-0": true}, wantPhase: PhaseReady, wantNew: true},
+		{name: "the baseline: an old node by its UID", node: withUID("u-1"), baseline: map[string]bool{"uid:u-1": true}, wantPhase: PhaseReady},
+		// EKS names a node after its private IP, and EC2 can give the IP
+		// of a terminated node to a new one.
+		{name: "the baseline: a new node that took the name of an old one", node: withUID("u-2"), baseline: map[string]bool{"uid:u-1": true}, wantPhase: PhaseReady, wantNew: true},
 		{name: "an empty baseline: every node is new", node: mkNode("ip-1", oldAMI, true, false), baseline: map[string]bool{}, wantPhase: PhaseReady, wantNew: true},
 	}
 	for _, tt := range tests {

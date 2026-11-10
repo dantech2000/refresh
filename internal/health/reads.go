@@ -3,7 +3,6 @@ package health
 import (
 	"context"
 	"errors"
-	"net"
 	"sync"
 	"sync/atomic"
 
@@ -137,27 +136,18 @@ func isAPIAnswer(err error) bool {
 // at all: a connection that could not be opened, because it was refused,
 // had no route, or timed out, or because the host does not resolve. A
 // private-only endpoint seen from outside its VPC drops the packets, and
-// the dial times out: that is no access, as a refused connection is. Any
-// other timeout is not one: the client's own timeout fires after the
-// connection was made, and the deadline of the run is the user's, not the
-// server's.
+// the dial times out: that is no access, as a refused connection is.
+//
+// Nothing else is: the check fails closed. A credential plugin that
+// fails, a certificate that does not verify, a connection reset or an EOF
+// after the connection was made, the client's own timeout, and the
+// deadline of the run all leave the checks Unreadable, so a fail-closed
+// check blocks.
 func connectFailure(err error) bool {
 	if errors.Is(err, context.Canceled) || isAPIAnswer(err) {
 		return false
 	}
-	// Before the timeout checks: Go's connect timeout also reports itself
-	// as context.DeadlineExceeded.
-	if awsx.IsDialFailure(err) {
-		return true
-	}
-	if errors.Is(err, context.DeadlineExceeded) {
-		return false
-	}
-	var netErr net.Error
-	if errors.As(err, &netErr) && netErr.Timeout() {
-		return false
-	}
-	return true
+	return awsx.IsDialFailure(err)
 }
 
 // access returns the result about the Kubernetes access of the run, and

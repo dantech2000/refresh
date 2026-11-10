@@ -38,7 +38,8 @@ type Observer struct {
 	// now is the clock: time.Now, or the clock of a test.
 	now func() time.Time
 
-	// baseline holds the names of the old nodes: see Attach.
+	// baseline holds the old nodes, by identity (see nodeKey): see
+	// Attach.
 	baseline map[string]bool
 	// byVersion says that the kubelet version of a node decides whether it
 	// is new. Attach sets it once.
@@ -69,7 +70,8 @@ type Observer struct {
 //     whose kubelet version cannot be read follows row 2.
 //  2. Otherwise a node is old when it was created before id.StartedAt,
 //     and with a zero StartedAt when it is there as Attach lists. Every
-//     node that comes later is new.
+//     node that comes later is new, also one that takes the name of an
+//     old node: a node is known by its UID.
 //
 // Row 2 needs no AMI, and the image label of a node is not read. That is
 // why TargetAMI changes nothing here.
@@ -111,7 +113,7 @@ func (o *Observer) identify(ctx context.Context) error {
 	o.baseline = make(map[string]bool, len(nodes))
 	for _, n := range nodes {
 		if o.id.StartedAt.IsZero() || n.CreationTimestamp.Time.Before(o.id.StartedAt) {
-			o.baseline[n.Name] = true
+			o.baseline[nodeKey(n)] = true
 		}
 		if m := kubeletMinor(n); o.id.TargetVersion != "" && m != "" && m != o.id.TargetVersion {
 			o.byVersion = true

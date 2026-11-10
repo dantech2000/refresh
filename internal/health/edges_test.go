@@ -2,7 +2,12 @@ package health_test
 
 import (
 	"context"
+	"crypto/x509"
+	"errors"
+	"fmt"
+	"io"
 	"net"
+	"net/http"
 	"os"
 	"syscall"
 	"testing"
@@ -170,7 +175,9 @@ func TestRun_PrivateEndpoint(t *testing.T) {
 			results := health.Run(ctx, health.Preflight(), in)
 			for _, r := range results {
 				switch r.Name {
-				case "Nodes", "Workloads", "DrainBlockers", "PDBCoverage":
+				case "Nodes":
+					check(t, r, want{outcome: health.Pass, message: "4/4 nodes ready (estimated)"})
+				case "Workloads", "DrainBlockers", "PDBCoverage":
 					check(t, r, want{outcome: health.Skipped, message: "Kubernetes API unreachable"})
 				case health.AccessCheck:
 					check(t, r, want{outcome: health.Warn, message: "Kubernetes API unreachable"})
@@ -199,4 +206,140 @@ func TestRun_PrivateEndpoint(t *testing.T) {
 			}
 		}
 	})
+}
+
+// failingTransport fails every request with err, after the connection: a
+// credential plugin, a certificate, or a connection that broke.
+type failingTransport struct{ err error }
+
+func (f failingTransport) RoundTrip(*http.Request) (*http.Response, error) { return nil, f.err }
+
+// transportFailing gives in a client whose every request fails with err
+// in the transport, not in the dial.
+func transportFailing(t *testing.T, h *harness, in *health.Input, err error) {
+	t.Helper()
+	cfg := h.kube.Config()
+	cfg.WrapTransport = func(http.RoundTripper) http.RoundTripper { return failingTransport{err} }
+	client, e := kubernetes.NewForConfig(cfg)
+	if e != nil {
+		t.Fatal(e)
+	}
+	mc, e := metricsclient.NewForConfig(cfg)
+	if e != nil {
+		t.Fatal(e)
+	}
+	in.Kube, in.Metrics = client, mc.MetricsV1beta1().NodeMetricses()
+}
+
+// Only a connection that could not be opened is an unreachable API: the
+// Kubernetes checks are then Skipped, and --yes goes on. Every other
+// error fails closed: the checks are Unreadable, and the drain blockers,
+// which here include a budget that allows no disruption, block with
+// --yes. A credential that fails on the client must not get a softer
+// verdict than one that the server rejects.
+func TestRun_TransportFailures(t *testing.T) {
+	dial := func(err error) *net.OpError { return &net.OpError{Op: "dial", Net: "tcp", Err: err} }
+	tests := []struct {
+		name        string
+		err         error
+		inDial      bool
+		unreachable bool
+	}{
+		{name: "connection refused", err: dial(os.NewSyscallError("connect", syscall.ECONNREFUSED)), inDial: true, unreachable: true},
+		{name: "no route", err: dial(os.NewSyscallError("connect", syscall.EHOSTUNREACH)), inDial: true, unreachable: true},
+		{name: "a dial that times out", err: dial(os.ErrDeadlineExceeded), inDial: true, unreachable: true},
+		{name: "a host that does not resolve", err: dial(&net.DNSError{Err: "no such host", Name: "api.example", IsNotFound: true}), inDial: true, unreachable: true},
+		{name: "a proxy that refuses", err: &net.OpError{Op: "proxyconnect", Net: "tcp", Err: os.NewSyscallError("connect", syscall.ECONNREFUSED)}, inDial: true, unreachable: true},
+		{name: "a credential plugin that fails", err: errors.New("getting credentials: exec: executable aws failed with exit code 255")},
+		{name: "a certificate that does not verify", err: fmt.Errorf("tls: failed to verify certificate: %w", x509.UnknownAuthorityError{})},
+		{name: "a host name that the certificate does not name", err: x509.HostnameError{Certificate: &x509.Certificate{}, Host: "api.example"}},
+		// client-go retries a GET on a bare reset or EOF for about ten
+		// seconds and then returns the same error. These forms of the
+		// same errors it returns at once.
+		{name: "a broken connection", err: &net.OpError{Op: "write", Net: "tcp", Err: os.NewSyscallError("write", syscall.EPIPE)}},
+		{name: "an EOF after the connection", err: fmt.Errorf("reading the response: %w", io.EOF)},
+		{name: "a read that times out", err: &net.OpError{Op: "read", Net: "tcp", Err: os.ErrDeadlineExceeded}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newHarness(t, tight("web"))
+			ctx := testContext(t)
+			in := h.input(ctx, "ng-a")
+			if tt.inDial {
+				dialing(t, h, in, tt.err)
+			} else {
+				transportFailing(t, h, in, tt.err)
+			}
+			results := health.Run(ctx, health.Preflight(), in)
+			for _, r := range results {
+				switch {
+				case r.Name == health.AccessCheck && tt.unreachable:
+					check(t, r, want{outcome: health.Warn, message: "Kubernetes API unreachable"})
+				case r.Name == health.AccessCheck:
+					check(t, r, want{outcome: health.Warn, message: "Kubernetes API did not answer"})
+				case r.Name != "Workloads" && r.Name != "DrainBlockers":
+				case tt.unreachable:
+					check(t, r, want{outcome: health.Skipped, message: "Kubernetes API unreachable"})
+				default:
+					if r.Outcome != health.Unreadable || len(r.Failures) == 0 {
+						t.Errorf("%s: %s %+v, want Unreadable with its failures", r.Name, r.Outcome, r.Failures)
+					}
+				}
+			}
+			v := health.Gate(results, health.Policy{Yes: true})
+			if tt.unreachable && v.Decision != health.Go {
+				t.Errorf("verdict with --yes = %+v, want Go: no Kubernetes access", v)
+			}
+			if !tt.unreachable && (v.Decision != health.Block || v.Exit != 4) {
+				t.Errorf("verdict with --yes = %+v, want Block with exit 4: the drain blockers were not read", v)
+			}
+		})
+	}
+}
+
+// An unreachable API is no Kubernetes access, as no client is: the Nodes
+// check estimates from the nodegroups in both, so a nodegroup that is not
+// ACTIVE is a problem, a target that is not ACTIVE blocks, and the verdict
+// is the same.
+func TestRun_UnreachableKeepsTheNodegroupRule(t *testing.T) {
+	unreachable := &net.OpError{Op: "dial", Net: "tcp", Err: os.NewSyscallError("connect", syscall.EHOSTUNREACH)}
+	tests := []struct {
+		name    string
+		edits   []edit
+		targets []string
+		want    want
+		yes     health.Decision
+	}{
+		{name: "healthy", targets: []string{"ng-a"}, want: want{outcome: health.Pass, message: "4/4 nodes ready (estimated)"}, yes: health.Go},
+		{name: "a degraded neighbour", edits: []edit{nodegroupStatus("ng-b", fleettest.StatusDegraded)}, targets: []string{"ng-a"}, want: want{outcome: health.Warn, message: "2/4 nodes ready (estimated)", findings: []string{"ng-b (DEGRADED)"}}, yes: health.Go},
+		{name: "a degraded target", edits: []edit{nodegroupStatus("ng-a", fleettest.StatusDegraded)}, targets: []string{"ng-a"}, want: want{outcome: health.Fail, message: "a target nodegroup is not ACTIVE"}, yes: health.Block},
+		{name: "every nodegroup degraded", edits: []edit{nodegroupStatus("ng-a", fleettest.StatusDegraded), nodegroupStatus("ng-b", fleettest.StatusDegraded)}, want: want{outcome: health.Fail, message: "no ready nodes (estimated)"}, yes: health.Block},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newHarness(t, tt.edits...)
+			ctx := testContext(t)
+			in := h.input(ctx, tt.targets...)
+			in.Kube, in.Metrics = nil, nil
+			noKube := health.Run(ctx, health.Preflight(), in)
+			in = h.input(ctx, tt.targets...)
+			dialing(t, h, in, unreachable)
+			unreached := health.Run(ctx, health.Preflight(), in)
+			for _, mode := range []struct {
+				name    string
+				results []health.Result
+			}{{"no client", noKube}, {"unreachable", unreached}} {
+				t.Run(mode.name, func(t *testing.T) {
+					for _, r := range mode.results {
+						if r.Name == "Nodes" {
+							check(t, r, tt.want)
+						}
+					}
+					if v := health.Gate(mode.results, health.Policy{Yes: true}); v.Decision != tt.yes {
+						t.Errorf("verdict with --yes = %+v, want %s", v, tt.yes)
+					}
+				})
+			}
+		})
+	}
 }

@@ -50,6 +50,10 @@ type NodeView struct {
 	// such as MemoryPressure. A node can be Ready and under pressure: the
 	// phase does not show it.
 	Pressure []string
+
+	// key is the identity of the node (see nodeKey). The Tracker tells
+	// the nodes apart by it: a new node can take the name of an old one.
+	key string
 }
 
 // PodView is one pod that a drain has to evict.

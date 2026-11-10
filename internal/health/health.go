@@ -122,6 +122,10 @@ type Result struct {
 	// Blocking: the quota check blocks on a surge, and only asks about the
 	// current use. The runner then clears Blocking.
 	advisory bool
+	// unreachable is the result of a check that needs no client, for when
+	// its Kubernetes read failed and the run finds the API unreachable:
+	// the Nodes check then estimates, as it does without a client.
+	unreachable *Result
 }
 
 // AccessCheck is the name of the result that the runner adds about the
@@ -138,11 +142,14 @@ const AccessCheck = "Kubernetes"
 // follows the others: a warning without a client, or when a client is set
 // and the API could not be reached at all: no read got an answer, every
 // read that failed could not connect, and the run's context has not
-// ended. The Kubernetes checks are then Skipped: an unreachable API is one
-// question, not a block. A dial that timed out could not connect either. A
-// timeout after the connection was made, the user's own deadline, or a
-// read that failed after another answered keeps the checks Unreadable,
-// with their failures, so a fail-closed check blocks.
+// ended. The checks are then as without a client: a check that needs
+// Kubernetes is Skipped, and the Nodes check estimates from the
+// nodegroups. An unreachable API is one question, not a block. A dial
+// that timed out could not connect either. Any other failure, such as a
+// credential plugin that fails, a certificate that does not verify, a
+// connection reset, a timeout after the connection was made, the user's
+// own deadline, or a read that failed after another answered, keeps the
+// checks Unreadable, with their failures, so a fail-closed check blocks.
 func Run(ctx context.Context, checks []Check, in *Input) []Result {
 	run := *in
 	run.reads = newReads(ctx, &run)
@@ -169,7 +176,12 @@ func Run(ctx context.Context, checks []Check, in *Input) []Result {
 	access, unreachable := run.reads.access()
 	if unreachable {
 		for i, c := range checks {
-			if results[i].Outcome == Unreadable && (c.Needs.Kube || kubeConnectFailures(results[i].Failures)) {
+			switch r := results[i]; {
+			case r.Outcome != Unreadable:
+			case r.unreachable != nil:
+				results[i] = *r.unreachable
+				results[i].Name, results[i].Blocking, results[i].FailClosed, results[i].Forceable = c.Name, c.Blocking, c.FailClosed, c.Forceable
+			case c.Needs.Kube:
 				results[i] = Result{
 					Name: c.Name, Blocking: c.Blocking, FailClosed: c.FailClosed, Forceable: c.Forceable,
 					Outcome: Skipped, Message: access.Message,
@@ -178,22 +190,6 @@ func Run(ctx context.Context, checks []Check, in *Input) []Result {
 		}
 	}
 	return append(results, access)
-}
-
-// kubeConnectFailures reports whether every failure is a Kubernetes read
-// that did not connect: no IAM action, and a network error. A dial that
-// timed out is a network error; a timeout after the connection was made
-// is not a connection failure.
-func kubeConnectFailures(fs []apidoc.Failure) bool {
-	if len(fs) == 0 {
-		return false
-	}
-	for _, f := range fs {
-		if f.Operation != "" || f.Reason != apidoc.ReasonNetworkError {
-			return false
-		}
-	}
-	return true
 }
 
 // skip returns the Skipped result of a check whose needs in lacks.

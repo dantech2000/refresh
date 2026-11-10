@@ -66,7 +66,11 @@ func runNodes(_ context.Context, in *Input) Result {
 	list, err := in.reads.Nodes()
 	if err != nil {
 		f := kubeFailure(snap.Cluster.Name, "listing nodes", err)
-		return Result{Outcome: Unreadable, Message: "could not list the nodes: " + f.Error, Failures: []apidoc.Failure{f}}
+		// When the whole API turns out to be unreachable, which is no
+		// Kubernetes access, Run uses the estimate, as without a client:
+		// the nodegroup rule holds in every mode.
+		estimate := estimateNodes(total, ready, problems, inProgress, targetFail)
+		return Result{Outcome: Unreadable, Message: "could not list the nodes: " + f.Error, Failures: []apidoc.Failure{f}, unreachable: &estimate}
 	}
 	var joining, notReady []string
 	ready = 0

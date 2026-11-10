@@ -18,8 +18,8 @@ results.web.finished	2026-01-01 00:00:30 UTC
 results.web.failure	-
 verification.NodegroupActive.outcome	Pass
 verification.NodegroupActive.message	web ACTIVE
-verification.NodesReady.outcome	Unreadable
-verification.NodesReady.message	the nodes could not be listed before the roll
+verification.NodesReady.outcome	Pass
+verification.NodesReady.message	2 new nodes ready
 verification.NewPendingPods.outcome	Unreadable
 verification.NewPendingPods.message	the Pending pods could not be listed before the roll
 notices.1	the health checks were skipped (--skip-health-check)
@@ -31,6 +31,6 @@ warning: the health checks were skipped (--skip-health-check)
 web: InProgress
 [OK] web: Succeeded
   [OK] NodegroupActive  web ACTIVE
-  [?]  NodesReady       the nodes could not be listed before the roll
+  [OK] NodesReady       2 new nodes ready
   [?]  NewPendingPods   the Pending pods could not be listed before the roll
 warning: cluster prod (us-east-1): AccessDenied: listing Pending pods before the roll: Pod is forbidden: User "fake" cannot list the resource at the cluster scope

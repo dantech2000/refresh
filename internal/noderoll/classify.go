@@ -10,8 +10,8 @@ import (
 // drain taint is Draining, one that is not Ready is Joining, and any other
 // is Ready.
 //
-// baseline holds the names of the old nodes of the roll: a node that is
-// not in it is new. With a nil baseline the image label decides: a node is
+// baseline holds the old nodes of the roll, by identity (see nodeKey): a
+// node that is not in it is new. With a nil baseline the image label decides: a node is
 // new when it was launched with targetAMI. An Observer always has a
 // baseline; the label rule is kept for a caller that knows the AMI.
 func classify(n *corev1.Node, targetAMI string, baseline map[string]bool) NodeView {
@@ -25,15 +25,27 @@ func classify(n *corev1.Node, targetAMI string, baseline map[string]bool) NodeVi
 	}
 	onTarget := n.Labels[LabelImage] == targetAMI
 	if baseline != nil {
-		onTarget = !baseline[n.Name]
+		onTarget = !baseline[nodeKey(n)]
 	}
 	return NodeView{
+		key:      nodeKey(n),
 		Name:     n.Name,
 		OnTarget: onTarget,
 		Ready:    ready,
 		Phase:    phase,
 		Pressure: pressureConditions(n),
 	}
+}
+
+// nodeKey is the identity of a node: its UID, which the API server gives
+// each node object once. EKS names a node after its private IP, and EC2
+// can give the IP of a terminated node to a new one, so a name can come
+// back. A node without a UID, as some fakes make it, is known by its name.
+func nodeKey(n *corev1.Node) string {
+	if n.UID != "" {
+		return "uid:" + string(n.UID)
+	}
+	return "name:" + n.Name
 }
 
 // kubeletMinor returns the major and minor version of the kubelet of a
