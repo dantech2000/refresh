@@ -50,7 +50,7 @@ func newCheckFake(t *testing.T, edit func(s *fleettest.State, c *fleettest.Clust
 			},
 			Updates: []*fleettest.Update{
 				{ID: "u-1", Type: fleettest.TypeVersionUpdate, Status: fleettest.UpdateSuccessful, Params: []fleettest.UpdateParam{{Type: "Version", Value: "1.32"}},
-					CreatedAt: cmdutiltest.Now.Add(-2 * 24 * time.Hour)},
+					CreatedAt: cmdutiltest.Now().Add(-2 * 24 * time.Hour)},
 			},
 		}
 		s.Clusters = []*fleettest.Cluster{c}
@@ -127,7 +127,7 @@ func TestUpgradeCheck_Verdicts(t *testing.T) {
 		{name: "review for extended support", edit: func(s *fleettest.State, c *fleettest.Cluster) {
 			ready(s, c)
 			c.SupportType = "EXTENDED"
-			s.ClusterVersions[0].EndOfStandardSupport = cmdutiltest.Now.Add(-24 * time.Hour)
+			s.ClusterVersions[0].EndOfStandardSupport = cmdutiltest.Now().Add(-24 * time.Hour)
 		}, code: 2, want: "Support: the cluster is in extended support"},
 		{name: "blocked by an UNKNOWN insight", edit: func(s *fleettest.State, c *fleettest.Cluster) {
 			ready(s, c)

@@ -42,9 +42,6 @@ import (
 	"syscall"
 	"time"
 
-	"k8s.io/client-go/tools/clientcmd"
-	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
-
 	"github.com/dantech2000/refresh/internal/awsx/awsxtest"
 	"github.com/dantech2000/refresh/internal/fleet/fleettest"
 	"github.com/dantech2000/refresh/internal/kube/kubetest"
@@ -182,7 +179,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		servers := serveKube(world, regions[0])
 		defer servers.Close()
 		kubeconfig = filepath.Join(dir, "kubeconfig")
-		if err := servers.writeKubeconfig(kubeconfig); err != nil {
+		if err := kubetest.WriteKubeconfig(kubeconfig, servers.servers...); err != nil {
 			return err
 		}
 	}
@@ -441,25 +438,4 @@ func (ks *kubeServers) Close() {
 	for _, s := range ks.servers {
 		s.Close()
 	}
-}
-
-// writeKubeconfig writes one kubeconfig with a context per cluster, named
-// after the cluster, as "aws eks update-kubeconfig" would name it with
-// --alias. The first cluster is the current context.
-func (ks *kubeServers) writeKubeconfig(path string) error {
-	cfg := clientcmdapi.NewConfig()
-	for i, s := range ks.servers {
-		name := ks.names[i]
-		cfg.Clusters[name] = &clientcmdapi.Cluster{Server: s.URL}
-		cfg.AuthInfos[name] = &clientcmdapi.AuthInfo{Token: "fake-token"}
-		cfg.Contexts[name] = &clientcmdapi.Context{Cluster: name, AuthInfo: name}
-		if i == 0 {
-			cfg.CurrentContext = name
-		}
-	}
-	data, err := clientcmd.Write(*cfg)
-	if err != nil {
-		return fmt.Errorf("encoding the kubeconfig: %w", err)
-	}
-	return os.WriteFile(path, data, 0o600)
 }

@@ -243,8 +243,8 @@ jobs:
           key: go-mod-${{ runner.os }}-${{ hashFiles('go.sum') }}
           restore-keys: go-mod-${{ runner.os }}-
 
-      # `-test` counts every test as an entry point, so legitimate test-only
-      # seams (deterministic constructors, mock builders) are not flagged —
+      # `-test` counts every test as an entry point, so a seam that only tests
+      # call (a fake's helper, a test hook) is not flagged —
       # only code unreachable from production AND tests. deadcode exits 0 even
       # when it finds something, so fail the step on any output.
       - name: deadcode

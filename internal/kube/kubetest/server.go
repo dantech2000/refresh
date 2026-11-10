@@ -222,11 +222,22 @@ func (s *Server) Config() *rest.Config {
 // WriteKubeconfig writes a kubeconfig file with one context, named after
 // the cluster, whose server is this server.
 func (s *Server) WriteKubeconfig(path string) error {
+	return WriteKubeconfig(path, s)
+}
+
+// WriteKubeconfig writes one kubeconfig with a context per server, named
+// after its cluster, as "aws eks update-kubeconfig" would name it with
+// --alias. The first server's context is the current one.
+func WriteKubeconfig(path string, servers ...*Server) error {
 	cfg := clientcmdapi.NewConfig()
-	cfg.Clusters[s.cluster] = &clientcmdapi.Cluster{Server: s.URL}
-	cfg.AuthInfos[s.cluster] = &clientcmdapi.AuthInfo{Token: "fake-token"}
-	cfg.Contexts[s.cluster] = &clientcmdapi.Context{Cluster: s.cluster, AuthInfo: s.cluster}
-	cfg.CurrentContext = s.cluster
+	for i, s := range servers {
+		cfg.Clusters[s.cluster] = &clientcmdapi.Cluster{Server: s.URL}
+		cfg.AuthInfos[s.cluster] = &clientcmdapi.AuthInfo{Token: "fake-token"}
+		cfg.Contexts[s.cluster] = &clientcmdapi.Context{Cluster: s.cluster, AuthInfo: s.cluster}
+		if i == 0 {
+			cfg.CurrentContext = s.cluster
+		}
+	}
 	data, err := clientcmd.Write(*cfg)
 	if err != nil {
 		return fmt.Errorf("encoding the kubeconfig: %w", err)

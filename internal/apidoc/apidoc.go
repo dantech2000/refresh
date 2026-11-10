@@ -12,6 +12,10 @@ package apidoc
 // APIVersion is the version of the document contract.
 const APIVersion = "refresh.drod.dev/v2"
 
+// SchemaBaseURL is where the JSON Schemas of the documents are published.
+// The $id of a schema is this URL and the file name, the kind and ".json".
+const SchemaBaseURL = "https://drod.dev/refresh/schema/v2/"
+
 // Kind names the type of a document, in PascalCase.
 type Kind string
 

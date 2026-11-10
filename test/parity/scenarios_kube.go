@@ -12,7 +12,7 @@ import (
 func workloads(_ *fleettest.State, c *fleettest.Cluster) {
 	for _, ng := range c.Nodegroups {
 		short := ng.Name[len(ng.Name)-1:]
-		image := latestImage(ng.Version)
+		image := fleettest.LatestImage(ng.Version)
 		if ng.ReleaseVersion != "" {
 			image = oldImage(ng.Version)
 		}

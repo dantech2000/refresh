@@ -3,7 +3,6 @@ version: '3'
 vars:
   BINARY_NAME: refresh
   BUILD_DIR: ./dist
-  DEFAULT_CLUSTER: development-blue
   # Tool pins, the only ones: the workflows read these lines (lint, test, nightly).
   GOLANGCI_LINT_VERSION: v2.13.2
   GOVULNCHECK_VERSION: v1.3.0
@@ -95,8 +94,8 @@ tasks:
   deadcode:
     desc: Fail if any function is unreachable even when counting tests as entry points
     cmds:
-      # `-test` treats every test as a root, so legitimate test-only seams
-      # (e.g. render.New, the mock builders) are NOT flagged — only code that
+      # `-test` treats every test as a root, so a seam that only tests call
+      # (a fake's helper, a test hook) is NOT flagged — only code that
       # nothing at all reaches. deadcode exits 0 even on findings, so we fail
       # the task ourselves whenever it prints anything.
       - |
@@ -258,24 +257,6 @@ tasks:
     deps: [build]
     cmds:
       - ./{{.BUILD_DIR}}/{{.BINARY_NAME}} --help
-
-  run:cluster:list:
-    desc: Test cluster list command (requires AWS credentials)
-    deps: [build]
-    cmds:
-      - ./{{.BUILD_DIR}}/{{.BINARY_NAME}} cluster list
-
-  run:ng:list:
-    desc: Test nodegroup list command (requires AWS credentials and cluster)
-    deps: [build]
-    cmds:
-      - ./{{.BUILD_DIR}}/{{.BINARY_NAME}} nodegroup list -c {{.DEFAULT_CLUSTER}}
-
-  run:ng:update:dry:
-    desc: Test a nodegroup update dry run (requires AWS credentials and cluster)
-    deps: [build]
-    cmds:
-      - ./{{.BUILD_DIR}}/{{.BINARY_NAME}} nodegroup update -c {{.DEFAULT_CLUSTER}} --dry-run
 
   # Development workflow shortcuts
   dev:quick:
