@@ -165,7 +165,7 @@ func (o *upgradeCheckOptions) run(ctx context.Context) error {
 	}
 	doc := o.document(report, rollback)
 	// The verdict and the failures make one exit error together.
-	if err := cmdutil.PrintReport(ctx, o.ios, o.output, doc, upgradeCheckView(doc), doc.Failures); err != nil {
+	if err := cmdutil.PrintReport(ctx, o.ios, o.output, doc, upgradeCheckView(doc, report.Reasons), doc.Failures); err != nil {
 		return err
 	}
 	return o.exit(doc)
@@ -182,7 +182,7 @@ func (o *upgradeCheckOptions) document(report health.ReadinessReport, rollback *
 		Rollback:  rollback,
 		Failures:  append(slices.Clone(snap.Failures), health.Failures(report.Checks)...),
 		Readiness: report.Readiness,
-		Reasons:   report.Reasons,
+		Reasons:   report.ReasonTexts(),
 	}
 	if report.InsightsEvaluated {
 		doc.InsightsEvaluated = new(len(report.Insights) > 0)
@@ -402,8 +402,9 @@ func readinessLabel(r apidoc.Readiness) (string, view.Status) {
 	return "INCOMPLETE", view.Unknown
 }
 
-// upgradeCheckView returns the table and plain form of doc.
-func upgradeCheckView(doc apidoc.UpgradeCheck) view.Description {
+// upgradeCheckView returns the table and plain form of doc. reasons are
+// the reasons of doc as the report has them, with their outcomes.
+func upgradeCheckView(doc apidoc.UpgradeCheck, reasons []health.Reason) view.Description {
 	label, status := readinessLabel(doc.Readiness)
 	subtitle := doc.Region
 	if doc.Version != "" {
@@ -415,11 +416,11 @@ func upgradeCheckView(doc apidoc.UpgradeCheck) view.Description {
 	d := view.Description{Title: doc.Cluster, Status: status, Label: label, Subtitle: subtitle, Failures: doc.Failures}
 
 	readiness := view.Section{Title: "READINESS"}
-	if len(doc.Reasons) == 0 {
+	if len(reasons) == 0 {
 		readiness.Fields = []view.Field{{Name: "verdict", Value: "no finding", Status: view.Healthy}}
 	}
-	for i, r := range doc.Reasons {
-		readiness.Fields = append(readiness.Fields, view.Field{Name: "reason " + strconv.Itoa(i+1), Value: r, Status: reasonStatus(doc.Checks, r)})
+	for i, r := range reasons {
+		readiness.Fields = append(readiness.Fields, view.Field{Name: "reason " + strconv.Itoa(i+1), Value: r.String(), Status: view.HealthStatus(apidoc.HealthOutcome(r.Outcome))})
 	}
 	insights := view.Section{Title: "INSIGHTS"}
 	for _, in := range doc.Insights {
@@ -483,18 +484,6 @@ func upgradeCheckView(doc apidoc.UpgradeCheck) view.Description {
 	}
 	d.Sections = append(d.Sections, readiness, insights, nodegroups, addons, checks, rollback)
 	return d
-}
-
-// reasonStatus returns the status of a reason line from the check that it
-// names.
-func reasonStatus(checks []apidoc.HealthResult, reason string) view.Status {
-	name, _, _ := strings.Cut(reason, ":")
-	for _, c := range checks {
-		if c.Name == name {
-			return view.HealthStatus(c.Outcome)
-		}
-	}
-	return view.Warn
 }
 
 func insightStatus(status string) view.Status {

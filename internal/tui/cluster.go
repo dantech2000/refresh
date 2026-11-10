@@ -151,7 +151,7 @@ func (m Model) readinessPane(w, h int) Block {
 	head = append(head, sp(2), dim("checked "+clock(r.EndedAt)))
 	out := Block{{}, head.Fit(w)}
 	for _, reason := range rep.Reasons {
-		for i, l := range wrap(reason, w-4) {
+		for i, l := range wrap(reason.String(), w-4) {
 			prefix := sp(3)
 			if i == 0 {
 				prefix = Seg{Text: " - ", Role: view.RoleSubtext}
