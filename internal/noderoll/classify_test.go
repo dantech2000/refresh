@@ -61,7 +61,9 @@ func TestClassify(t *testing.T) {
 		{name: "cordoned and not Ready", node: mkNode("ip-1", oldAMI, false, true), wantPhase: PhaseDraining},
 		{name: "the taint of a cordon", node: tainted("node.kubernetes.io/unschedulable"), wantPhase: PhaseDraining},
 		{name: "to be deleted by the autoscaler", node: tainted("ToBeDeletedByClusterAutoscaler"), wantPhase: PhaseDraining},
-		{name: "a deletion candidate of the autoscaler", node: tainted("DeletionCandidateOfClusterAutoscaler"), wantPhase: PhaseDraining},
+		// A soft taint on a node that the autoscaler may remove later: it
+		// is not draining.
+		{name: "a deletion candidate of the autoscaler", node: tainted("DeletionCandidateOfClusterAutoscaler"), wantPhase: PhaseReady},
 		{name: "another taint", node: tainted("dedicated"), wantPhase: PhaseReady},
 		{name: "the image label: the target AMI", node: mkNode("ip-1", newAMI, true, false), wantPhase: PhaseReady, wantNew: true},
 		{name: "the baseline: an old node", node: mkNode("ip-1", newAMI, true, false), baseline: map[string]bool{"name:ip-1": true}, wantPhase: PhaseReady},

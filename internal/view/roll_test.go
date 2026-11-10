@@ -216,7 +216,7 @@ func TestRollPanel_Events(t *testing.T) {
 		{Node: "n-0", Kind: noderoll.EvtJoining}, {Node: "n-1", Kind: noderoll.EvtJoining},
 		{Node: "n-2", Kind: noderoll.EvtJoining}, {Node: "n-3", Kind: noderoll.EvtOnline},
 		{Node: "n-4", Kind: noderoll.EvtDraining}, {Node: "n-5", Kind: noderoll.EvtTerminated},
-		{Node: "n-6", Kind: noderoll.EventKind("later")}, {Node: "n-7", Kind: noderoll.EvtOnline},
+		{Node: "n-6", Kind: noderoll.EventKind("later")}, {Node: "n-7", Kind: noderoll.EvtNotReady},
 	}
 	want := []string{
 		"events",
@@ -225,7 +225,7 @@ func TestRollPanel_Events(t *testing.T) {
 		"    [!] n-4  cordoned, draining",
 		"    - n-5  drained and terminated",
 		"    - n-6  later",
-		"    [OK] n-7  came online (Ready)",
+		"    [!] n-7  not Ready",
 	}
 	if diff := cmp.Diff(want, RollPanel(Theme{}, p, 1, 0)[6:]); diff != "" {
 		t.Errorf("the events (-want +got):\n%s", diff)
