@@ -31,54 +31,63 @@ func engineNeed(history, instances bool) fleet.Need {
 	return fleet.Need{Nodegroups: true, Addons: true, InstanceIDs: instances, Updates: history}
 }
 
-// planUpgrade builds the plan of a cluster upgrade. It reads the cluster
-// once, hands the snapshot to PlanUpgrade with the reads that the planner
-// asks for one by one, and then applies the busy rule and the health gate
-// to the steps.
+// planUpgrade builds the plan of a cluster upgrade. It reads the cluster,
+// hands the snapshot to PlanUpgrade with the reads that the planner asks
+// for one by one, and then applies the busy rule and the health gate to
+// the steps.
 //
 // The reads of the planner stay lazy. An add-on that the request skips is
-// not looked up. The insights are read only for the hop after the live
-// version, and only when the kubelet skew lets that hop through, so a hop
-// that the skew blocks sends no insights refresh.
+// not looked up. The insights are read only for the hop that the planner
+// names (readsInsights): the hop after the live version, when the kubelet
+// skew lets it through, so a hop that the skew blocks sends no insights
+// refresh.
 //
 // With refresh, a real run, the insights are refreshed before they are
 // read: the block decision needs fresh ones. It is the one request of the
-// plan that is not a read. Without it, a dry run, the insights are read
-// as they are.
+// plan that is not a read, and it is sent after the refusals of the
+// planner and before the hops are planned. A refresh can take minutes,
+// so the plan that is shown, gated, and confirmed comes from a read after
+// it. A refresh that failed is not tried again: the plan blocks on it.
+// Without refresh, a dry run, the insights are read as they are.
 func planUpgrade(ctx context.Context, d Deps, req UpgradeRequest, refresh *insightsRefresher) (*Plan, error) {
 	if req.Cluster == "" {
 		return nil, errors.New("no cluster to upgrade")
 	}
 	clients := d.AWS.Clients(req.Region)
-	// The two plans share the catalogue reads: the catalogue is a fact
-	// about EKS, and the refresh between them does not change it.
+	// The reads before and after a refresh share the catalogue reads: the
+	// catalogue is a fact about EKS, and the refresh does not change it.
 	cat := newCatalogue(d.Fetch, clients)
-	var p *Plan
-	for again := false; ; again = true {
+	start := func() (*upgradePlanner, error) {
 		snap, err := d.Fetch.Fetch(ctx, clients, req.Cluster, engineNeed(false, true))
 		if err != nil {
 			return nil, &ClusterReadError{Target: Target{Region: clients.Region, Cluster: req.Cluster}, Err: err}
 		}
-		ran := 0
-		if refresh != nil {
-			ran = refresh.ran
-		}
-		p, err = PlanUpgrade(snap, req, upgradeInputs(ctx, d, clients, snap, req, refresh, cat))
-		if err := planEnded(ctx, err); err != nil {
-			return nil, err
-		}
-		// A refresh can take minutes, and the read of the cluster is from
-		// before it. The plan that is shown, gated, and confirmed comes
-		// from a read after the refresh: the cluster is read once more,
-		// and the second plan reuses the refresh. A refresh that failed
-		// is not tried a second time: the plan blocks on it.
-		if refresh == nil || refresh.ran == ran || refresh.failed || again {
-			break
-		}
-		d.Fetch = d.Fetch.Fresh()
+		p, err := newUpgradePlanner(snap, req, upgradeInputs(ctx, d, clients, snap, req, refresh, cat))
+		return p, planEnded(ctx, err)
 	}
-	p.Clusters[0].gateEngine(ctx, d, ClusterUpgrade, req.Policy)
-	return p, planEnded(ctx, nil)
+	p, err := start()
+	if err != nil {
+		return nil, err
+	}
+	if refresh != nil && p.readsInsights() {
+		t, live := p.cp.Target, p.live.String()
+		if !refresh.current(t, live) {
+			if err := refresh.refresh(ctx, t, live); err != nil {
+				p.in.Insights = func(fleet.Version) InsightsRead { return InsightsRead{Refreshed: true, RefreshErr: err} }
+			} else {
+				d.Fetch = d.Fetch.Fresh()
+				if p, err = start(); err != nil {
+					return nil, err
+				}
+			}
+		}
+	}
+	plan := p.finish()
+	if err := planEnded(ctx, nil); err != nil {
+		return nil, err
+	}
+	plan.Clusters[0].gateEngine(ctx, d, ClusterUpgrade, req.Policy)
+	return plan, planEnded(ctx, nil)
 }
 
 // planEnded returns the error of a plan whose context ended while the
@@ -216,8 +225,10 @@ func rollbackCatalogueKeys(addons []fleet.Addon) func(fleet.Version) []catalogue
 }
 
 // upgradeInsights returns the read of the UPGRADE_READINESS insights for
-// a planner. With refresh it first asks EKS to evaluate them anew and
-// waits for that. live is the version that the control plane runs.
+// a planner. With refresh it refreshes them first. The caller has
+// refreshed them already, so refresh sends nothing and does not wait,
+// unless the control plane moved since that refresh. live is the version
+// that the control plane runs.
 func upgradeInsights(ctx context.Context, clients *awsx.Clients, t Target, live string, refresh *insightsRefresher) func(fleet.Version) InsightsRead {
 	return func(fleet.Version) InsightsRead {
 		read := InsightsRead{Refreshed: refresh != nil}

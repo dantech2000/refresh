@@ -58,19 +58,18 @@ func (f *Fetcher) fetchNodegroups(ctx context.Context, c *awsx.Clients, cluster 
 	}
 
 	type described struct {
-		ran       bool
 		nodegroup Nodegroup
 		err       error
 	}
-	results := each(ctx, f.tickets(c), names, func(ctx context.Context, name string) described {
+	results, started := fanout.ForEachIn(ctx, f.tickets(c), names, func(ctx context.Context, name string) described {
 		out, err := c.EKS.DescribeNodegroup(ctx, &eks.DescribeNodegroupInput{ClusterName: aws.String(cluster), NodegroupName: aws.String(name)})
 		if err == nil && out.Nodegroup == nil {
 			err = fmt.Errorf("describing nodegroup %s: %w", name, errEmptyAnswer)
 		}
 		if err != nil {
-			return described{ran: true, nodegroup: Nodegroup{Name: name, State: stateOf(err)}, err: err}
+			return described{nodegroup: Nodegroup{Name: name, State: stateOf(err)}, err: err}
 		}
-		return described{ran: true, nodegroup: newNodegroup(name, out.Nodegroup)}
+		return described{nodegroup: newNodegroup(name, out.Nodegroup)}
 	})
 
 	res := nodegroupsResult{nodegroups: make([]Nodegroup, len(names)), state: Collected}
@@ -81,7 +80,7 @@ func (f *Fetcher) fetchNodegroups(ctx context.Context, c *awsx.Clients, cluster 
 	}
 	for i, r := range results {
 		switch {
-		case !r.ran:
+		case i >= started:
 			// The context ended before this nodegroup started.
 			r.nodegroup = Nodegroup{Name: names[i], State: NotAttempted}
 			fail(notAttempted(ctx, apidoc.FailureNodegroup, names[i]))
@@ -236,7 +235,7 @@ func (f *Fetcher) fetchAMIs(ctx context.Context, c *awsx.Clients, nodegroups []N
 	if len(groupNames) > 0 {
 		wg.Go(func() { groups, zones, groupsErr = groupInstances(ctx, c, groupNames) })
 	}
-	ran := each(ctx, f.tickets(c), tasks, func(ctx context.Context, t task) bool {
+	_, started := fanout.ForEachIn(ctx, f.tickets(c), tasks, func(ctx context.Context, t task) struct{} {
 		// Each task writes its own fields of its own nodegroup.
 		n, l := &nodegroups[t.index], &lookups[t.index]
 		if t.template {
@@ -244,18 +243,16 @@ func (f *Fetcher) fetchAMIs(ctx context.Context, c *awsx.Clients, nodegroups []N
 		} else {
 			l.latest, l.latestErr = f.latestAMI(ctx, c, n, t.path)
 		}
-		return true
+		return struct{}{}
 	})
 	wg.Wait()
-	for i, t := range tasks {
+	for _, t := range tasks[started:] {
 		// A task that never started, because the context ended, did not
 		// find "no AMI": it was not sent.
-		if err := chunkError(ctx, ran[i], nil); err != nil {
-			if t.template {
-				lookups[t.index].templErr = err
-			} else {
-				lookups[t.index].latestErr = err
-			}
+		if t.template {
+			lookups[t.index].templErr = notSent(ctx)
+		} else {
+			lookups[t.index].latestErr = notSent(ctx)
 		}
 	}
 
@@ -424,11 +421,10 @@ func templateImage(ctx context.Context, c *awsx.Clients, lt LaunchTemplate) (str
 func groupInstances(ctx context.Context, c *awsx.Clients, names []string) (ids, zones map[string][]string, err error) {
 	chunks := slices.Collect(slices.Chunk(names, groupsPerCall))
 	type answer struct {
-		ran    bool
 		groups []asgtypes.AutoScalingGroup
 		err    error
 	}
-	answers := fanout.ForEach(ctx, chunks, len(chunks), func(ctx context.Context, chunk []string) answer {
+	answers, started := fanout.ForEachIn(ctx, nil, chunks, func(ctx context.Context, chunk []string) answer {
 		groups, err := awsx.ListAll(ctx,
 			func(ctx context.Context, token *string) (*autoscaling.DescribeAutoScalingGroupsOutput, error) {
 				return c.AutoScaling.DescribeAutoScalingGroups(ctx, &autoscaling.DescribeAutoScalingGroupsInput{
@@ -439,11 +435,11 @@ func groupInstances(ctx context.Context, c *awsx.Clients, names []string) (ids, 
 				return out.AutoScalingGroups, out.NextToken
 			},
 		)
-		return answer{ran: true, groups: groups, err: err}
+		return answer{groups: groups, err: err}
 	})
 	ids, zones = map[string][]string{}, map[string][]string{}
-	for _, a := range answers {
-		err = cmp.Or(err, chunkError(ctx, a.ran, a.err))
+	for _, a := range answers[:started] {
+		err = cmp.Or(err, a.err)
 		for _, g := range a.groups {
 			members := make([]string, 0, len(g.Instances))
 			for _, inst := range g.Instances {
@@ -453,16 +449,16 @@ func groupInstances(ctx context.Context, c *awsx.Clients, names []string) (ids, 
 			ids[name], zones[name] = members, g.AvailabilityZones
 		}
 	}
+	if started < len(answers) {
+		err = cmp.Or(err, notSent(ctx))
+	}
 	return ids, zones, err
 }
 
-// chunkError returns the error of one chunk of a batched call. A chunk that
-// never ran, because the context ended first, was not sent.
-func chunkError(ctx context.Context, ran bool, err error) error {
-	if !ran {
-		return fmt.Errorf("%w: %w", awsx.ErrNotSent, ctx.Err())
-	}
-	return err
+// notSent returns the error of a call that never started because ctx ended
+// first.
+func notSent(ctx context.Context) error {
+	return fmt.Errorf("%w: %w", awsx.ErrNotSent, ctx.Err())
 }
 
 // instancesByID returns the instances with the IDs. It selects them with
@@ -476,11 +472,10 @@ func instancesByID(ctx context.Context, c *awsx.Clients, ids []string) (map[stri
 	}
 	chunks := slices.Collect(slices.Chunk(ids, filterValuesPerCall))
 	type answer struct {
-		ran          bool
 		reservations []ec2types.Reservation
 		err          error
 	}
-	answers := fanout.ForEach(ctx, chunks, len(chunks), func(ctx context.Context, chunk []string) answer {
+	answers, started := fanout.ForEachIn(ctx, nil, chunks, func(ctx context.Context, chunk []string) answer {
 		reservations, err := awsx.ListAll(ctx,
 			func(ctx context.Context, token *string) (*ec2.DescribeInstancesOutput, error) {
 				return c.EC2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
@@ -492,12 +487,12 @@ func instancesByID(ctx context.Context, c *awsx.Clients, ids []string) (map[stri
 				return out.Reservations, out.NextToken
 			},
 		)
-		return answer{ran: true, reservations: reservations, err: err}
+		return answer{reservations: reservations, err: err}
 	})
 	out := map[string]Instance{}
 	var firstErr error
-	for _, a := range answers {
-		firstErr = cmp.Or(firstErr, chunkError(ctx, a.ran, a.err))
+	for _, a := range answers[:started] {
+		firstErr = cmp.Or(firstErr, a.err)
 		for _, r := range a.reservations {
 			for _, in := range r.Instances {
 				inst := Instance{
@@ -519,6 +514,9 @@ func instancesByID(ctx context.Context, c *awsx.Clients, ids []string) (map[stri
 				out[inst.ID] = inst
 			}
 		}
+	}
+	if started < len(answers) {
+		firstErr = cmp.Or(firstErr, notSent(ctx))
 	}
 	return out, firstErr
 }

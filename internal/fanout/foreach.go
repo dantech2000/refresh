@@ -19,34 +19,43 @@ func ForEach[T, R any](ctx context.Context, items []T, maxConcurrency int, fn fu
 	if maxConcurrency <= 0 {
 		maxConcurrency = DefaultConcurrency
 	}
-	results := make([]R, len(items))
-	sem := make(chan struct{}, maxConcurrency)
+	results, _ := ForEachIn(ctx, make(chan struct{}, maxConcurrency), items, fn)
+	return results
+}
+
+// ForEachIn runs fn over items and returns the results in input order, and
+// the number of items that it started. An item starts when it gets a slot
+// of sem, so the caller decides the limit and can share it between calls.
+// A nil sem means no limit.
+//
+// The items start in input order, and when ctx ends nothing more starts.
+// So the items that did not start are always results[started:], and they
+// keep the zero value of R. ForEachIn returns when every started item has
+// returned.
+func ForEachIn[T, R any](ctx context.Context, sem chan struct{}, items []T, fn func(ctx context.Context, item T) R) (results []R, started int) {
+	if sem == nil {
+		sem = make(chan struct{}, max(len(items), 1))
+	}
+	results = make([]R, len(items))
 	var wg sync.WaitGroup
+	defer wg.Wait()
 	for i, item := range items {
-		// Acquire BEFORE spawning so the cap limits live goroutines. Observe
-		// cancellation at the dispatch point so a cancelled context stops
-		// queueing new work promptly; unstarted items keep their zero value
-		// (e.g. nil pointer), matching best-effort list semantics.
+		// Acquire BEFORE spawning so the cap limits live goroutines.
 		select {
 		case sem <- struct{}{}:
 		case <-ctx.Done():
-			wg.Wait()
-			return results
+			return results, i
 		}
 		// select picks at random when a slot frees up just as ctx is
 		// cancelled, so re-check: never start new work after cancellation.
 		if ctx.Err() != nil {
 			<-sem
-			wg.Wait()
-			return results
+			return results, i
 		}
-		wg.Add(1)
-		go func(i int, it T) {
-			defer wg.Done()
+		wg.Go(func() {
 			defer func() { <-sem }()
-			results[i] = fn(ctx, it)
-		}(i, item)
+			results[i] = fn(ctx, item)
+		})
 	}
-	wg.Wait()
-	return results
+	return results, len(items)
 }

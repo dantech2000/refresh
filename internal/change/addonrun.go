@@ -330,7 +330,7 @@ func (r *runner) confirmAddon(cp *ClusterPlan, res StepResult, s Step, got Settl
 		f.Cluster, f.Region, f.UpdateID = cp.Cluster, cp.Region, res.UpdateID
 		f.Error = "the update of add-on " + name + " succeeded, and the add-on could not be read after it: " + f.Error
 		r.failures = append(r.failures, f)
-		r.unverified = true
+		r.step.unverified = true
 		check.Outcome, check.Message = health.Unreadable, "could not read "+name+" after its update"
 	case fleet.CompareAddonVersions(got.Version, s.To) != 0:
 		res.Status = StepFailed
@@ -351,6 +351,6 @@ func (r *runner) confirmAddon(cp *ClusterPlan, res StepResult, s Step, got Settl
 	}
 	r.verification = append(r.verification, check)
 	// The check is reported after the result of its step: see stepEnded.
-	r.afterStep = append(r.afterStep, Event{Kind: VerifyReport, Phase: s.Ref.Phase, Step: s.Ref, Checks: []health.Result{check}})
+	r.step.after = append(r.step.after, Event{Kind: VerifyReport, Phase: s.Ref.Phase, Step: s.Ref, Checks: []health.Result{check}})
 	return res
 }
