@@ -43,7 +43,8 @@ Every changing command works the same way:
 5. It sends the change and waits for it. `--no-wait` returns once AWS accepts
    the change.
 6. After a roll, it verifies that the nodegroups are `ACTIVE`, that the new
-   nodes are `Ready`, and that no pod is newly `Pending`.
+   nodes are `Ready`, and that no new pod is stuck `Pending`: unschedulable,
+   or unable to pull its image or read its configuration.
 
 `--dry-run` stops after step 3 and prints the plan with the verdict of the
 health gate.

@@ -41,7 +41,8 @@ The full documentation is at [drod.dev/refresh](https://drod.dev/refresh/).
 - **Fleet updates.** `nodegroup update --all-clusters` rolls the clusters of
   the regions you name, one after another, after one confirmation.
 - **Verification after a roll.** The nodegroups are `ACTIVE`, the new nodes
-  are `Ready`, and no pod is newly `Pending`. An issue exits `5`.
+  are `Ready`, and no new pod is stuck `Pending`: unschedulable, or unable to
+  pull its image or read its configuration. An issue exits `5`.
 - **No state file.** Every plan comes from the live state of the cluster. If
   a run stops, run the same command again.
 - **Exact names.** A cluster, nodegroup, or add-on name is exact. Select by

@@ -341,14 +341,23 @@ After a roll, the command verifies the result. `--skip-verify` leaves this out.
 |---|---|---|
 | `NodegroupActive` | A rolled nodegroup is not `ACTIVE` | The nodegroup could not be read |
 | `NodesReady` | A new node is not `Ready` after the wait | The node list fails |
-| `NewPendingPods` | A pod that was not `Pending` before the roll is `Pending`, and the scheduler cannot place it | The pod list fails |
+| `NewPendingPods` | A pod that was not `Pending` before the roll is `Pending` and stuck: the scheduler cannot place it, or a container cannot pull its image or read its configuration | The pod list fails |
 
 `NodesReady` waits for the new nodes: at most 2 minutes, and never past the
 time left of `--wait-timeout`.
 
-A `Pending` pod is stuck only when its `PodScheduled` condition is `False`
-with the reason `Unschedulable`: the scheduler tried and found no node for
-it. A pod that is bound to a node and pulls its images is also `Pending`
+A `Pending` pod is stuck in two cases:
+
+- Its `PodScheduled` condition is `False` with the reason `Unschedulable`:
+  the scheduler tried and found no node for it.
+- A container or an init container is
+  [`Waiting`](https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/#container-state-waiting)
+  with the reason `ImagePullBackOff`, `ErrImagePull`, or
+  `CreateContainerConfigError`. These do not pass without a change, and a
+  bad AMI can cause them.
+
+Any other `Pending` pod is progressing. A pod that is bound to a node and
+pulls its images is also `Pending`
 ([Pod phase](https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/#pod-phase)).
 Every pod that a roll moves goes through that state, so it is not an issue.
 

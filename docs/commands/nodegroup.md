@@ -135,7 +135,8 @@ here. `cluster upgrade` does that.
 4. It asks once. `--yes` skips the question.
 5. It starts every roll and waits for all of them.
 6. It verifies: the nodegroups are `ACTIVE`, the new nodes are `Ready`, and no
-   pod is newly `Pending`.
+   new pod is stuck `Pending`: unschedulable, or unable to pull its image or
+   read its configuration.
 
 ```bash
 refresh nodegroup update -c dev-orders-32 --yes

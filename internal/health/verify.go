@@ -286,7 +286,7 @@ func newNodeState(list *corev1.NodeList, nodegroups []string, base Baseline) (ne
 // runNewPendingPods lists the Pending pods and keeps the stuck ones that
 // the baseline lacks. Phase Pending also covers a pod that is bound to a
 // node and pulls its images, which every pod moved by a roll goes through.
-// Such a pod is progressing, not stuck: see stuckPending.
+// Such a pod is progressing, not stuck: see stuckReason.
 func runNewPendingPods(in *Input, base Baseline) Result {
 	if !base.Taken {
 		return Result{Outcome: Skipped, Message: "no baseline of the Pending pods before the roll"}
@@ -319,55 +319,88 @@ func runNewPendingPods(in *Input, base Baseline) Result {
 	if len(stuck) == 0 {
 		return Result{Outcome: Pass, Message: "no new Pending pods"}
 	}
-	shown := stuck
-	if len(shown) > 5 {
-		shown = shown[:5]
+	r := Result{Outcome: Fail}
+	var shown []string
+	for i, p := range stuck {
+		r.Findings = append(r.Findings, p.key)
+		if i < 5 {
+			shown = append(shown, p.key+" ("+p.reason+")")
+		}
 	}
-	return Result{Outcome: Fail, Findings: stuck, Message: fmt.Sprintf("%s newly Pending after the roll, not schedulable: %s", plural(len(stuck), "pod"), strings.Join(shown, ", "))}
+	r.Message = fmt.Sprintf("%s newly Pending after the roll and stuck: %s", plural(len(stuck), "pod"), strings.Join(shown, ", "))
+	return r
 }
 
-// newStuckPods returns the keys of the stuck pods in pods that the
-// baseline lacks, sorted. nodes are the nodes of the cluster now, for the
+// stuckPod is a Pending pod that does not progress: its key and the
+// reason, as the pod status gives it.
+type stuckPod struct{ key, reason string }
+
+// newStuckPods returns the stuck pods in pods that the baseline lacks,
+// sorted by key. nodes are the nodes of the cluster now, for the
 // pinned-node rule of pendingKey.
-func newStuckPods(nodes *corev1.NodeList, pods *corev1.PodList, base Baseline) []string {
+func newStuckPods(nodes *corev1.NodeList, pods *corev1.PodList, base Baseline) []stuckPod {
 	live := make(map[string]struct{}, len(nodes.Items))
 	for i := range nodes.Items {
 		live[nodes.Items[i].Name] = struct{}{}
 	}
-	var stuck []string
+	var stuck []stuckPod
 	for i := range pods.Items {
 		pod := &pods.Items[i]
-		if !stuckPending(pod) {
+		reason := stuckReason(pod)
+		if reason == "" {
 			continue
 		}
 		key, ok := pendingKey(pod, live)
 		if _, before := base.Pending[key]; ok && !before {
-			stuck = append(stuck, key)
+			stuck = append(stuck, stuckPod{key: key, reason: reason})
 		}
 	}
-	sort.Strings(stuck)
+	slices.SortFunc(stuck, func(a, b stuckPod) int { return strings.Compare(a.key, b.key) })
 	return stuck
 }
 
-// stuckPending reports whether the scheduler could not place a Pending
-// pod. Kubernetes defines phase Pending as "accepted by the Kubernetes
-// cluster, but one or more of the containers has not been set up and made
-// ready to run. This includes time a Pod spends waiting to be scheduled as
-// well as the time spent downloading container images over the network"
+// stuckWaiting are the reasons of a waiting container that does not start
+// without a change: its image cannot be pulled, or its configuration (a
+// Secret or a ConfigMap) cannot be read. A bad AMI can cause each of them,
+// for example through the image credentials of the node.
+var stuckWaiting = []string{"ImagePullBackOff", "ErrImagePull", "CreateContainerConfigError"}
+
+// stuckReason returns why a Pending pod is stuck, or "" for a pod that
+// progresses. Kubernetes defines phase Pending as "accepted by the
+// Kubernetes cluster, but one or more of the containers has not been set up
+// and made ready to run. This includes time a Pod spends waiting to be
+// scheduled as well as the time spent downloading container images over
+// the network"
 // (https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/#pod-phase).
-// The condition PodScheduled says whether "the Pod has been scheduled to a
-// node" (#pod-conditions on the same page), and the scheduler sets it False
-// with the reason Unschedulable when it "can't schedule the pod right now,
-// for example due to insufficient resources in the cluster"
-// (corev1.PodReasonUnschedulable). That is the sign of a roll that took
-// away capacity that the pods need. A bound pod that pulls its images, or
-// a pod that the scheduler has not tried yet, is progressing; NodesReady
-// covers the nodes they run on.
-func stuckPending(pod *corev1.Pod) bool {
+// A pod is stuck in two cases:
+//
+//   - The scheduler could not place it. The condition PodScheduled says
+//     whether "the Pod has been scheduled to a node" (#pod-conditions on
+//     the same page), and the scheduler sets it False with the reason
+//     Unschedulable when it "can't schedule the pod right now, for example
+//     due to insufficient resources in the cluster"
+//     (corev1.PodReasonUnschedulable): the roll took away capacity that the
+//     pods need.
+//   - A container, or an init container, is Waiting with a reason of
+//     stuckWaiting. A Waiting container "is still running the operations it
+//     requires in order to complete start up", and its Reason field
+//     summarizes "why the container is in that state" (#container-state-waiting
+//     on the same page; for the back-off of an image pull, see
+//     https://kubernetes.io/docs/concepts/containers/images/#imagepullbackoff).
+//
+// A bound pod whose containers are being created, or a pod that the
+// scheduler has not tried yet, is progressing; NodesReady covers the nodes
+// they run on.
+func stuckReason(pod *corev1.Pod) string {
 	for _, c := range pod.Status.Conditions {
-		if c.Type == corev1.PodScheduled {
-			return c.Status == corev1.ConditionFalse && c.Reason == corev1.PodReasonUnschedulable
+		if c.Type == corev1.PodScheduled && c.Status == corev1.ConditionFalse && c.Reason == corev1.PodReasonUnschedulable {
+			return corev1.PodReasonUnschedulable
 		}
 	}
-	return false
+	for _, c := range slices.Concat(pod.Status.InitContainerStatuses, pod.Status.ContainerStatuses) {
+		if w := c.State.Waiting; w != nil && slices.Contains(stuckWaiting, w.Reason) {
+			return w.Reason
+		}
+	}
+	return ""
 }
