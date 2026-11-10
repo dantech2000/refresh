@@ -67,13 +67,6 @@ type insightsRefresher struct {
 	// done has when a refresh completed, on the clock of the run, by
 	// region, cluster, and control-plane version.
 	done map[string]time.Time
-	// ran counts the refreshes that were started or waited for. A plan
-	// that sees it move knows that time passed since its read.
-	ran int
-	// failed says that the last refresh ended with an error. A plan that
-	// sees it does not read the cluster again: a second refresh would
-	// fail the same way, after a second wait.
-	failed bool
 	// progress reports what the wait does. It may be nil.
 	progress func(text string)
 	// hold stops the read budget of the caller while the refresh waits,
@@ -88,10 +81,23 @@ func (ir *insightsRefresher) say(format string, args ...any) {
 	}
 }
 
+// refreshKey is the key of done.
+func refreshKey(t Target, live string) string {
+	return t.Region + "|" + t.Cluster + "|" + live
+}
+
+// current reports whether a refresh completed for the cluster at the
+// control-plane version live less than insightsRefreshReuse ago. refresh
+// then sends nothing and does not wait.
+func (ir *insightsRefresher) current(t Target, live string) bool {
+	at, ok := ir.done[refreshKey(t, live)]
+	return ok && ir.d.now().Sub(at) < insightsRefreshReuse
+}
+
 // refresh asks EKS to evaluate the insights of the cluster again and
 // waits until the refresh has completed. live is the version that the
-// control plane runs: a refresh that completed for it less than
-// insightsRefreshReuse ago is reused, and nothing is sent.
+// control plane runs: a refresh that is current for it is reused, and
+// nothing is sent.
 //
 // A start that EKS refuses is not always an error:
 //
@@ -111,18 +117,9 @@ func (ir *insightsRefresher) say(format string, args ...any) {
 // The error is the error of ctx when ctx ended, and an error that wraps
 // errInsightsRefreshTimeout when the limit of the refresh passed.
 func (ir *insightsRefresher) refresh(ctx context.Context, t Target, live string) error {
-	err := ir.wait(ctx, t, live)
-	ir.failed = err != nil
-	return err
-}
-
-// wait is refresh without the record of its outcome.
-func (ir *insightsRefresher) wait(ctx context.Context, t Target, live string) error {
-	key := t.Region + "|" + t.Cluster + "|" + live
-	if at, ok := ir.done[key]; ok && ir.d.now().Sub(at) < insightsRefreshReuse {
+	if ir.current(t, live) {
 		return nil
 	}
-	ir.ran++
 	if ir.hold != nil {
 		defer ir.hold()()
 	}
@@ -195,7 +192,7 @@ func (ir *insightsRefresher) wait(ctx context.Context, t Target, live string) er
 			if ir.done == nil {
 				ir.done = map[string]time.Time{}
 			}
-			ir.done[key] = ir.d.now()
+			ir.done[refreshKey(t, live)] = ir.d.now()
 			return nil
 		case out.Status == ekstypes.InsightsRefreshStatusFailed:
 			msg := aws.ToString(out.Message)

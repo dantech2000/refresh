@@ -31,10 +31,10 @@ type UpgradeInputs struct {
 	// plan can ask twice for the same add-on and version.
 	AddonVersions func(addon string, kubernetes fleet.Version) ([]string, error)
 	// Insights returns the UPGRADE_READINESS insights of the cluster. A
-	// real run starts an insights refresh in it and waits for it; a dry
-	// run reads only. It is called at most once, for the hop after the
-	// live version, and not at all with SkipInsights, when the control
-	// plane does not move, or when the kubelet skew blocks that hop.
+	// real run has refreshed them before the plan; a dry run reads only.
+	// It is called at most once, for the hop after the live version, and
+	// not at all with SkipInsights, when the control plane does not move,
+	// or when the kubelet skew blocks that hop: see readsInsights.
 	Insights func(hop fleet.Version) InsightsRead
 	// Command holds the words around the commands that a notice names.
 	Command FollowUp
@@ -63,6 +63,19 @@ type UpgradeInputs struct {
 // a NotFoundError for a nodegroup or an add-on name that the cluster does
 // not have.
 func PlanUpgrade(snap *fleet.Snapshot, req UpgradeRequest, in UpgradeInputs) (*Plan, error) {
+	p, err := newUpgradePlanner(snap, req, in)
+	if err != nil {
+		return nil, err
+	}
+	return p.finish(), nil
+}
+
+// newUpgradePlanner starts PlanUpgrade: the refusals, the target version,
+// the names of the request, and the catch-up hop. It reads no insights,
+// so a request that is refused is refused before an insights refresh.
+// readsInsights then says whether the plan reads the insights, and
+// finish plans the hops.
+func newUpgradePlanner(snap *fleet.Snapshot, req UpgradeRequest, in UpgradeInputs) (*upgradePlanner, error) {
 	target := Target{Region: snap.Cluster.Region, Cluster: snap.Cluster.Name}
 	live := snap.Cluster.Version
 	if snap.Have.Cluster != fleet.Collected || live.IsZero() {
@@ -96,18 +109,30 @@ func PlanUpgrade(snap *fleet.Snapshot, req UpgradeRequest, in UpgradeInputs) (*P
 		return nil, err
 	}
 	p.simulate()
-
-	var lag addonLag
+	p.hops = hops
 	if hops[0] != live {
-		lag = p.catchUp(hops[0])
+		p.lag = p.catchUp(hops[0])
 	}
-	for _, hop := range hops {
+	return p, nil
+}
+
+// readsInsights reports whether finish reads the upgrade insights. Only
+// the first hop can be the minor version after the live one, and this is
+// readsInsights on the versions that the plan predicts for that hop: the
+// rule that hopReadiness applies when finish plans the hop.
+func (p *upgradePlanner) readsInsights() bool {
+	return readsInsights(p.snap, p.hops[0], p.simNodegroups, p.req.SkipInsights)
+}
+
+// finish plans the hops after newUpgradePlanner and returns the plan.
+func (p *upgradePlanner) finish() *Plan {
+	for _, hop := range p.hops {
 		p.hop(hop)
 	}
 	p.applyScope()
-	p.blockOnLaggingAddons(lag)
+	p.blockOnLaggingAddons(p.lag)
 	p.otherComputeNotice()
-	return &Plan{Kind: ClusterUpgrade, Request: req, Clusters: []ClusterPlan{*p.cp}, At: in.Now}, nil
+	return &Plan{Kind: ClusterUpgrade, Request: p.req, Clusters: []ClusterPlan{*p.cp}, At: p.in.Now}
 }
 
 // upgradePlanner holds one run of PlanUpgrade.
@@ -118,6 +143,10 @@ type upgradePlanner struct {
 	cp   *ClusterPlan
 	// live is the version that the control plane runs.
 	live fleet.Version
+	// hops are the hops of the plan, and lag what the add-ons block the
+	// first control-plane step with: see catchUp.
+	hops []fleet.Version
+	lag  addonLag
 	// addons are the installed add-ons in dependency order.
 	addons []fleet.Addon
 	// simNodegroups and simAddons are the versions that the plan

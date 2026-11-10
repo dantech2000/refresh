@@ -52,7 +52,8 @@ func (r *runner) runControlPlane(cp *ClusterPlan, s Step, snap *fleet.Snapshot) 
 	if fresh.Status == clusterUpdating {
 		// The gate of the phase decides whether the run waits for an
 		// update that it did not start.
-		if out, ok := r.controlPlaneGate(cp, res, s, snap); !ok {
+		insights, _ := r.gateInsights(cp, s, snap)
+		if out, ok := r.controlPlaneGate(cp, res, s, snap, insights); !ok {
 			return out
 		}
 		out, done := r.attachControlPlane(cp, res, s, clients, poll)
@@ -107,14 +108,14 @@ func (r *runner) runControlPlane(cp *ClusterPlan, s Step, snap *fleet.Snapshot) 
 //
 // An upgrade judges the readiness of the hop again, live: the plan judged
 // a later hop from versions that it only predicted. HopReadiness applies
-// the kubelet skew rule of the planner, and after it the insights, which a
-// real run refreshes first, so a hop that the skew blocks sends no
-// insights refresh. The step is sent only from the minor version before
+// the kubelet skew rule of the planner, and after it the insights, which
+// a real run refreshed before the gate (gateInsights). A hop that the skew
+// blocks sends no insights refresh. The step is sent only from the minor version before
 // its goal, so the rule blocks a nodegroup three or more minor versions
 // behind the live control plane, as health.VersionSkew does.
 //
 // A rollback checks that no managed nodegroup is above its target.
-func (r *runner) controlPlaneGate(cp *ClusterPlan, res StepResult, s Step, snap *fleet.Snapshot) (StepResult, bool) {
+func (r *runner) controlPlaneGate(cp *ClusterPlan, res StepResult, s Step, snap *fleet.Snapshot, insights func(fleet.Version) InsightsRead) (StepResult, bool) {
 	var blockers []Blocker
 	switch req := r.req.(type) {
 	case UpgradeRequest:
@@ -123,8 +124,7 @@ func (r *runner) controlPlaneGate(cp *ClusterPlan, res StepResult, s Step, snap 
 			// The control plane is at the hop: the fresh read decides.
 			return res, true
 		}
-		clients := r.d.AWS.Clients(cp.Region)
-		ready := HopReadiness(snap, hop, req.SkipInsights, upgradeInsights(r.readCtx, clients, cp.Target, snap.Cluster.Version.String(), r.refresh))
+		ready := HopReadiness(snap, hop, req.SkipInsights, insights)
 		if err := r.readCtx.Err(); err != nil {
 			return r.unsent(cp, res, err), false
 		}
