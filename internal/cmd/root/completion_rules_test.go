@@ -11,7 +11,8 @@ import (
 // The completion of a shell never names a hidden command (#419). The
 // scripts of cobra ask the binary at completion time, so the answer of
 // that request is what a user sees: every command of the root that is
-// not hidden, and no hidden one. The scripts name none either.
+// not hidden, and no hidden one. The script of each shell is a script for
+// refresh, with nothing on stderr, and names no hidden command either.
 func TestCompletion_OmitsHiddenCommands(t *testing.T) {
 	clearEnv(t)
 	f, _, _, _ := cmdutiltest.NewFactory()
@@ -64,9 +65,15 @@ func TestCompletion_OmitsHiddenCommands(t *testing.T) {
 	})
 	for _, shell := range []string{"bash", "zsh", "fish", "powershell"} {
 		t.Run(shell, func(t *testing.T) {
-			f, _, out, _ := cmdutiltest.NewFactory()
+			f, _, out, errOut := cmdutiltest.NewFactory()
 			if err := execute(f, "completion", shell); err != nil {
 				t.Fatal(err)
+			}
+			if !strings.Contains(out.String(), "refresh") {
+				t.Errorf("stdout does not look like a completion script for refresh:\n%.200s", out.String())
+			}
+			if errOut.Len() != 0 {
+				t.Errorf("stderr = %q, want nothing", errOut.String())
 			}
 			for _, name := range hidden {
 				if strings.Contains(out.String(), name) {
