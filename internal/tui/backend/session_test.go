@@ -15,7 +15,7 @@ import (
 func TestSessionEndsWhileAChangeAsks(t *testing.T) {
 	r := changeRig(t, changeWorld(nil), false)
 	r.wait(t, 0, swept(1))
-	p := r.propose(t, state.Action{Kind: state.ActionAddons, Cluster: prod})
+	p := r.propose(t, state.Action{Kind: change.AddonUpdate, Cluster: prod})
 	// A newer vpc-cni appears after the dry run, so the change asks.
 	r.world.Edit(func(s *fleettest.State) {
 		s.AddonVersions = append(s.AddonVersions, fleettest.AddonVersion{Addon: "vpc-cni", Version: "v1.21.0-eksbuild.1", ClusterVersions: []string{"1.33"}})
