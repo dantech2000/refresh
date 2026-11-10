@@ -261,10 +261,10 @@ func (r *runner) phaseBusy(cp *ClusterPlan, res StepResult, snap *fleet.Snapshot
 // step that it stopped: the step names itself where the plan says that
 // nothing was started.
 func busyStepMessage(b Blocker, ref StepRef) string {
-	if b.Cause == "" {
+	if b.cause == "" {
 		return b.Message
 	}
-	return b.Cause + "; " + stepName(ref) + " was not changed" + busyAgain
+	return b.cause + "; " + stepName(ref) + " was not changed" + busyAgain
 }
 
 // rederive derives the steps of a phase again from a read of the cluster.

@@ -154,10 +154,10 @@ type Blocker struct {
 	// Step is nil when the blocker is about the cluster.
 	Step    *StepRef
 	Message string
-	// Cause is what a Busy blocker found, such as "prod is busy (cluster
-	// UPDATING)": the Message without what the run did about it, for a
-	// caller that says that in its own words. It is "" for other kinds.
-	Cause string
+	// cause is what a Busy blocker found, such as "prod is busy (cluster
+	// UPDATING)": the Message without what the run did about it, for the
+	// engine, which says that in its own words. It is "" for other kinds.
+	cause string
 }
 
 // busyAgain is the ending of every message of the busy rule.
@@ -165,7 +165,7 @@ const busyAgain = ". Run it again once that finishes"
 
 // busyBlocker returns the Busy blocker of a cause: nothing was started.
 func busyBlocker(cause string, step *StepRef) Blocker {
-	return Blocker{Kind: BlockerBusy, Step: step, Message: cause + "; nothing was started" + busyAgain, Cause: cause}
+	return Blocker{Kind: BlockerBusy, Step: step, Message: cause + "; nothing was started" + busyAgain, cause: cause}
 }
 
 // Phase is a group of steps. A step that does not succeed does not stop

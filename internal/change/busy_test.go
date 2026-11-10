@@ -31,7 +31,7 @@ func TestBusy(t *testing.T) {
 		return Step{Ref: StepRef{Phase: phase, Kind: kind, Name: name}, Action: action, Reason: reason}
 	}
 	busy := func(what string) []Blocker {
-		return []Blocker{{Kind: BlockerBusy, Message: "prod is busy (" + what + "); nothing was started. Run it again once that finishes", Cause: "prod is busy (" + what + ")"}}
+		return []Blocker{{Kind: BlockerBusy, Message: "prod is busy (" + what + "); nothing was started. Run it again once that finishes", cause: "prod is busy (" + what + ")"}}
 	}
 	unread := func(what string) []Blocker {
 		return []Blocker{{Kind: BlockerUnread, Message: "could not read " + what + " of prod, so nothing shows that no change is running"}}
@@ -147,7 +147,7 @@ func TestBusy(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			refuse, notices := Busy(snapshot(tt.edit), tt.kind, tt.ours)
-			if diff := cmp.Diff(tt.refuse, refuse); diff != "" {
+			if diff := cmp.Diff(tt.refuse, refuse, cmp.AllowUnexported(Blocker{})); diff != "" {
 				t.Errorf("refusals (-want +got):\n%s", diff)
 			}
 			if diff := cmp.Diff(tt.notices, notices); diff != "" {
@@ -289,7 +289,7 @@ func TestBusyStepMessage(t *testing.T) {
 		want string
 	}{
 		{"busy", busyBlocker("prod is busy (cluster UPDATING)", nil), "prod is busy (cluster UPDATING); add-on coredns was not changed. Run it again once that finishes"},
-		{"busy, plan message reworded", Blocker{Kind: BlockerBusy, Message: "reworded", Cause: "prod is busy (cluster UPDATING)"}, "prod is busy (cluster UPDATING); add-on coredns was not changed. Run it again once that finishes"},
+		{"busy, plan message reworded", Blocker{Kind: BlockerBusy, Message: "reworded", cause: "prod is busy (cluster UPDATING)"}, "prod is busy (cluster UPDATING); add-on coredns was not changed. Run it again once that finishes"},
 		{"unread", Blocker{Kind: BlockerUnread, Message: "could not read the cluster of prod"}, "could not read the cluster of prod"},
 	}
 	for _, tt := range tests {
