@@ -121,6 +121,73 @@ func TestRollMovesNodesAndPods(t *testing.T) {
 	}
 }
 
+// TestRollDrainHonoursBudgets checks the drain of a roll against a budget
+// that allows no disruption of web: EKS cannot evict, and fails the update
+// with PodEvictionFailure, unless the request has force or the budget
+// allows the disruption before the update ends.
+func TestRollDrainHonoursBudgets(t *testing.T) {
+	const (
+		ready   = "a-1(cordoned) a-2(cordoned) api-1=Running@b-1 b-1 ng-a-u1-1 ng-a-u1-2 web-1=Running@a-1 web-2=Running@a-2"
+		drained = "a-1(cordoned) a-2(cordoned) api-1=Running@b-1 b-1 ng-a-u1-1 ng-a-u1-2 web-1-u1=Running@ng-a-u1-1 web-2-u1=Running@ng-a-u1-2"
+		done    = "api-1=Running@b-1 b-1 ng-a-u1-1 ng-a-u1-2 web-1-u1=Running@ng-a-u1-1 web-2-u1=Running@ng-a-u1-2"
+	)
+	evictionFailure := []fleettest.UpdateError{{
+		Code: "PodEvictionFailure", Message: "Reached max retries while trying to evict pods from nodes in node group ng-a", ResourceIDs: []string{"a-1", "a-2"},
+	}}
+	tests := []struct {
+		name  string
+		force bool
+		// relax lets the budget allow one disruption after this many
+		// minutes; 0 never.
+		relax      int
+		want       [5]string
+		wantStatus fleettest.UpdateStatus
+		wantErrors []fleettest.UpdateError
+	}{
+		{name: "without force", want: [5]string{1: ready, 2: ready, 3: ready, 4: ready}, wantStatus: fleettest.UpdateFailed, wantErrors: evictionFailure},
+		{name: "with force", force: true, want: [5]string{1: ready, 2: drained, 3: done, 4: done}, wantStatus: fleettest.UpdateSuccessful},
+		{name: "the budget allows it before the end", relax: 3, want: [5]string{1: ready, 2: ready, 3: done, 4: done}, wantStatus: fleettest.UpdateSuccessful},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := kubeWorld(fleettest.UpdateScript{After: 4 * time.Minute})
+			w.Edit(func(s *fleettest.State) {
+				c := s.Cluster(region, "prod")
+				for _, p := range c.Pods {
+					p.Labels = map[string]string{"app": strings.TrimSuffix(strings.TrimSuffix(p.Name, "-1"), "-2")}
+				}
+				c.PDBs = []fleettest.PDB{{Namespace: "default", Name: "web", Selector: map[string]string{"app": "web"}, MinAvailable: 2, CurrentHealthy: 2, DesiredHealthy: 2, ExpectedPods: 2}}
+			})
+			u, err := w.UpdateNodegroupVersion(region, "prod", "ng-a", fleettest.NodegroupVersionRequest{Force: &tt.force})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got [5]string
+			for i := range got {
+				if i > 0 {
+					if i == tt.relax {
+						w.Edit(func(s *fleettest.State) { s.Cluster(region, "prod").PDBs[0].DisruptionsAllowed = 1 })
+					}
+					w.Advance(time.Minute)
+					got[i] = kubeState(w)
+				}
+			}
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("nodes and pods by quarter (-want +got):\n%s", diff)
+			}
+			w.View(func(s *fleettest.State) {
+				ended := s.Cluster(region, "prod").Update(u.ID)
+				if ended.Status != tt.wantStatus {
+					t.Errorf("update = %s, want %s", ended.Status, tt.wantStatus)
+				}
+				if diff := cmp.Diff(tt.wantErrors, ended.Errors); diff != "" {
+					t.Errorf("update errors (-want +got):\n%s", diff)
+				}
+			})
+		})
+	}
+}
+
 func TestRollWithNoDurationOrNoNodes(t *testing.T) {
 	w := kubeWorld(fleettest.UpdateScript{})
 	if _, err := w.UpdateNodegroupVersion(region, "prod", "ng-b", fleettest.NodegroupVersionRequest{}); err != nil {

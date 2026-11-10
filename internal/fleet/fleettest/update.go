@@ -44,7 +44,8 @@ type Update struct {
 	Errors    []UpdateError
 	// Force and RollbackTimeoutMinutes record what the request that started
 	// the update asked for. EKS does not report them back; they are here so
-	// a test can check what the product sent.
+	// a test can check what the product sent. Force also lets the drain of
+	// a nodegroup roll pass the PodDisruptionBudgets (see RollScript).
 	Force                  bool
 	RollbackTimeoutMinutes int32
 
@@ -690,9 +691,19 @@ func (w *World) settle() {
 	for _, u := range due {
 		u.scheduled = false
 		u.Status = cmp.Or(u.script.Result, UpdateSuccessful)
+		// A drain that the budgets still block fails the update, whatever
+		// the script says.
+		evictionFailed := u.roll != nil && len(u.roll.blocked) > 0
+		if evictionFailed {
+			u.Status = UpdateFailed
+		}
 		ok := u.Status == UpdateSuccessful
 		u.finish(w.now, ok)
 		if ok {
+			continue
+		}
+		if evictionFailed {
+			u.Errors = []UpdateError{u.roll.evictionFailure()}
 			continue
 		}
 		u.Errors = cloneErrors(u.script.Errors)

@@ -285,7 +285,9 @@ func updateCases() []updateCase {
 		{name: "require-healthy", noKube: true, args: []string{"web", "--yes", "--require-healthy"}, exit: cmdutil.ExitBlocked},
 		{name: "pdb-blocked", args: []string{"web", "--yes"}, exit: cmdutil.ExitBlocked, seed: tightWeb},
 		{name: "pdb-forced", args: []string{"web", "--yes", "--force"}, rolls: []string{"web"}, force: true, seed: tightWeb},
-		{name: "skip-health-check", args: []string{"web", "--yes", "--skip-health-check"}, rolls: []string{"web"}, seed: tightWeb},
+		// The gate is skipped, and EKS cannot drain the pod that the budget
+		// protects: the roll ends Failed with PodEvictionFailure.
+		{name: "skip-health-check", args: []string{"web", "--yes", "--skip-health-check"}, rolls: []string{"web"}, exit: cmdutil.ExitFailure, seed: tightWeb},
 		{name: "cluster-busy", args: []string{"web", "--yes"}, exit: cmdutil.ExitBlocked,
 			seed: func(_ *fleettest.State, c *fleettest.Cluster) { c.Status = fleettest.StatusUpdating }},
 		{name: "busy-target", args: []string{"web", "--yes"}, exit: cmdutil.ExitBlocked, seed: script("web", never), prepare: scaleElsewhere},

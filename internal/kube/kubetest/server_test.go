@@ -294,7 +294,9 @@ func TestInformer(t *testing.T) {
 
 	// Roll ng-a over four minutes of world time.
 	w.Edit(func(s *fleettest.State) { s.DefaultUpdate = fleettest.UpdateScript{After: 4 * time.Minute} })
-	if _, err := w.UpdateNodegroupVersion(region, "prod", "ng-a", fleettest.NodegroupVersionRequest{}); err != nil {
+	// With force: the budget of web allows no disruption, and EKS would
+	// stop the drain of a roll without it.
+	if _, err := w.UpdateNodegroupVersion(region, "prod", "ng-a", fleettest.NodegroupVersionRequest{Force: new(true)}); err != nil {
 		t.Fatal(err)
 	}
 	steps := []struct {

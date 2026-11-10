@@ -130,13 +130,25 @@ type Event struct {
 //	              names on the new nodes
 //	at 3/4        the old nodes and the old instances are gone
 //
-// An update with no duration goes through all of them at once. The new
-// nodes and instances run LatestImage of the update's Kubernetes version,
-// which is the image the world's SSM parameters recommend, so what EC2, the
-// node labels, and SSM say after a roll agree. The instances are those of
-// the nodegroup's first Auto Scaling group; each launch and termination is
-// a scaling activity. A nodegroup with no nodes and no instances in the
-// world has no roll.
+// An update with no duration goes through all of them at once.
+//
+// The drain at 1/2 evicts the pods as the Kubernetes eviction API does
+// (pkg/registry/core/pod/storage/eviction.go): a pod on an old node that a
+// PodDisruptionBudget of its namespace protects, whose budget allows no
+// disruption, blocks it (see evictionBlocked). An update without force
+// then stops after the cordon, and ends Failed with PodEvictionFailure when
+// its duration ends, as EKS does after its 15 minutes of retries
+// (https://docs.aws.amazon.com/eks/latest/userguide/managed-node-update-behavior.html).
+// A budget that allows the disruption again before then lets the roll go
+// on. An update with force deletes the pods whatever the budgets say
+// (https://docs.aws.amazon.com/eks/latest/APIReference/API_UpdateNodegroupVersion.html).
+//
+// The new nodes and instances run LatestImage of the update's Kubernetes
+// version, which is the image the world's SSM parameters recommend, so what
+// EC2, the node labels, and SSM say after a roll agree. The instances are
+// those of the nodegroup's first Auto Scaling group; each launch and
+// termination is a scaling activity. A nodegroup with no nodes and no
+// instances in the world has no roll.
 type RollScript struct {
 	// StuckDrain stops the roll after the old nodes are cordoned: their pods
 	// stay, and the old nodes stay. Pair it with a Failed result to model a
@@ -151,7 +163,12 @@ type RollScript struct {
 
 // roll is the state of a nodegroup roll in progress.
 type roll struct {
-	script   RollScript
+	script RollScript
+	// force is the update's force flag: the drain ignores the budgets.
+	force bool
+	// blocked are the old nodes whose drain a budget blocked at the last
+	// advance, or nil.
+	blocked  []string
 	started  time.Time
 	duration time.Duration
 	// number is the update's number, which names what the roll creates.
@@ -173,7 +190,7 @@ type roll struct {
 // a nodegroup that has neither.
 func (w *World) startRoll(c *Cluster, ng *Nodegroup, u *Update, version string) *roll {
 	r := &roll{
-		script: u.script.Roll, started: w.now, duration: u.script.After,
+		script: u.script.Roll, force: u.Force, started: w.now, duration: u.script.After,
 		number: w.lastUpdate, nodegroup: ng.Name, image: LatestImage(version),
 	}
 	for _, n := range c.Nodes {
@@ -212,6 +229,11 @@ func (r *roll) advance(s *State, c *Cluster, now time.Time) {
 		reached = min(reached, 2)
 	}
 	for r.stage < reached {
+		if r.stage == 2 && !r.force {
+			if r.blocked = r.evictionBlocked(c); len(r.blocked) > 0 {
+				return
+			}
+		}
 		r.stage++
 		switch r.stage {
 		case 1:
@@ -234,6 +256,81 @@ func (r *roll) advance(s *State, c *Cluster, now time.Time) {
 			c.Nodes = slices.DeleteFunc(c.Nodes, func(n *Node) bool { return slices.Contains(r.old, n.Name) })
 			r.terminate(s, now)
 		}
+	}
+}
+
+// evictionBlocked returns the old nodes that hold a pod the eviction API
+// would refuse to evict. The rules are those of the API:
+//
+//   - a pod that is Pending, Succeeded, Failed, or being deleted ignores
+//     every budget;
+//   - a pod that more than one budget selects cannot be evicted at all;
+//   - a pod that is not ready is evicted when its budget's policy is
+//     AlwaysAllow, or, by default, when the budget has CurrentHealthy at
+//     or above a DesiredHealthy above zero;
+//   - otherwise the budget must have a status for its current generation
+//     (not Unsynced) and DisruptionsAllowed above zero. A SyncFailed budget
+//     allows none: the disruption controller writes 0 when it fails.
+//
+// One simplification: each pod is checked against the budget as it is, so
+// two evictions under a budget that allows one both pass. The world
+// replaces an evicted pod at once and Ready, so the budget's controller
+// would allow the next one soon after.
+func (r *roll) evictionBlocked(c *Cluster) []string {
+	var nodes []string
+	for _, p := range c.Pods {
+		if !slices.Contains(r.old, p.Node) || slices.Contains(nodes, p.Node) {
+			continue
+		}
+		if p.Deleting || p.Phase == "Pending" || p.Phase == "Succeeded" || p.Phase == "Failed" {
+			continue
+		}
+		var budgets []PDB
+		for _, b := range c.PDBs {
+			if b.selects(p) {
+				budgets = append(budgets, b)
+			}
+		}
+		if len(budgets) == 0 {
+			continue
+		}
+		if len(budgets) > 1 || !budgets[0].evicts(p) {
+			nodes = append(nodes, p.Node)
+		}
+	}
+	return nodes
+}
+
+// selects reports whether the budget's selector selects the pod. An empty
+// selector selects every pod of the namespace, and no selector none.
+func (b PDB) selects(p *Pod) bool {
+	if b.NoSelector || b.Namespace != p.Namespace {
+		return false
+	}
+	for k, v := range b.Selector {
+		if p.Labels[k] != v {
+			return false
+		}
+	}
+	return true
+}
+
+// evicts reports whether the eviction API evicts a pod that this budget
+// alone protects. See evictionBlocked.
+func (b PDB) evicts(p *Pod) bool {
+	if p.NotReady && (b.AlwaysAllow || b.CurrentHealthy >= b.DesiredHealthy && b.DesiredHealthy > 0) {
+		return true
+	}
+	return !b.Unsynced && !b.SyncFailed && b.DisruptionsAllowed > 0
+}
+
+// evictionFailure is the error of an update whose drain the budgets kept
+// blocked until it ended, in the words EKS uses.
+func (r *roll) evictionFailure() UpdateError {
+	return UpdateError{
+		Code:        "PodEvictionFailure",
+		Message:     "Reached max retries while trying to evict pods from nodes in node group " + r.nodegroup,
+		ResourceIDs: slices.Clone(r.blocked),
 	}
 }
 
