@@ -61,7 +61,8 @@ type clusterHealth struct {
 }
 
 // checkHealth runs the checks that need no Kubernetes access on every
-// cluster that was read, with the clients of its region, all at once.
+// cluster of snaps that was read, with the clients of its region, all at
+// once. The caller passes the clusters that the filters select.
 func (o *listOptions) checkHealth(ctx context.Context, provider *awsx.Provider, snaps []*fleet.Snapshot) map[string]clusterHealth {
 	results := fanout.ForEach(ctx, snaps, max(len(snaps), 1), func(ctx context.Context, snap *fleet.Snapshot) clusterHealth {
 		if snap.Have.Cluster != fleet.Collected {
@@ -195,7 +196,7 @@ func (o *listOptions) run(ctx context.Context) error {
 	}
 	fleetcmd.ReportSkippedRegions(o.ios, res.Skipped)
 	if o.showHealth {
-		o.health = o.checkHealth(ctx, provider, res.Snapshots)
+		o.health = o.checkHealth(ctx, provider, o.selected(res.Snapshots))
 	}
 
 	doc := o.document(res)
@@ -233,8 +234,9 @@ func (o *listOptions) document(res *fleet.SweepResult) apidoc.ClusterList {
 	return doc
 }
 
-// rows returns the rows for snaps: filtered, then sorted.
-func (o *listOptions) rows(snaps []*fleet.Snapshot) []apidoc.Cluster {
+// selected returns the snapshots that the filters on the status and the
+// version keep. The filters on the name and the region ran in the sweep.
+func (o *listOptions) selected(snaps []*fleet.Snapshot) []*fleet.Snapshot {
 	late := o.filters.Only(keyStatus, keyVersion)
 	selected := make([]*fleet.Snapshot, 0, len(snaps))
 	for _, snap := range snaps {
@@ -248,6 +250,12 @@ func (o *listOptions) rows(snaps []*fleet.Snapshot) []apidoc.Cluster {
 			selected = append(selected, snap)
 		}
 	}
+	return selected
+}
+
+// rows returns the rows for snaps: filtered, then sorted.
+func (o *listOptions) rows(snaps []*fleet.Snapshot) []apidoc.Cluster {
+	selected := o.selected(snaps)
 	slices.SortStableFunc(selected, func(a, b *fleet.Snapshot) int {
 		c := compareBy(o.sortKey, a.Cluster, b.Cluster)
 		if o.desc {

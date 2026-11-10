@@ -13,6 +13,7 @@ import (
 
 	"github.com/dantech2000/refresh/internal/apidoc"
 	"github.com/dantech2000/refresh/internal/awsx"
+	"github.com/dantech2000/refresh/internal/fanout"
 	"github.com/dantech2000/refresh/internal/fleet"
 )
 
@@ -112,9 +113,9 @@ func (cp *ClusterPlan) markBusy(ctx context.Context, c *awsx.Clients, steps []St
 			continue
 		}
 		res := s.Ref.Resource()
-		kind, note := lookupInFlight(ctx, c, res)
-		s.InFlight = kind
 		status, version := cp.statusOf(res)
+		kind, note := lookupInFlight(ctx, c, res, status)
+		s.InFlight = kind
 		cp.Failures = append(cp.Failures, cp.busyFailure(res, status, version, note))
 	}
 }
@@ -165,7 +166,7 @@ func (cp *ClusterPlan) busyFailure(res Resource, status, version, inFlight strin
 func (r *runner) busyTarget(cp *ClusterPlan, res StepResult, c *awsx.Clients, resource Resource, status string) StepResult {
 	res.Status = StepBusy
 	var note string
-	res.InFlight, note = lookupInFlight(r.readCtx, c, resource)
+	res.InFlight, note = lookupInFlight(r.readCtx, c, resource, status)
 	_, version := cp.statusOf(resource)
 	f := cp.busyFailure(resource, status, version, note)
 	res.Failure = &f
@@ -212,10 +213,15 @@ const unknownUpdate = "an update of unknown type"
 // lookupInFlight looks up the update that makes a target busy. It returns
 // the type for the step, and the words for the failure: the type,
 // unknownUpdate when the lookup failed, and "" when EKS lists no update
-// in progress, as for a resource that it is deleting. The lookup is two
-// reads that happen only for a busy target: in the plan, and at the fresh
-// read before a submit that finds a target changing since the plan.
-func lookupInFlight(ctx context.Context, c *awsx.Clients, res Resource) (kind, note string) {
+// in progress, as for a resource that it is deleting. The lookup happens
+// only for a busy target: in the plan, and at the fresh read before a
+// submit that finds a target changing since the plan. A target that EKS
+// is creating or deleting has no update in progress, so with that status
+// nothing is read.
+func lookupInFlight(ctx context.Context, c *awsx.Clients, res Resource, status string) (kind, note string) {
+	if status == "CREATING" || status == "DELETING" {
+		return "", ""
+	}
 	u, err := inFlightUpdate(ctx, c, res)
 	if err != nil {
 		return "", unknownUpdate
@@ -236,9 +242,14 @@ type InFlightUpdate struct {
 
 // inFlightUpdate returns the update of a resource that is in progress:
 // its ID, its type, such as AddonUpdate, when it was created, and the
-// version that it moves to. It
-// returns the zero value when EKS lists none. EKS lists the update IDs
-// with no status, so each one is described, newest first.
+// version that it moves to. It returns the zero value when EKS lists
+// none. EKS lists the update IDs with no status and promises no order.
+// The update that it lists last is described first, alone: when the
+// newest update is listed last and is the one in progress, that is the
+// only describe. The others are then described side by side in a bounded
+// fan-out, and no more describe calls start once one of them is in
+// progress. A failed describe is the error only when no update is in
+// progress.
 func inFlightUpdate(ctx context.Context, c *awsx.Clients, r Resource) (InFlightUpdate, error) {
 	list := &eks.ListUpdatesInput{Name: aws.String(r.Cluster)}
 	describe := &eks.DescribeUpdateInput{Name: aws.String(r.Cluster)}
@@ -255,25 +266,61 @@ func inFlightUpdate(ctx context.Context, c *awsx.Clients, r Resource) (InFlightU
 		},
 		func(out *eks.ListUpdatesOutput) ([]string, *string) { return out.UpdateIds, out.NextToken },
 	)
-	if err != nil {
+	if err != nil || len(ids) == 0 {
 		return InFlightUpdate{}, err
 	}
-	for i := len(ids) - 1; i >= 0; i-- {
-		describe.UpdateId = aws.String(ids[i])
-		out, err := c.EKS.DescribeUpdate(ctx, describe)
+	type described struct {
+		ran      bool
+		update   InFlightUpdate
+		progress bool
+		err      error
+	}
+	read := func(ctx context.Context, id string) described {
+		in := *describe
+		in.UpdateId = aws.String(id)
+		out, err := c.EKS.DescribeUpdate(ctx, &in)
 		switch {
 		case err != nil:
-			return InFlightUpdate{}, err
+			return described{ran: true, err: err}
 		case out.Update == nil:
-			return InFlightUpdate{}, fmt.Errorf("EKS returned no update for %s", ids[i])
-		case out.Update.Status == ekstypes.UpdateStatusInProgress:
-			u := InFlightUpdate{ID: aws.ToString(out.Update.Id), Type: string(out.Update.Type), CreatedAt: aws.ToTime(out.Update.CreatedAt)}
-			for _, p := range out.Update.Params {
-				if p.Type == ekstypes.UpdateParamTypeVersion {
-					u.Version = aws.ToString(p.Value)
-				}
+			return described{ran: true, err: fmt.Errorf("EKS returned no update for %s", id)}
+		case out.Update.Status != ekstypes.UpdateStatusInProgress:
+			return described{ran: true}
+		}
+		u := InFlightUpdate{ID: aws.ToString(out.Update.Id), Type: string(out.Update.Type), CreatedAt: aws.ToTime(out.Update.CreatedAt)}
+		for _, p := range out.Update.Params {
+			if p.Type == ekstypes.UpdateParamTypeVersion {
+				u.Version = aws.ToString(p.Value)
 			}
-			return u, nil
+		}
+		return described{ran: true, update: u, progress: true}
+	}
+	last := read(ctx, ids[len(ids)-1])
+	if last.progress {
+		return last.update, nil
+	}
+	found, stop := context.WithCancel(ctx)
+	defer stop()
+	results := fanout.ForEach(found, ids[:len(ids)-1], 0, func(ctx context.Context, id string) described {
+		d := read(ctx, id)
+		if d.progress {
+			stop()
+		}
+		return d
+	})
+	results = append(results, last)
+	for _, r := range results {
+		if r.progress {
+			return r.update, nil
+		}
+	}
+	for i, r := range results {
+		switch {
+		case r.err != nil:
+			return InFlightUpdate{}, r.err
+		case !r.ran:
+			// Nothing was found, so it was ctx that ended.
+			return InFlightUpdate{}, fmt.Errorf("describing update %s: %w", ids[i], context.Cause(ctx))
 		}
 	}
 	return InFlightUpdate{}, nil

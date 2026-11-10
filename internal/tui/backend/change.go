@@ -30,6 +30,18 @@ var (
 // watched apart. Older ones are dropped with their logs.
 const keptFinished = 20
 
+// keptLog is how many log entries the backend keeps of a change: the cap
+// of the log of a change.Handle. The log is cut back to it once it is a
+// quarter longer, so a cut, which copies the log, is not made on every
+// event.
+const keptLog = 4096
+
+// idleRetry is how long adoption leaves alone a resource whose watch
+// found no change of refresh while the sweeps still show it UPDATING. A
+// change of refresh that starts on it later is watched after this time at
+// the latest.
+const idleRetry = 10 * time.Minute
+
 // The default wait of each kind of change, from CONTRACT.md.
 var defaultWait = map[change.Kind]time.Duration{
 	change.NodegroupUpdate: 40 * time.Minute,
@@ -282,7 +294,9 @@ func (b *Live) follow(e *entry) {
 // store copies the view and the new log entries of the handle into the
 // entry, and returns the sequence number of the last entry read and
 // whether the handle has finished. A published state keeps what it got:
-// the log and the node feed are replaced, never written to.
+// the node feed is replaced, never written to, and the log is appended
+// to, which never writes inside the length that a published state holds,
+// or cut into a new slice.
 func (b *Live) store(e *entry, after uint64) (uint64, bool) {
 	v := e.handle.View()
 	entries := e.handle.Events(after)
@@ -296,7 +310,7 @@ func (b *Live) store(e *entry, after uint64) (uint64, bool) {
 		b.say(e.key, view.Progress, "watching a change started elsewhere: "+e.resource.String())
 	}
 	if len(entries) > 0 {
-		e.log = slices.Concat(e.log, entries)
+		e.log = appendLog(e.log, entries)
 		after = entries[len(entries)-1].Seq
 	}
 	var nodes map[change.StepRef][]noderoll.Event
@@ -322,10 +336,35 @@ func (b *Live) store(e *entry, after uint64) (uint64, bool) {
 	return after, finished
 }
 
+// appendLog adds entries to log and cuts it back to keptLog entries once
+// it is a quarter longer, as the handle cuts its own: by count, and the
+// newest plan entry stays in front when the cut would drop it. A cut
+// returns a new slice.
+func appendLog(log, entries []change.LogEntry) []change.LogEntry {
+	log = append(log, entries...)
+	if len(log) <= keptLog+keptLog/4 {
+		return log
+	}
+	cut := len(log) - keptLog
+	plan := -1
+	for i := len(log) - 1; i >= 0; i-- {
+		if log[i].Kind == change.PlanReady {
+			plan = i
+			break
+		}
+	}
+	if plan >= 0 && plan < cut {
+		return slices.Concat(log[plan:plan+1], log[cut:])
+	}
+	return slices.Clone(log[cut:])
+}
+
 // releaseLocked ends the claim of a finished change, says how it ended,
 // and asks the sweep loop to read its cluster again. A watch that found
-// nothing in flight is dropped without a word: the sweep that started
-// it read a state that is gone. The caller holds b.mu.
+// nothing in flight, or an update that is not a change of refresh, is
+// dropped without a word: the sweep that started it read a state that is
+// gone, or a change that the UI does not show. The resource is idle until
+// a sweep no longer shows it UPDATING. The caller holds b.mu.
 func (b *Live) releaseLocked(e *entry) {
 	b.byCluster[e.key] = slices.DeleteFunc(b.byCluster[e.key], func(id state.ChangeID) bool { return id == e.id })
 	if !e.elsewhere {
@@ -334,6 +373,7 @@ func (b *Live) releaseLocked(e *entry) {
 	res := e.view.Result
 	if e.elsewhere && res != nil && res.Status == change.NothingToDo {
 		b.entries = slices.DeleteFunc(b.entries, func(x *entry) bool { return x == e })
+		b.idle[e.resource] = b.opts.Now()
 		return
 	}
 	if res != nil {
@@ -381,17 +421,16 @@ func (b *Live) trimLocked() {
 // happens there. A snapshot read before our last change on the cluster
 // ended is left alone too: what it shows may be that change. A watch
 // of the same resource that still runs is not started twice. CREATING
-// and DELETING are not adopted: nothing of refresh is behind them.
+// and DELETING are not adopted: nothing of refresh is behind them. A
+// resource whose watch found no change of refresh is idle: it is not
+// watched again while the sweeps show it UPDATING, for at most idleRetry.
 func (b *Live) adopt() {
 	if b.closed || b.ctx.Err() != nil {
 		return
 	}
 	for _, c := range b.clusters {
 		snap := c.Snapshot
-		if snap == nil || snap.Have.Cluster != fleet.Collected || len(b.byCluster[c.Key]) > 0 {
-			continue
-		}
-		if ended, ok := b.ended[c.Key]; ok && snap.FetchedAt.Before(ended) {
+		if snap == nil || snap.Have.Cluster != fleet.Collected {
 			continue
 		}
 		target := change.Target{Region: c.Region, Cluster: c.Name}
@@ -406,8 +445,18 @@ func (b *Live) adopt() {
 				rolling++
 			}
 		}
+		b.forgetIdle(target, snap, resources)
+		if len(b.byCluster[c.Key]) > 0 {
+			continue
+		}
+		if ended, ok := b.ended[c.Key]; ok && snap.FetchedAt.Before(ended) {
+			continue
+		}
 		for _, r := range resources {
 			if slices.ContainsFunc(b.entries, func(e *entry) bool { return e.elsewhere && e.resource == r && e.view.State != change.Finished }) {
+				continue
+			}
+			if _, idle := b.idle[r]; idle {
 				continue
 			}
 			kind := change.NodegroupUpdate
@@ -417,6 +466,31 @@ func (b *Live) adopt() {
 			// The node view is for one roll, as the run has it.
 			h := change.Watch(b.ctx, b.deps, r, change.WatchOptions{Nodes: rolling == 1, Limits: b.limits(kind)})
 			b.add(h, c.Key, true, r)
+		}
+	}
+}
+
+// forgetIdle ends the idle mark of each resource of target that snap
+// shows, and that is not in updating: the update that its watch found is
+// over. It ends every mark that is older than idleRetry too. A nodegroup
+// that snap could not read keeps its mark. The caller holds b.mu.
+func (b *Live) forgetIdle(target change.Target, snap *fleet.Snapshot, updating []change.Resource) {
+	now := b.opts.Now()
+	for r, at := range b.idle {
+		if now.Sub(at) >= idleRetry {
+			delete(b.idle, r)
+			continue
+		}
+		if r.Target != target {
+			continue
+		}
+		shown := r.Kind == change.StepControlPlane
+		if r.Kind == change.StepNodegroup && snap.Have.Nodegroups == fleet.Collected {
+			i := slices.IndexFunc(snap.Nodegroups, func(n fleet.Nodegroup) bool { return n.Name == r.Name })
+			shown = i < 0 || snap.Nodegroups[i].State == fleet.Collected
+		}
+		if shown && !slices.Contains(updating, r) {
+			delete(b.idle, r)
 		}
 	}
 }

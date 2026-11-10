@@ -39,7 +39,9 @@ const (
 
 // warningCache is the last read of the Warning events of the cluster.
 type warningCache struct {
-	events []corev1.Event
+	// events are shared with the cache of the watch: they are read and
+	// never changed.
+	events []*corev1.Event
 	// at is when the events were read, and draining the draining nodes at
 	// that time, joined by commas. read is false before the first read
 	// that succeeded.
@@ -79,18 +81,15 @@ func (o *Observer) fillWarnings(ctx context.Context, snap *Snapshot, names map[s
 // cache of the watch, which holds only them, or with a paged list of at
 // most warningEventMaxPages pages. capped reports that the list stopped at
 // that cap. The pages are needed because one list with a limit returns
-// the events in key order, and so drops an arbitrary part of them.
-func (o *Observer) listWarningEvents(ctx context.Context) (events []corev1.Event, capped bool, err error) {
+// the events in key order, and so drops an arbitrary part of them. The
+// events of the cache are returned as the cache holds them, not copied.
+func (o *Observer) listWarningEvents(ctx context.Context) (events []*corev1.Event, capped bool, err error) {
 	if o.inf != nil && o.inf.eventsWatch.ok() {
 		cached, err := o.inf.events.List(labels.Everything())
 		if err != nil {
 			return nil, false, err
 		}
-		events = make([]corev1.Event, len(cached))
-		for i := range cached {
-			events[i] = *cached[i]
-		}
-		return events, false, nil
+		return cached, false, nil
 	}
 	opts := metav1.ListOptions{FieldSelector: warningFieldSelector, Limit: warningEventPageSize}
 	for pages := 1; ; pages++ {
@@ -98,7 +97,9 @@ func (o *Observer) listWarningEvents(ctx context.Context) (events []corev1.Event
 		if err != nil {
 			return nil, false, err
 		}
-		events = append(events, page.Items...)
+		for i := range page.Items {
+			events = append(events, &page.Items[i])
+		}
 		switch {
 		case page.Continue == "":
 			return events, false, nil
@@ -118,12 +119,11 @@ func (o *Observer) listWarningEvents(ctx context.Context) (events []corev1.Event
 //
 // An InvalidDiskCapacity event from the first minutes of a node is left
 // out: every kubelet reports it as it starts.
-func scopeWarnings(events []corev1.Event, names map[string]time.Time, now time.Time) []WarnEvent {
+func scopeWarnings(events []*corev1.Event, names map[string]time.Time, now time.Time) []WarnEvent {
 	type key struct{ node, object, reason string }
 	latest := map[key]*corev1.Event{}
 	var order []key
-	for i := range events {
-		e := &events[i]
+	for _, e := range events {
 		if e.Type != "" && e.Type != corev1.EventTypeWarning {
 			continue
 		}

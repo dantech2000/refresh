@@ -2,6 +2,7 @@ package noderoll
 
 import (
 	"context"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -227,16 +228,25 @@ var (
 
 // podListRecorder makes the fake clientset apply the spec.nodeName field
 // selector of a pod list, which its tracker ignores, and records every
-// selector that it was asked for.
+// selector that it was asked for, and every resource version.
 type podListRecorder struct {
 	mu        sync.Mutex
 	selectors []string
+	versions  []string
 }
 
+// calls returns the selectors, sorted: the lists run side by side.
 func (r *podListRecorder) calls() []string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return append([]string(nil), r.selectors...)
+	return slices.Sorted(slices.Values(r.selectors))
+}
+
+// resourceVersions returns the resource version of each list.
+func (r *podListRecorder) resourceVersions() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return slices.Clone(r.versions)
 }
 
 func enforcePodFieldSelector(t *testing.T, c *fake.Clientset) *podListRecorder {
@@ -251,6 +261,9 @@ func enforcePodFieldSelector(t *testing.T, c *fake.Clientset) *podListRecorder {
 		sel := la.GetListRestrictions().Fields
 		rec.mu.Lock()
 		rec.selectors = append(rec.selectors, sel.String())
+		if lo, ok := a.(interface{ GetListOptions() metav1.ListOptions }); ok {
+			rec.versions = append(rec.versions, lo.GetListOptions().ResourceVersion)
+		}
 		rec.mu.Unlock()
 		obj, err := c.Tracker().List(podsGVR, podsGVK, la.GetNamespace())
 		if err != nil {

@@ -85,7 +85,7 @@ error:
           "status": "Succeeded",
           "updateId": "00000000-0000-4000-8000-000000000001",
           "startedAt": "2026-01-01T00:00:00Z",
-          "finishedAt": "2026-01-01T00:00:30Z"
+          "finishedAt": "2026-01-01T00:00:15Z"
         }
       ],
       "verification": []

@@ -182,8 +182,8 @@ type lookup struct {
 // were described, and returns the failures. The calls are, in two steps:
 //
 //  1. For each nodegroup the latest AMI from SSM, shared between the
-//     nodegroups and the clusters of the run, and the image of its launch
-//     template version. For the cluster, the instances of every Auto
+//     nodegroups and the clusters of the run, and for a CUSTOM nodegroup
+//     the image of its launch template version. For the cluster, the instances of every Auto
 //     Scaling group, in one call for each 50 groups.
 //  2. For the cluster, the instances that are needed, in one filtered call
 //     for each 100 instances: one of each group whose launch template
@@ -226,7 +226,10 @@ func (f *Fetcher) fetchAMIs(ctx context.Context, c *awsx.Clients, nodegroups []N
 		if path, ok := fleetdata.AMIParameter(n.Version.String(), n.AMIType); ok {
 			tasks = append(tasks, task{index: i, path: path})
 		}
-		if n.LaunchTemplate.ID != "" && n.LaunchTemplate.Version != "" {
+		// Only a CUSTOM nodegroup can name an image in its launch
+		// template: for every other AMI type EKS chooses the image, and a
+		// nodegroup cannot switch between the two.
+		if n.AMIType == "CUSTOM" && n.LaunchTemplate.ID != "" && n.LaunchTemplate.Version != "" {
 			tasks = append(tasks, task{index: i, template: true})
 		}
 	}
