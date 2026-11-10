@@ -312,7 +312,6 @@ func TestVerify_NewPendingPods(t *testing.T) {
 			check(t, results[2], tt.want)
 		})
 	}
-
 }
 
 // A snapshot read through the fetcher after the roll sees the nodegroup

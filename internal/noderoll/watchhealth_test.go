@@ -9,6 +9,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/tools/cache"
 
@@ -32,7 +33,7 @@ func TestWatchHealth(t *testing.T) {
 	}{
 		{name: "closed by the server", err: io.EOF},
 		{name: "an expired resource version", err: apierrors.NewResourceExpired("too old resource version")},
-		{name: "gone", err: apierrors.NewGone("gone")},
+		{name: "gone", err: &apierrors.StatusError{ErrStatus: metav1.Status{Reason: metav1.StatusReasonGone, Code: 410}}},
 		{name: "connection refused", err: fmt.Errorf("dial tcp 10.0.0.1:443: %w", syscall.ECONNREFUSED), broken: true},
 		{name: "forbidden", err: apierrors.NewForbidden(gone, "", errors.New("expired credentials")), broken: true},
 		{name: "unexpected EOF", err: io.ErrUnexpectedEOF, broken: true},
