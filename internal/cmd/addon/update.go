@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"time"
 
 	"github.com/spf13/cobra"
 
@@ -16,9 +15,6 @@ import (
 	"github.com/dantech2000/refresh/internal/cmdutil"
 	"github.com/dantech2000/refresh/internal/fleet"
 )
-
-// addonWaitTimeout is the default of --wait-timeout: for each add-on.
-const addonWaitTimeout = 5 * time.Minute
 
 type updateOptions struct {
 	f   *cmdutil.Factory
@@ -104,7 +100,7 @@ refresh context. It never comes from the kubeconfig.
 	cmd.Flags().StringVar(&o.version, "version", "", "Add-on version to move to, with exactly one add-on (default: the latest that the cluster can run)")
 	cmd.Flags().BoolVar(&o.all, "all", false, "Update every installed add-on, in dependency order")
 	cmd.Flags().StringSliceVar(&o.skip, "skip-addon", nil, "Leave these add-ons out of --all, by exact name")
-	cmdutil.AddChangeFlags(cmd, &o.change, cmdutil.ChangeFlagOptions{Wait: addonWaitTimeout, WaitFor: "each add-on", NoWait: true})
+	cmdutil.AddChangeFlags(cmd, &o.change, cmdutil.ChangeFlagOptions{Wait: change.DefaultWait(change.AddonUpdate), WaitFor: "each add-on", NoWait: true})
 	cmdutil.AddOutputFlag(cmd, &o.output, cmdutil.FormatTable, cmdutil.FormatJSON, cmdutil.FormatYAML, cmdutil.FormatPlain)
 	return cmd
 }

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
 
@@ -17,10 +16,6 @@ import (
 	"github.com/dantech2000/refresh/internal/cmdutil"
 	"github.com/dantech2000/refresh/internal/fleet"
 )
-
-// engineWaitTimeout is the default of --wait-timeout for an upgrade and
-// for a rollback: one budget for the whole run.
-const engineWaitTimeout = 4 * time.Hour
 
 type upgradeOptions struct {
 	f   *cmdutil.Factory
@@ -44,9 +39,9 @@ type upgradeOptions struct {
 
 // resumeFlags returns the flags of the run that the command of a stopped
 // run repeats and that the request does not hold: a --wait-timeout that
-// is not the default.
-func resumeFlags(flags *cmdutil.ChangeFlags) string {
-	if flags.WaitTimeout == engineWaitTimeout {
+// is not the default of the kind of change.
+func resumeFlags(flags *cmdutil.ChangeFlags, kind change.Kind) string {
+	if flags.WaitTimeout == change.DefaultWait(kind) {
 		return ""
 	}
 	return "--wait-timeout " + flags.WaitTimeout.String()
@@ -135,7 +130,7 @@ context. It never comes from the kubeconfig.
 	cmd.Flags().StringSliceVar(&o.skipNodegroups, "skip-nodegroup", nil, "Leave these nodegroups alone, by exact name")
 	cmd.Flags().BoolVar(&o.skipInsights, "skip-insights-check", false, "Do not refresh or read the cluster insights (not recommended)")
 	cmd.Flags().BoolVar(&o.skipVerify, "skip-verify", false, "Skip the verification after each nodegroup roll")
-	cmdutil.AddChangeFlags(cmd, &o.change, cmdutil.ChangeFlagOptions{Wait: engineWaitTimeout, WaitFor: "the whole upgrade", Force: true})
+	cmdutil.AddChangeFlags(cmd, &o.change, cmdutil.ChangeFlagOptions{Wait: change.DefaultWait(change.ClusterUpgrade), WaitFor: "the whole upgrade", Force: true})
 	cmdutil.AddOutputFlag(cmd, &o.output, cmdutil.FormatTable, cmdutil.FormatJSON, cmdutil.FormatYAML, cmdutil.FormatPlain)
 	return cmd
 }
@@ -202,7 +197,7 @@ func (o *upgradeOptions) run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	d.FollowUp.Resume = resumeFlags(&o.change)
+	d.FollowUp.Resume = resumeFlags(&o.change, change.ClusterUpgrade)
 	req := o.request()
 	if o.change.DryRun {
 		return changecmd.PrintPlan(ctx, o.ios, o.output, d, req, o.f.Global.Timeout, nil)

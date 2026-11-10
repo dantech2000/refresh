@@ -42,15 +42,6 @@ const keptLog = 4096
 // the latest.
 const idleRetry = 10 * time.Minute
 
-// The default wait of each kind of change, from CONTRACT.md.
-var defaultWait = map[change.Kind]time.Duration{
-	change.NodegroupUpdate: 40 * time.Minute,
-	change.NodegroupScale:  5 * time.Minute,
-	change.AddonUpdate:     5 * time.Minute,
-	change.ClusterUpgrade:  4 * time.Hour,
-	change.ClusterRollback: 4 * time.Hour,
-}
-
 // entry is one handle the backend holds, with what the notifier read of it
 // last.
 type entry struct {
@@ -84,7 +75,7 @@ type proposal struct {
 // reads, --wait-timeout or the default of the kind's command for its
 // waits, and the default poll interval.
 func (b *Live) limits(kind change.Kind) change.Limits {
-	wait := defaultWait[kind]
+	wait := change.DefaultWait(kind)
 	if b.opts.WaitTimeoutSet {
 		wait = b.opts.WaitTimeout
 	}
@@ -117,25 +108,6 @@ func (b *Live) request(a state.Action) (change.Request, error) {
 		return change.RollbackRequest{Common: common(change.ClusterRollback), Target: target}, nil
 	}
 	return nil, fmt.Errorf("unknown action %q", a.Kind)
-}
-
-// withExpect returns req with the reviewed plan as its consent.
-func withExpect(req change.Request, plan *change.Plan) change.Request {
-	switch r := req.(type) {
-	case change.RollRequest:
-		r.Expect = plan
-		return r
-	case change.AddonUpdateRequest:
-		r.Expect = plan
-		return r
-	case change.UpgradeRequest:
-		r.Expect = plan
-		return r
-	case change.RollbackRequest:
-		r.Expect = plan
-		return r
-	}
-	return req
 }
 
 // command is the CLI command that makes the same change as the action,
@@ -248,7 +220,7 @@ func (b *Live) Start(_ context.Context, id state.ProposalID) (state.ChangeID, er
 		return 0, ErrClosing
 	}
 	b.proposal = nil
-	h := change.Start(b.ctx, b.deps, withExpect(p.request, p.Plan))
+	h := change.Start(b.ctx, b.deps, change.WithExpect(p.request, p.Plan))
 	e := b.add(h, p.Action.Cluster, false, change.Resource{})
 	e.command = p.Command
 	b.say(p.Action.Cluster, view.Progress, "started "+describeAction(p.Action))
