@@ -64,22 +64,27 @@ func TestCompletion_OmitsHiddenCommands(t *testing.T) {
 		}
 	})
 	for _, shell := range []string{"bash", "zsh", "fish", "powershell"} {
-		t.Run(shell, func(t *testing.T) {
-			f, _, out, errOut := cmdutiltest.NewFactory()
-			if err := execute(f, "completion", shell); err != nil {
-				t.Fatal(err)
-			}
-			if !strings.Contains(out.String(), "refresh") {
-				t.Errorf("stdout does not look like a completion script for refresh:\n%.200s", out.String())
-			}
-			if errOut.Len() != 0 {
-				t.Errorf("stderr = %q, want nothing", errOut.String())
-			}
-			for _, name := range hidden {
-				if strings.Contains(out.String(), name) {
-					t.Errorf("the %s script names the hidden command %q", shell, name)
-				}
-			}
-		})
+		t.Run(shell, func(t *testing.T) { checkCompletionScript(t, shell, hidden) })
+	}
+}
+
+// checkCompletionScript checks the script of a shell: a script for
+// refresh, nothing on stderr, and no hidden command in it.
+func checkCompletionScript(t *testing.T, shell string, hidden []string) {
+	t.Helper()
+	f, _, out, errOut := cmdutiltest.NewFactory()
+	if err := execute(f, "completion", shell); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "refresh") {
+		t.Errorf("stdout does not look like a completion script for refresh:\n%.200s", out.String())
+	}
+	if errOut.Len() != 0 {
+		t.Errorf("stderr = %q, want nothing", errOut.String())
+	}
+	for _, name := range hidden {
+		if strings.Contains(out.String(), name) {
+			t.Errorf("the %s script names the hidden command %q", shell, name)
+		}
 	}
 }

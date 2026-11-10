@@ -69,6 +69,7 @@ func editProd(e *env, edit func(c *fleettest.Cluster)) func() {
 // startNever starts an update that never ends, as another process would.
 // It runs in a hook of the fake, so it reports with t.Error.
 func startNever(t *testing.T, e *env, start func(*fleettest.World) error) func() {
+	t.Helper()
 	return func() {
 		if err := start(e.world); err != nil {
 			t.Errorf("starting an update elsewhere: %v", err)
@@ -219,6 +220,7 @@ func TestGuardSubmit(t *testing.T) {
 			name:  "add-on, row 2: EKS is changing it",
 			world: cpAt133, req: addonUpdates,
 			arm: func(t *testing.T, e *env) Hooks {
+				t.Helper()
 				afterRead(e, fleettest.EKSDescribeAddon, "vpc-cni", 2, nil, startNever(t, e, func(w *fleettest.World) error {
 					w.Edit(func(s *fleettest.State) {
 						s.Cluster(east, "prod").Addon("vpc-cni").UpdateScripts = []fleettest.UpdateScript{{Never: true}}
@@ -264,6 +266,7 @@ func TestGuardSubmit(t *testing.T) {
 			name:  "nodegroup, row 4: EKS is changing it",
 			world: at133, req: rolls(true),
 			arm: func(t *testing.T, e *env) Hooks {
+				t.Helper()
 				afterRead(e, fleettest.EKSDescribeNodegroup, "ng-a", 2, nil, startNever(t, e, func(w *fleettest.World) error {
 					w.Edit(func(s *fleettest.State) {
 						s.Cluster(east, "prod").Nodegroup("ng-a").UpdateScripts = []fleettest.UpdateScript{{Never: true}}
@@ -390,24 +393,30 @@ func TestGuardSubmit(t *testing.T) {
 					t.Errorf("%d %s requests, want %d", got, op, want)
 				}
 			}
-			got := guardStep(t, res, tt.kind, tt.step, tt.hop)
-			if got.Status != tt.status {
-				t.Errorf("%s = %s with %+v, want %s", got.Ref, got.Status, got.Failure, tt.status)
-			}
-			switch {
-			case tt.reason == "" && got.Failure != nil:
-				t.Errorf("%s has the failure %+v, want none", got.Ref, got.Failure)
-			case tt.reason != "" && got.Failure == nil:
-				t.Fatalf("%s has no failure, want %s", got.Ref, tt.reason)
-			case tt.reason != "" && got.Failure.Reason != tt.reason:
-				t.Errorf("the failure of %s is %s, want %s: %s", got.Ref, got.Failure.Reason, tt.reason, got.Failure.Error)
-			}
-			for _, w := range tt.words {
-				if got.Failure == nil || !strings.Contains(got.Failure.Error, w) {
-					t.Errorf("the failure of %s lacks %q: %+v", got.Ref, w, got.Failure)
-				}
-			}
+			wantStep(t, guardStep(t, res, tt.kind, tt.step, tt.hop), tt.status, tt.reason, tt.words...)
 		})
+	}
+}
+
+// wantStep checks how a step ended: its status, the reason of its failure
+// ("" for no failure), and words of the failure.
+func wantStep(t *testing.T, got StepResult, status StepStatus, reason apidoc.Reason, words ...string) {
+	t.Helper()
+	if got.Status != status {
+		t.Errorf("%s = %s with %+v, want %s", got.Ref, got.Status, got.Failure, status)
+	}
+	switch {
+	case reason == "" && got.Failure != nil:
+		t.Errorf("%s has the failure %+v, want none", got.Ref, got.Failure)
+	case reason != "" && got.Failure == nil:
+		t.Fatalf("%s has no failure, want %s", got.Ref, reason)
+	case reason != "" && got.Failure.Reason != reason:
+		t.Errorf("the failure of %s is %s, want %s: %s", got.Ref, got.Failure.Reason, reason, got.Failure.Error)
+	}
+	for _, w := range words {
+		if got.Failure == nil || !strings.Contains(got.Failure.Error, w) {
+			t.Errorf("the failure of %s lacks %q: %+v", got.Ref, w, got.Failure)
+		}
 	}
 }
 

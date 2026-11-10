@@ -65,6 +65,7 @@ func uiFake(t *testing.T) (*cmdtest.Fake, *io.PipeWriter) {
 // model waits for its next state. The write blocks until the program
 // reads it, so it runs on a goroutine that the test waits for.
 func typeOnce(t *testing.T, e *cmdtest.Fake, typed *io.PipeWriter, keys string) (wait func()) {
+	t.Helper()
 	var once sync.Once
 	var wg sync.WaitGroup
 	e.Server.OnAnswer = func(r awsxtest.Request, _ awsxtest.Answer) {
