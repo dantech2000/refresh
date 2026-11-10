@@ -182,27 +182,25 @@ func VerifyExit(results []Result) int {
 }
 
 func runNodegroupActive(in *Input, nodegroups []string) Result {
-	var issues, unread, active []string
+	var (
+		issues         []finding
+		unread, active []string
+	)
 	for _, name := range nodegroups {
 		i := slices.IndexFunc(in.Snapshot.Nodegroups, func(n fleet.Nodegroup) bool { return n.Name == name })
 		switch {
 		case i < 0 || in.Snapshot.Nodegroups[i].State != fleet.Collected:
 			unread = append(unread, name)
 		case in.Snapshot.Nodegroups[i].Status != "ACTIVE":
-			issues = append(issues, fmt.Sprintf("%s is %s", name, in.Snapshot.Nodegroups[i].Status))
+			issues = append(issues, finding{name, fmt.Sprintf("%s is %s", name, in.Snapshot.Nodegroups[i].Status)})
 		default:
 			active = append(active, name)
 		}
 	}
-	r := Result{Findings: slices.Sorted(slices.Values(unread))}
-	for _, issue := range issues {
-		name, _, _ := strings.Cut(issue, " is ")
-		r.Findings = append(r.Findings, name)
-	}
-	slices.Sort(r.Findings)
+	r := Result{Findings: slices.Sorted(slices.Values(slices.Concat(unread, findingNames(issues))))}
 	switch {
 	case len(issues) > 0:
-		r.Outcome, r.Message = Fail, strings.Join(issues, ", ")+" (expected ACTIVE)"
+		r.Outcome, r.Message = Fail, strings.Join(findingTexts(issues), ", ")+" (expected ACTIVE)"
 		if len(unread) > 0 {
 			r.Message += "; not read: " + strings.Join(unread, ", ")
 		}

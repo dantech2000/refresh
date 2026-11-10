@@ -158,7 +158,10 @@ func runVersionSkew(_ context.Context, in *Input) Result {
 	if snap.Have.Cluster != fleet.Collected || snap.Cluster.Version.IsZero() {
 		return Result{Outcome: Unreadable, Message: "the version of the control plane is not known"}
 	}
-	var atLimit, behind, addonsBehind, unread []string
+	var (
+		atLimit, behind, addonsBehind []finding
+		unread                        []string
+	)
 	for _, n := range snap.Nodegroups {
 		if n.State != fleet.Collected {
 			unread = append(unread, "nodegroup "+n.Name)
@@ -166,9 +169,9 @@ func runVersionSkew(_ context.Context, in *Input) Result {
 		}
 		switch minors := minorsBehind(snap.Cluster.Version, n.Version); {
 		case minors >= kubeletSkewLimit:
-			atLimit = append(atLimit, fmt.Sprintf("%s (%s, %d behind)", n.Name, n.Version, minors))
+			atLimit = append(atLimit, finding{n.Name, fmt.Sprintf("%s (%s, %d behind)", n.Name, n.Version, minors)})
 		case minors > 0:
-			behind = append(behind, fmt.Sprintf("%s (%s)", n.Name, n.Version))
+			behind = append(behind, finding{n.Name, fmt.Sprintf("%s (%s)", n.Name, n.Version)})
 		}
 	}
 	for _, a := range snap.Addons {
@@ -177,28 +180,21 @@ func runVersionSkew(_ context.Context, in *Input) Result {
 			continue
 		}
 		if b, _ := a.Behind(); b {
-			addonsBehind = append(addonsBehind, fmt.Sprintf("%s (%s, latest %s)", a.Name, a.Version, a.Latest))
+			addonsBehind = append(addonsBehind, finding{a.Name, fmt.Sprintf("%s (%s, latest %s)", a.Name, a.Version, a.Latest)})
 		}
 	}
-	r := Result{}
-	for _, list := range [][]string{atLimit, behind, addonsBehind} {
-		for _, item := range list {
-			name, _, _ := strings.Cut(item, " (")
-			r.Findings = append(r.Findings, name)
-		}
-	}
-	slices.Sort(r.Findings)
+	r := Result{Findings: findingNames(slices.Concat(atLimit, behind, addonsBehind))}
 	var parts []string
 	if len(behind) > 0 {
-		parts = append(parts, plural(len(behind), "nodegroup")+" behind the control plane ("+strings.Join(behind, ", ")+")")
+		parts = append(parts, plural(len(behind), "nodegroup")+" behind the control plane ("+strings.Join(findingTexts(behind), ", ")+")")
 	}
 	if len(addonsBehind) > 0 {
-		parts = append(parts, plural(len(addonsBehind), "add-on")+" behind latest ("+strings.Join(addonsBehind, ", ")+")")
+		parts = append(parts, plural(len(addonsBehind), "add-on")+" behind latest ("+strings.Join(findingTexts(addonsBehind), ", ")+")")
 	}
 	switch {
 	case len(atLimit) > 0:
 		r.Outcome = Fail
-		r.Message = plural(len(atLimit), "nodegroup") + " at the kubelet skew limit (" + strings.Join(atLimit, ", ") + "); upgrade the nodes before the control plane"
+		r.Message = plural(len(atLimit), "nodegroup") + " at the kubelet skew limit (" + strings.Join(findingTexts(atLimit), ", ") + "); upgrade the nodes before the control plane"
 		if len(parts) > 0 {
 			r.Message += "; " + strings.Join(parts, "; ")
 		}
