@@ -4,6 +4,12 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
 
+# A new push to the PR starts a new run, which decides on its own head
+# commit; the superseded run stops polling.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 permissions:
   contents: write
   pull-requests: write
@@ -62,7 +68,8 @@ jobs:
       # check of the same commit. So the loop polls, leaves out the checks of
       # this workflow, and waits until none is pending. The checks of the
       # other workflows may not exist yet when this job starts, so the loop
-      # also waits until each check named in REQUIRED has appeared.
+      # also waits until each check named in `required` has appeared, and
+      # each of those must pass.
       - name: Wait for every check of the head commit
         if: steps.check.outputs.eligible == 'true'
         env:
@@ -89,19 +96,28 @@ jobs:
                 echo "$failed"
                 exit 1
               fi
+              # A required check must pass. Skipped or neutral is not a pass:
+              # this gate is the only one, so a required check that did not
+              # run fails it. One that is absent or pending is waited for.
               missing=()
               for name in "${required[@]}"; do
-                if ! jq -e --arg n "$name" 'any(.[]; .name == $n)' <<<"$checks" >/dev/null; then
-                  missing+=("$name")
+                if jq -e --arg n "$name" 'any(.[]; .name == $n and .bucket == "pass")' <<<"$checks" >/dev/null; then
+                  continue
                 fi
+                ended="$(jq -r --arg n "$name" '.[] | select(.name == $n and .bucket != "pending") | .bucket' <<<"$checks")"
+                if [ -n "$ended" ]; then
+                  echo "::error::The required check \"$name\" ended as ${ended//$'\n'/, }, not pass; not merging."
+                  exit 1
+                fi
+                missing+=("$name")
               done
               pending="$(jq -r '.[] | select(.bucket == "pending") | .name' <<<"$checks")"
               if [ ${#missing[@]} -eq 0 ] && [ -z "$pending" ]; then
-                echo "Every check passed or was skipped:"
+                echo "Every required check passed, and no check failed:"
                 jq -r '.[] | "  \(.bucket)\t\(.workflow) / \(.name)"' <<<"$checks"
                 exit 0
               fi
-              echo "Waiting: pending=[${pending//$'\n'/, }] missing=[${missing[*]}]"
+              echo "Waiting: pending=[${pending//$'\n'/, }] required, not passed yet=[${missing[*]}]"
             else
               echo "Could not read the checks; retrying."
             fi
