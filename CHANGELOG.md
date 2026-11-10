@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.18.1](https://github.com/dantech2000/refresh/compare/v0.18.0...v0.18.1) (2026-11-10)
+
+
+### Bug Fixes
+
+* **deps:** bump github.com/spf13/pflag from 1.0.10 to 1.1.0 ([#632](https://github.com/dantech2000/refresh/issues/632)) ([a92ee0e](https://github.com/dantech2000/refresh/commit/a92ee0ec99d406d816f1473c89a18e2921c52957))
+
 ## [0.18.0](https://github.com/dantech2000/refresh/compare/v0.17.3...v0.18.0) (2026-11-10)
 
 
