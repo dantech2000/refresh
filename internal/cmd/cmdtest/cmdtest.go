@@ -46,6 +46,12 @@ func NewFake(t *testing.T, world *fleettest.World, region string) *Fake {
 	t.Setenv("KUBECONFIG", filepath.Join(t.TempDir(), "no-kubeconfig"))
 	srv := awsxtest.NewServer(world)
 	t.Cleanup(srv.Close)
+	// A script that no request reached tested nothing.
+	t.Cleanup(func() {
+		if left := world.Unconsumed(); len(left) > 0 && !t.Failed() {
+			t.Errorf("the world has scripts that no request used: %q", left)
+		}
+	})
 	f, _, out, errOut := cmdutiltest.NewFactory()
 	cmdutiltest.NewContextStore(t, f, nil)
 	cmdutiltest.UseAWS(f, srv.Config(region))
