@@ -65,6 +65,21 @@ func TestRoll_ScalingFailureIsANotice(t *testing.T) {
 	}
 }
 
+// The watch reads once for each tick of the wait, with the poll clients:
+// a throttled read is one attempt, and the next tick reads again. It takes
+// no request slots of the region from the polls with retries of its own.
+func TestScalingFailures_OneAttempt(t *testing.T) {
+	world := rollWorld(nil)
+	world.SetFault(fleettest.AutoScalingDescribeScalingActivities, fleettest.Fault{Throttle: 2})
+	e := newEnv(t, world)
+	if _, err := scalingFailures(testContext(t), e.deps.AWS.PollClients(east), []string{"eks-prod-ng-a"}, world.Now()); err == nil {
+		t.Error("a throttled read gave no error")
+	}
+	if n := e.count(fleettest.AutoScalingDescribeScalingActivities); n != 1 {
+		t.Errorf("%d DescribeScalingActivities requests, want 1", n)
+	}
+}
+
 // A watch that may not read the activities ends with no word, and the
 // roll goes on to its end.
 func TestRoll_ScalingWatchDeniedChangesNothing(t *testing.T) {
