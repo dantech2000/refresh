@@ -34,24 +34,33 @@ var eksRoutes = []route{
 	{http.MethodGet, "/clusters/{name}/updates/{updateId}", "DescribeUpdate"},
 }
 
+// eksPages is the page rule of every EKS list refresh calls: "This value
+// can be between 1 and 100. If you don't use this parameter, 100 results
+// and a nextToken value, if applicable, are returned"
+// (https://docs.aws.amazon.com/eks/latest/APIReference/API_ListClusters.html,
+// and the same words for ListNodegroups, ListAddons, ListUpdates,
+// ListInsights, and DescribeAddonVersions). DescribeClusterVersions gives
+// the range and no default; 100 is assumed.
+var eksPages = pageRule{Default: 100, Min: 1, Max: 100}
+
 var eksOperations = map[string]operation{
-	"ListClusters":            {handle: eksListClusters},
+	"ListClusters":            {handle: eksListClusters, pages: eksPages},
 	"DescribeCluster":         {handle: eksDescribeCluster},
-	"DescribeClusterVersions": {handle: eksDescribeClusterVersions},
-	"DescribeAddonVersions":   {handle: eksDescribeAddonVersions},
-	"ListNodegroups":          {handle: eksListNodegroups},
+	"DescribeClusterVersions": {handle: eksDescribeClusterVersions, pages: eksPages},
+	"DescribeAddonVersions":   {handle: eksDescribeAddonVersions, pages: eksPages},
+	"ListNodegroups":          {handle: eksListNodegroups, pages: eksPages},
 	"DescribeNodegroup":       {handle: eksDescribeNodegroup},
 	"UpdateNodegroupVersion":  {handle: eksUpdateNodegroupVersion, mutates: true},
 	"UpdateNodegroupConfig":   {handle: eksUpdateNodegroupConfig, mutates: true},
-	"ListAddons":              {handle: eksListAddons},
+	"ListAddons":              {handle: eksListAddons, pages: eksPages},
 	"DescribeAddon":           {handle: eksDescribeAddon},
 	"UpdateAddon":             {handle: eksUpdateAddon, mutates: true},
-	"ListInsights":            {handle: eksListInsights},
+	"ListInsights":            {handle: eksListInsights, pages: eksPages},
 	"DescribeInsight":         {handle: eksDescribeInsight},
 	"StartInsightsRefresh":    {handle: eksStartInsightsRefresh, mutates: true},
 	"DescribeInsightsRefresh": {handle: eksDescribeInsightsRefresh},
 	"UpdateClusterVersion":    {handle: eksUpdateClusterVersion, mutates: true},
-	"ListUpdates":             {handle: eksListUpdates},
+	"ListUpdates":             {handle: eksListUpdates, pages: eksPages},
 	"DescribeUpdate":          {handle: eksDescribeUpdate},
 }
 

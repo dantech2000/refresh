@@ -1,6 +1,7 @@
 package awsxtest
 
 import (
+	"fmt"
 	"maps"
 	"slices"
 	"time"
@@ -14,12 +15,22 @@ var cloudWatchOperations = map[string]operation{
 	"GetMetricData": {handle: cloudWatchGetMetricData},
 }
 
+// maxMetricQueries is the most queries GetMetricData takes: "A single
+// GetMetricData call can include as many as 500 MetricDataQuery
+// structures"
+// (https://docs.aws.amazon.com/AmazonCloudWatch/latest/APIReference/API_GetMetricData.html).
+const maxMetricQueries = 500
+
 // cloudWatchGetMetricData answers one result per query, with no values for
 // a query that matches no metric, as CloudWatch does. Datapoints are one
 // period apart and end at the request's EndTime, or the Lag of the metric
 // before it. Pages hold whole results: a forced page size of 1 answers one
-// query per page.
+// query per page. CloudWatch pages by data points (100,800 by default),
+// which no test reaches, so an unforced answer has one page.
 func cloudWatchGetMetricData(c *call) (any, error) {
+	if n := len(c.in.objs("MetricDataQueries")); n > maxMetricQueries {
+		return nil, newError(c.svc.invalid, fmt.Sprintf("The collection MetricDataQueries must not have a size greater than %d (got %d).", maxMetricQueries, n))
+	}
 	end, _ := c.in["EndTime"].(time.Time)
 	ascending := c.in.str("ScanBy") == "TimestampAscending"
 

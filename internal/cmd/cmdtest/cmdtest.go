@@ -7,6 +7,7 @@ package cmdtest
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -87,6 +88,33 @@ func (e *Fake) Run(ctx context.Context, args ...string) error {
 	cmd := root.NewCmdRoot(e.Factory)
 	cmd.SetArgs(args)
 	return cmd.ExecuteContext(ctx)
+}
+
+// SamePaged runs args against a fake from newFake, and again against a
+// second one whose every paged AWS answer holds one item. The two runs
+// must print the same stdout and end with the same error: a command that
+// reads only the first page of a list differs. AWS pages a list by default
+// (EKS at 100 items), so a test world that is smaller than a page would
+// not show it otherwise.
+func SamePaged(t *testing.T, newFake func(t *testing.T) *Fake, args ...string) {
+	t.Helper()
+	whole := newFake(t)
+	wholeErr := whole.Run(cmdutiltest.Context(t), args...)
+	paged := newFake(t)
+	paged.World.SetScopedFault(fleettest.Scope{}, fleettest.Fault{PageSize: 1})
+	pagedErr := paged.Run(cmdutiltest.Context(t), args...)
+	if fmt.Sprint(wholeErr) != fmt.Sprint(pagedErr) {
+		t.Errorf("%v: error %v unpaged and %v with pages of one item", args, wholeErr, pagedErr)
+	}
+	if whole.Out.String() != paged.Out.String() {
+		t.Errorf("%v: stdout differs with pages of one item:\n--- unpaged ---\n%s\n--- paged ---\n%s", args, whole.Out, paged.Out)
+	}
+	if whole.Out.Len() == 0 {
+		t.Errorf("%v printed nothing; the comparison proves nothing", args)
+	}
+	if n, m := len(whole.Server.Requests()), len(paged.Server.Requests()); m <= n {
+		t.Errorf("%v: %d requests unpaged and %d paged; no list of the world has two items, so nothing was paged", args, n, m)
+	}
 }
 
 // Operations returns the operation and the region of every request, in

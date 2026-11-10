@@ -82,6 +82,14 @@ must settle each item before a test relies on it.
 - **The client request token length** (33 to 126 characters) is checked on
   `UpdateClusterVersion` only, where a real upgrade failed on a 32-character token. The
   references give no length for any of the four operations.
+- **The request limits.** The numbers are from the API references: EKS lists page at 100
+  and take 1 to 100, Auto Scaling groups page at 50 (at most 50 names unless
+  `MaxRecords` is higher), scaling activities at 100, `DescribeInstanceTypes` takes 100
+  types, `GetMetricData` 500 queries, and EC2 refuses IDs with `MaxResults`. Not verified:
+  the error codes and messages of these refusals, the default page of
+  `DescribeClusterVersions`, and 200 as the most values of one EC2 filter
+  (`FilterLimitExceeded`). EC2 and CloudWatch page only when asked: their references
+  give no default page size.
 
 | Operation | Service | Protocol | Mutates | success | denied | throttled | paged | delayed | cancelled | region |
 |---|---|---|---|---|---|---|---|---|---|---|

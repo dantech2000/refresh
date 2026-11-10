@@ -15,8 +15,9 @@ type service struct {
 	protocol protocol
 	// denied, throttled, and unauthenticated are the codes the service
 	// answers for those faults. badToken is its code for a page token it
-	// did not issue.
-	denied, throttled, unauthenticated, badToken string
+	// did not issue, and invalid its code for a request outside a limit of
+	// the API, such as a page size out of range.
+	denied, throttled, unauthenticated, badToken, invalid string
 	// statuses holds the HTTP status of each error code the service does
 	// not answer with 400. Codes in serverStatuses need no entry.
 	statuses   map[string]int
@@ -26,6 +27,20 @@ type service struct {
 type operation struct {
 	mutates bool
 	handle  func(c *call) (any, error)
+	// pages is the page-size rule of a paged operation, from its API
+	// reference. The zero value pages only when the request or a fault
+	// asks.
+	pages pageRule
+}
+
+// pageRule is the page size an operation uses when the request asks for
+// none, and the range of sizes it accepts. A request outside the range
+// answers the service's invalid code, as AWS does.
+type pageRule struct {
+	// Default is the page size when the request sets none. 0 answers every
+	// item: EC2 and CloudWatch document no default page.
+	Default  int
+	Min, Max int
 }
 
 // The HTTP statuses in this file, and three other wire details, come from
@@ -102,7 +117,7 @@ var services = map[string]*service{
 		name:     "eks",
 		protocol: restJSON{routes: eksRoutes},
 		denied:   "AccessDeniedException", throttled: "ThrottlingException",
-		unauthenticated: "UnrecognizedClientException", badToken: "InvalidParameterException",
+		unauthenticated: "UnrecognizedClientException", badToken: "InvalidParameterException", invalid: "InvalidParameterException",
 		statuses: map[string]int{
 			"AccessDeniedException":       http.StatusForbidden,
 			"UnrecognizedClientException": http.StatusForbidden,
@@ -127,7 +142,7 @@ var services = map[string]*service{
 		name:     "ec2",
 		protocol: ec2Query{},
 		denied:   "UnauthorizedOperation", throttled: "RequestLimitExceeded",
-		unauthenticated: "AuthFailure", badToken: "InvalidParameterValue",
+		unauthenticated: "AuthFailure", badToken: "InvalidParameterValue", invalid: "InvalidParameterValue",
 		statuses: map[string]int{
 			"UnauthorizedOperation": http.StatusForbidden,
 			"AuthFailure":           http.StatusUnauthorized,
@@ -139,7 +154,7 @@ var services = map[string]*service{
 		name:     "autoscaling",
 		protocol: awsQuery{namespace: "http://autoscaling.amazonaws.com/doc/2011-01-01/"},
 		denied:   "AccessDenied", throttled: "Throttling",
-		unauthenticated: "InvalidClientTokenId", badToken: "InvalidNextToken",
+		unauthenticated: "InvalidClientTokenId", badToken: "InvalidNextToken", invalid: "ValidationError",
 		statuses:   queryStatuses,
 		operations: autoScalingOperations,
 	},
@@ -154,7 +169,7 @@ var services = map[string]*service{
 		name:     "cloudwatch",
 		protocol: rpcCBOR{namespace: "com.amazonaws.cloudwatch"},
 		denied:   "AccessDenied", throttled: "Throttling",
-		unauthenticated: "InvalidClientTokenId", badToken: "InvalidNextToken",
+		unauthenticated: "InvalidClientTokenId", badToken: "InvalidNextToken", invalid: "ValidationError",
 		statuses:   queryStatuses,
 		operations: cloudWatchOperations,
 	},
