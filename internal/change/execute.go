@@ -135,6 +135,9 @@ func (r *runner) runPhase(cp *ClusterPlan, ph Phase) []StepResult {
 		return r.runBatch(cp, ph)
 	}
 	results := make([]StepResult, 0, len(ph.Steps))
+	// unverified are the steps whose check after the change could not
+	// read: their dependents do not go on.
+	unverified := map[StepRef]bool{}
 	halted := false
 	for i, s := range ph.Steps {
 		if !halted && (s.work() || s.busy()) && r.outOfTime(cp) {
@@ -142,11 +145,12 @@ func (r *runner) runPhase(cp *ClusterPlan, ph Phase) []StepResult {
 		}
 		res := StepResult{Ref: s.Ref, Status: StepNotAttempted}
 		if !halted {
-			r.steps, r.remaining = ph.Steps, ph.Steps[i:]
-			if dep, stop := r.unfinishedDependency(s, results); stop {
-				res = r.dependencyNotDone(cp, s, dep)
+			r.steps, r.remaining, r.unverified = ph.Steps, ph.Steps[i:], false
+			if dep, stop := r.unfinishedDependency(s, results, unverified); stop {
+				res = r.dependencyNotDone(cp, s, dep, unverified[dep.Ref])
 			} else {
 				res = r.runStep(cp, s)
+				unverified[s.Ref] = r.unverified
 			}
 			r.stepEnded(ph.Ref, &res)
 		}

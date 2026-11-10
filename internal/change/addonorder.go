@@ -100,23 +100,44 @@ func dependentPair(steps []Step) (dependent, dependency string) {
 	return "", ""
 }
 
+// namedAfter returns a notice for each add-on with work whose dependency
+// with work comes after it in steps. Only named add-ons can be in that
+// order: the run keeps it, so the dependency does not stop its dependent.
+func namedAfter(steps []Step) []string {
+	var out []string
+	for i, s := range steps {
+		if !s.work() {
+			continue
+		}
+		for _, dep := range addonDependencies(s.Ref.Name) {
+			if slices.ContainsFunc(steps[i+1:], func(d Step) bool { return d.Ref.Name == dep && d.work() }) {
+				out = append(out, fmt.Sprintf("add-on %s depends on %s, which is named after it; the order given is kept", s.Ref.Name, dep))
+			}
+		}
+	}
+	return out
+}
+
 // unfinishedDependency returns the result of the step of a dependency of
-// the add-on of s that did not end clean (see cleanStep), among the steps
-// that ran before it in the run. It returns false when s is no add-on
-// step that has work, or when every dependency in done ended clean.
+// the add-on of s that did not end clean, among the steps that ran before
+// it in the run. Clean is verified with no issue: cleanStep, and not in
+// unverified, the steps whose check after the change could not read. It
+// returns false when s is no add-on step that has work, or when every
+// dependency in done ended clean.
 //
 // An add-on is not updated after its dependency failed, timed out, was
-// busy, was not attempted, or was updated and is not healthy. --all
+// busy, was not attempted, was updated and is not healthy, or was updated
+// and could not be read after it. --all
 // orders the add-ons by dependency. Named add-ons run in the order given:
 // a dependency named after its dependent has not run when the dependent
 // does, so it does not stop it.
-func (r *runner) unfinishedDependency(s Step, done []StepResult) (StepResult, bool) {
+func (r *runner) unfinishedDependency(s Step, done []StepResult, unverified map[StepRef]bool) (StepResult, bool) {
 	if _, ok := r.req.(AddonUpdateRequest); !ok || s.Ref.Kind != StepAddon || !s.work() {
 		return StepResult{}, false
 	}
 	for _, dep := range addonDependencies(s.Ref.Name) {
 		i := slices.IndexFunc(done, func(d StepResult) bool { return d.Ref.Name == dep })
-		if i >= 0 && !cleanStep(done[i]) {
+		if i >= 0 && (!cleanStep(done[i]) || unverified[done[i].Ref]) {
 			return done[i], true
 		}
 	}
@@ -125,12 +146,16 @@ func (r *runner) unfinishedDependency(s Step, done []StepResult) (StepResult, bo
 
 // dependencyNotDone returns the result of step s, whose dependency dep did
 // not end clean: NotAttempted, with a failure on the step that says why.
+// unread says that the check after the update of dep could not read.
 // Nothing is sent for it.
-func (r *runner) dependencyNotDone(cp *ClusterPlan, s Step, dep StepResult) StepResult {
+func (r *runner) dependencyNotDone(cp *ClusterPlan, s Step, dep StepResult, unread bool) StepResult {
 	res := StepResult{Ref: s.Ref, Status: StepNotAttempted}
 	why := fmt.Sprintf("its dependency %s did not finish (%s)", dep.Ref.Name, dep.Status)
-	if dep.Status == StepSucceeded && dep.VerifyIssue != "" {
+	switch {
+	case dep.Status == StepSucceeded && dep.VerifyIssue != "":
 		why = fmt.Sprintf("its dependency %s was updated and is not healthy (%s)", dep.Ref.Name, dep.VerifyIssue)
+	case dep.Status == StepSucceeded && unread:
+		why = fmt.Sprintf("its dependency %s was updated and could not be read after it, so its health is not known", dep.Ref.Name)
 	}
 	res.Failure = r.stepFailure(cp, res, apidoc.ReasonNotAttempted, stepName(s.Ref)+" was not updated: "+why+"; nothing was sent")
 	return res

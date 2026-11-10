@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/dantech2000/refresh/internal/apidoc"
+	"github.com/dantech2000/refresh/internal/awsx/awsxtest"
 	"github.com/dantech2000/refresh/internal/fleet/fleettest"
 	"github.com/dantech2000/refresh/internal/health"
 )
@@ -791,9 +793,34 @@ func TestRun_StopsDependents(t *testing.T) {
 	}
 	fails := cniScript(fleettest.UpdateScript{After: 30 * time.Second, Result: fleettest.UpdateFailed})
 	degraded := cniScript(fleettest.UpdateScript{ResourceStatus: fleettest.StatusDegraded})
+	// unreadOnce makes the read of vpc-cni after its update fail once: the
+	// first DescribeAddon of it after a poll of its update is denied, and
+	// the next one, the read of the cluster before the next step, works.
+	unreadOnce := func(_ *testing.T, e *env) {
+		var mu sync.Mutex
+		polled, reads := false, 0
+		cni := fleettest.Scope{Operation: fleettest.EKSDescribeAddon, Addon: "vpc-cni"}
+		e.srv.OnRequest = func(_ context.Context, r awsxtest.Request) {
+			mu.Lock()
+			defer mu.Unlock()
+			switch {
+			case r.Operation == fleettest.EKSDescribeUpdate && r.Input["addonName"] == "vpc-cni":
+				polled = true
+			case r.Operation == fleettest.EKSDescribeAddon && r.Input["addonName"] == "vpc-cni" && polled:
+				if reads++; reads == 1 {
+					e.world.SetScopedFault(cni, fleettest.Fault{Deny: true})
+				} else {
+					e.world.SetScopedFault(cni, fleettest.Fault{})
+				}
+			}
+		}
+	}
+	didNotFinish := func(status string) string {
+		return "add-on coredns was not updated: its dependency vpc-cni did not finish (" + status + "); nothing was sent"
+	}
 	const (
-		didNotFinish = "add-on coredns was not updated: its dependency vpc-cni did not finish ("
-		notHealthy   = "add-on coredns was not updated: its dependency vpc-cni was updated and is not healthy (add-on vpc-cni ended in status DEGRADED (expected ACTIVE)); nothing was sent"
+		notHealthy = "add-on coredns was not updated: its dependency vpc-cni was updated and is not healthy (add-on vpc-cni ended in status DEGRADED (expected ACTIVE)); nothing was sent"
+		notRead    = "add-on coredns was not updated: its dependency vpc-cni was updated and could not be read after it, so its health is not known; nothing was sent"
 	)
 	tests := []struct {
 		name string
@@ -810,17 +837,17 @@ func TestRun_StopsDependents(t *testing.T) {
 		{
 			name: "--all: the request of the dependency is refused", prepare: refused,
 			want:    map[string]StepStatus{"vpc-cni": StepFailed, "coredns": StepNotAttempted, "kube-proxy": StepSkipped, agent: StepSucceeded},
-			updates: []any{agent, "vpc-cni"}, exit: 4, coredns: didNotFinish + "Failed)",
+			updates: []any{agent, "vpc-cni"}, exit: 4, coredns: didNotFinish("Failed"),
 		},
 		{
 			name: "--all: the update of the dependency fails", seed: fails,
 			want:    map[string]StepStatus{"vpc-cni": StepFailed, "coredns": StepNotAttempted, "kube-proxy": StepSkipped, agent: StepSucceeded},
-			updates: []any{agent, "vpc-cni"}, exit: 4, coredns: didNotFinish + "Failed)",
+			updates: []any{agent, "vpc-cni"}, exit: 4, coredns: didNotFinish("Failed"),
 		},
 		{
 			name: "--all: the wait of the dependency times out", seed: cniScript(fleettest.UpdateScript{Never: true}),
 			want:    map[string]StepStatus{"vpc-cni": StepInProgress, "coredns": StepNotAttempted, "kube-proxy": StepSkipped, agent: StepSucceeded},
-			updates: []any{agent, "vpc-cni"}, exit: 4, coredns: didNotFinish + "InProgress)",
+			updates: []any{agent, "vpc-cni"}, exit: 4, coredns: didNotFinish("InProgress"),
 		},
 		{
 			name: "--all: the dependency is busy",
@@ -829,12 +856,17 @@ func TestRun_StopsDependents(t *testing.T) {
 				startElsewhere(t, e.world, "vpc-cni", "v1.19.5-eksbuild.1", fleettest.UpdateScript{Never: true})
 			},
 			want:    map[string]StepStatus{"vpc-cni": StepBusy, "coredns": StepNotAttempted, "kube-proxy": StepSkipped, agent: StepSucceeded},
-			updates: []any{agent}, exit: 4, coredns: didNotFinish + "Busy)",
+			updates: []any{agent}, exit: 4, coredns: didNotFinish("Busy"),
 		},
 		{
 			name: "--all: the dependency is updated and DEGRADED", seed: degraded,
 			want:    map[string]StepStatus{"vpc-cni": StepSucceeded, "coredns": StepNotAttempted, "kube-proxy": StepSkipped, agent: StepSucceeded},
 			updates: []any{agent, "vpc-cni"}, exit: 5, coredns: notHealthy,
+		},
+		{
+			name: "--all: the dependency cannot be read after its update", prepare: unreadOnce,
+			want:    map[string]StepStatus{"vpc-cni": StepSucceeded, "coredns": StepNotAttempted, "kube-proxy": StepSkipped, agent: StepSucceeded},
+			updates: []any{agent, "vpc-cni"}, exit: 4, coredns: notRead,
 		},
 		{
 			name: "--all: the dependency is at its target", seed: func(c *fleettest.Cluster) { c.Addon("vpc-cni").Version = cniNew },
@@ -844,12 +876,17 @@ func TestRun_StopsDependents(t *testing.T) {
 		{
 			name: "named, the dependency first: it fails", named: []string{"vpc-cni", "coredns"}, seed: fails,
 			want:    map[string]StepStatus{"vpc-cni": StepFailed, "coredns": StepNotAttempted},
-			updates: []any{"vpc-cni"}, exit: 1, coredns: didNotFinish + "Failed)",
+			updates: []any{"vpc-cni"}, exit: 1, coredns: didNotFinish("Failed"),
 		},
 		{
 			name: "named, the dependency first: it is DEGRADED", named: []string{"vpc-cni", "coredns"}, seed: degraded,
 			want:    map[string]StepStatus{"vpc-cni": StepSucceeded, "coredns": StepNotAttempted},
 			updates: []any{"vpc-cni"}, exit: 5, coredns: notHealthy,
+		},
+		{
+			name: "named, the dependency first: it cannot be read after its update", named: []string{"vpc-cni", "coredns"}, prepare: unreadOnce,
+			want:    map[string]StepStatus{"vpc-cni": StepSucceeded, "coredns": StepNotAttempted},
+			updates: []any{"vpc-cni"}, exit: 4, coredns: notRead,
 		},
 		{
 			name: "named, the dependent first: the order is kept, and it goes on", named: []string{"coredns", "vpc-cni"}, seed: fails,
@@ -893,7 +930,7 @@ func TestRun_StopsDependents(t *testing.T) {
 			switch {
 			case tt.coredns == "" && s.Failure != nil:
 				t.Errorf("coredns failure = %+v, want none", s.Failure)
-			case tt.coredns != "" && (s.Failure == nil || s.Failure.Reason != apidoc.ReasonNotAttempted || !strings.HasPrefix(s.Failure.Error, tt.coredns)):
+			case tt.coredns != "" && (s.Failure == nil || s.Failure.Reason != apidoc.ReasonNotAttempted || s.Failure.Error != tt.coredns):
 				t.Errorf("coredns failure = %+v, want NotAttempted: %q", s.Failure, tt.coredns)
 			}
 		})
@@ -922,6 +959,24 @@ func TestRun_NoWaitDependentPair(t *testing.T) {
 		{name: "named, the dependency first", named: []string{"vpc-cni", "coredns"}, refused: "--no-wait cannot keep the order of the add-ons: add-on coredns waits for vpc-cni to finish"},
 		{name: "named, the dependent first", named: []string{"coredns", "vpc-cni"}, updates: []any{"coredns", "vpc-cni"}},
 	}
+	t.Run("the plan says that a dependent named first keeps its order", func(t *testing.T) {
+		e := newEnv(t, newWorld(nil))
+		p, err := NewPlan(testContext(t), e.deps, yes(request("coredns", "vpc-cni")))
+		if err != nil {
+			t.Fatal(err)
+		}
+		const want = "add-on coredns depends on vpc-cni, which is named after it; the order given is kept"
+		if !contains(p.Clusters[0].Notices, want) {
+			t.Errorf("notices = %q, want %q", p.Clusters[0].Notices, want)
+		}
+		p, err = NewPlan(testContext(t), e.deps, yes(request("vpc-cni", "coredns")))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(p.Clusters[0].Notices) != 0 {
+			t.Errorf("notices = %q, want none: the dependency comes first", p.Clusters[0].Notices)
+		}
+	})
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			e := newEnv(t, newWorld(tt.seed))

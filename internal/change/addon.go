@@ -192,6 +192,7 @@ func planAddons(ctx context.Context, d Deps, req AddonUpdateRequest) (*Plan, err
 		}
 		return nil, fmt.Errorf("--no-wait cannot keep %s: add-on %s waits for %s to finish. Run without --no-wait, or update the add-ons one at a time", what, dependent, dep)
 	}
+	cp.Notices = append(cp.Notices, namedAfter(phase.Steps)...)
 	cp.markBusy(ctx, clients, phase.Steps)
 	cp.Phases = []Phase{phase}
 

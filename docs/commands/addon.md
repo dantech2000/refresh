@@ -86,18 +86,20 @@ out.
 ### Dependencies
 
 An add-on is not updated when a dependency of it ran before it in the same
-run and did not end clean. Clean means `Succeeded` with no verification issue,
-or `Skipped`. So when `vpc-cni` fails, times out, is already changing, or is
-updated and ends `DEGRADED`, `coredns` and `kube-proxy` are `NotAttempted`.
-Their failure says why: "its dependency vpc-cni did not finish (Failed)", or
-"its dependency vpc-cni was updated and is not healthy (...)". The add-ons that
-do not depend on it go on.
+run and did not end clean. Clean means `Skipped`, or `Succeeded` and verified
+with no issue: the read after the update worked and found the add-on healthy.
+So when `vpc-cni` fails, times out, is already changing, ends `DEGRADED`, or
+cannot be read after its update, `coredns` and `kube-proxy` are
+`NotAttempted`. Their failure says why: "its dependency vpc-cni did not finish
+(Failed)", "its dependency vpc-cni was updated and is not healthy (...)", or
+"its dependency vpc-cni was updated and could not be read after it". The
+add-ons that do not depend on it go on.
 
 Named add-ons run in the order you give, and the same rule holds.
 `refresh addon update vpc-cni coredns` does not update `coredns` after
 `vpc-cni` failed. The command does not reorder named add-ons. In
 `refresh addon update coredns vpc-cni`, `coredns` runs first, before its
-dependency has run, so nothing stops it.
+dependency has run, so nothing stops it. The plan says so in a notice.
 
 `--no-wait` is refused, with no request, when an add-on to update depends on
 one that comes before it in the run: without a wait that order means nothing.
