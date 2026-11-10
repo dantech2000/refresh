@@ -2,10 +2,12 @@ package nodegroup_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -60,8 +62,13 @@ func addRollNodegroup(s *fleettest.State, c *fleettest.Cluster, name string, cur
 // rollCluster adds a healthy cluster on Kubernetes 1.32 to s: the
 // nodegroup web is on an old AMI, and api is on the latest.
 func rollCluster(s *fleettest.State, name string) *fleettest.Cluster {
+	return rollClusterIn(s, east, name)
+}
+
+// rollClusterIn is rollCluster in region.
+func rollClusterIn(s *fleettest.State, region, name string) *fleettest.Cluster {
 	c := &fleettest.Cluster{
-		Name: name, Region: east, Version: "1.32", SubnetIDs: []string{"subnet-a", "subnet-b"},
+		Name: name, Region: region, Version: "1.32", SubnetIDs: []string{"subnet-a", "subnet-b"},
 		Addons: []*fleettest.Addon{{Name: "vpc-cni", Version: "v1.19.0-eksbuild.1"}},
 	}
 	s.Clusters = append(s.Clusters, c)
@@ -587,6 +594,64 @@ func TestUpdate_Fleet(t *testing.T) {
 					cmdutiltest.ValidateJSON(t, tt.kind, e.Out.Bytes())
 				}
 			})
+		}
+	}
+}
+
+// Two clusters with one name in two regions each get their own Kubernetes
+// client: the gate of prod in eu-west-1 reads its own PDBs, which block,
+// and not those of prod in us-east-1.
+func TestUpdate_FleetSameNameTwoRegions(t *testing.T) {
+	const west = "eu-west-1"
+	world := updateWorld(func(s *fleettest.State, _ *fleettest.Cluster) {
+		c := rollClusterIn(s, west, "prod")
+		c.PDBs[0].MinAvailable, c.PDBs[0].DesiredHealthy, c.PDBs[0].DisruptionsAllowed = 2, 2, 0
+		s.Quotas = append(s.Quotas, fleettest.Quota{Region: west, ServiceCode: "ec2", QuotaCode: "L-1216C47A", Value: 128})
+		s.Metrics = append(s.Metrics, fleettest.Metric{
+			Region: west, Namespace: "AWS/Usage", Name: "ResourceCount", Values: []float64{40},
+			Dimensions: map[string]string{"Service": "EC2", "Type": "Resource", "Resource": "vCPU", "Class": "Standard/OnDemand"},
+		})
+	})
+	e := cmdtest.NewFake(t, world, east)
+	e.UseWorldClock()
+	servers := map[string]*kubetest.Server{}
+	kubeconfig := "apiVersion: v1\nkind: Config\ncurrent-context: prod-" + east + "\nclusters:\n"
+	for _, region := range []string{east, west} {
+		srv := kubetest.NewServer(world, region, "prod")
+		t.Cleanup(srv.Close)
+		servers[region] = srv
+		kubeconfig += fmt.Sprintf("- name: prod-%s\n  cluster:\n    server: %s\n", region, srv.URL)
+	}
+	kubeconfig += "users:\n- name: fake\n  user:\n    token: fake-token\ncontexts:\n"
+	for _, region := range []string{east, west} {
+		kubeconfig += fmt.Sprintf("- name: prod-%s\n  context:\n    cluster: prod-%s\n    user: fake\n", region, region)
+	}
+	path := filepath.Join(t.TempDir(), "kubeconfig")
+	if err := os.WriteFile(path, []byte(kubeconfig), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("KUBECONFIG", path)
+
+	err := e.Run(cmdutiltest.Context(t), "nodegroup", "update", "--all-clusters", "-r", east, "-r", west, "--dry-run", "-o", "json")
+	if got := cmdutil.ExitCode(err); got != cmdutil.ExitBlocked {
+		t.Errorf("exit code = %d (%v), want 3: the PDB of prod in %s blocks\n%s", got, err, west, e.Err)
+	}
+	cmdutiltest.ValidateJSON(t, apidoc.KindPlan, e.Out.Bytes())
+	var plan apidoc.Plan
+	if err := json.Unmarshal(e.Out.Bytes(), &plan); err != nil {
+		t.Fatalf("plan: %v\n%s", err, e.Out)
+	}
+	got := map[string]apidoc.PlanDecision{}
+	for _, c := range plan.Clusters {
+		got[c.Cluster+" in "+c.Region] = c.Decision
+	}
+	want := map[string]apidoc.PlanDecision{"prod in " + east: apidoc.PlanProceed, "prod in " + west: apidoc.PlanBlocked}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("the decisions of the plans (-want +got):\n%s", diff)
+	}
+	for region, srv := range servers {
+		if len(srv.Requests()) == 0 {
+			t.Errorf("the Kubernetes API of prod in %s got no request", region)
 		}
 	}
 }
