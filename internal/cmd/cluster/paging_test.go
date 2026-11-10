@@ -9,8 +9,14 @@ import (
 // TestReadsArePageable runs each read of the group with every AWS list
 // answered one item per page, and compares with the unpaged run.
 func TestReadsArePageable(t *testing.T) {
-	check := func(t *testing.T) *cmdtest.Fake { return newCheckFake(t, nil) }
-	list := func(t *testing.T) *cmdtest.Fake { return newEnv(t, newWorld()).Fake }
+	check := func(t *testing.T) *cmdtest.Fake {
+		t.Helper()
+		return newCheckFake(t, nil)
+	}
+	list := func(t *testing.T) *cmdtest.Fake {
+		t.Helper()
+		return newEnv(t, newWorld()).Fake
+	}
 	for _, tt := range []struct {
 		name string
 		fake func(t *testing.T) *cmdtest.Fake

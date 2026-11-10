@@ -544,10 +544,10 @@ func scenarioNamed(t *testing.T, name string) Scenario {
 // and a dry run in place of the change. Each case proves that the
 // comparison and the checks catch that problem.
 func TestCheckFindsProblems(t *testing.T) {
+	t.Parallel()
 	if *update {
 		t.Skip("-update records the traces; there is nothing to compare")
 	}
-	t.Parallel()
 	bin := Runner{Binary: binary}
 	t.Run("what the contract asks of the binary", func(t *testing.T) {
 		t.Parallel()

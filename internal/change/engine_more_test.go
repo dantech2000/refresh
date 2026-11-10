@@ -315,7 +315,9 @@ func TestInFlightUpdate_LongHistory(t *testing.T) {
 				t.Fatalf("listing the updates: %d IDs, %v", len(listed.UpdateIds), err)
 			}
 			inProgress := listed.UpdateIds[at]
-			world.Edit(func(s *fleettest.State) { s.Cluster(east, "prod").Update(inProgress).Status = fleettest.UpdateInProgress })
+			world.Edit(func(s *fleettest.State) {
+				s.Cluster(east, "prod").Update(inProgress).Status = fleettest.UpdateInProgress
+			})
 			// The second describe waits until a third one arrives.
 			third := make(chan struct{})
 			var once sync.Once
