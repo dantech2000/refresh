@@ -222,8 +222,10 @@ The eviction API does not look at a PDB for a pod that is `Pending`,
 `Succeeded`, or `Failed`, or that is already being deleted. For a pod that is
 not ready, the API looks at the PDB only when the PDB does not have the
 `AlwaysAllow` unhealthy pod eviction policy, and either has fewer healthy pods
-than it needs or needs zero healthy pods (`status.desiredHealthy` is 0). A pod that more than one PDB selects is also a blocker, because the
-eviction API refuses it.
+than it needs or needs zero healthy pods (`status.desiredHealthy` is 0).
+
+A pod that more than one PDB selects is also a blocker, because the eviction
+API refuses it.
 
 Without target nodegroups, the check reads no pods. Then a PDB that allows
 zero disruptions is a blocker only when its status counts at least one pod. A
@@ -379,8 +381,8 @@ A `Pending` pod is stuck in two cases:
 - A container or an init container is
   [`Waiting`](https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/#container-state-waiting)
   with the reason `ImagePullBackOff`, `ErrImagePull`, or
-  `CreateContainerConfigError`. These do not pass without a change, and a
-  bad AMI can cause them.
+  `CreateContainerConfigError`. These usually need a change, and a bad AMI
+  can cause them.
 
 Any other `Pending` pod is progressing. A pod that is bound to a node and
 pulls its images is also `Pending`

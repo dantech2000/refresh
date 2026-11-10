@@ -492,7 +492,7 @@ func evaluateLaunches(usage, limit float64, ls launches) (Outcome, string) {
 		}
 		outcome := launchOutcome(usage, limit, likely, most)
 		slices.Sort(names)
-		what := fmt.Sprintf("rolling %s at once may launch %s nodes (%s vCPU)", joinNames(names), span(nodesLikely, nodesMost), spanF(likely, most))
+		what := fmt.Sprintf("rolling %s at once may launch %s nodes (%s vCPU)", strings.Join(names, ", "), span(nodesLikely, nodesMost), spanF(likely, most))
 		return outcome, launchMessage(what, usage, limit, false)
 	}
 	worst, worstOutcome := counted[0], Pass

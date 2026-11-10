@@ -117,7 +117,7 @@ func runInsights(in InsightsInput, cluster string) Result {
 			unknown = append(unknown, i.Name)
 		}
 	}
-	findings := slices.Sorted(slices.Values(slices.Concat(errs, unknown, warnings)))
+	findings := sorted(errs, unknown, warnings)
 	r := Result{Findings: findings}
 	var parts []string
 	if len(errs) > 0 {
@@ -169,9 +169,9 @@ func runVersionSkew(_ context.Context, in *Input) Result {
 		}
 		switch minors := minorsBehind(snap.Cluster.Version, n.Version); {
 		case minors >= kubeletSkewLimit:
-			atLimit = append(atLimit, finding{n.Name, fmt.Sprintf("%s (%s, %d behind)", n.Name, n.Version, minors)})
+			atLimit = append(atLimit, finding{name: n.Name, text: fmt.Sprintf("%s (%s, %d behind)", n.Name, n.Version, minors)})
 		case minors > 0:
-			behind = append(behind, finding{n.Name, fmt.Sprintf("%s (%s)", n.Name, n.Version)})
+			behind = append(behind, finding{name: n.Name, text: fmt.Sprintf("%s (%s)", n.Name, n.Version)})
 		}
 	}
 	for _, a := range snap.Addons {
@@ -180,7 +180,7 @@ func runVersionSkew(_ context.Context, in *Input) Result {
 			continue
 		}
 		if b, _ := a.Behind(); b {
-			addonsBehind = append(addonsBehind, finding{a.Name, fmt.Sprintf("%s (%s, latest %s)", a.Name, a.Version, a.Latest)})
+			addonsBehind = append(addonsBehind, finding{name: a.Name, text: fmt.Sprintf("%s (%s, latest %s)", a.Name, a.Version, a.Latest)})
 		}
 	}
 	r := Result{Findings: findingNames(slices.Concat(atLimit, behind, addonsBehind))}
