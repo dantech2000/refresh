@@ -126,8 +126,8 @@ func allSteps(clusters []ClusterResult) []StepResult {
 //
 // The steps run one after another, and a step that fails or is blocked
 // does not stop the next one: the targets are independent. One exception:
-// with --all, an add-on whose dependency did not finish is NotAttempted
-// (see unfinishedDependency). A phase that is one batch runs in runBatch.
+// an add-on whose dependency ran before it and did not end clean is
+// NotAttempted (see unfinishedDependency). A phase that is one batch runs in runBatch.
 // One that stops at its first failure is built with the first change that
 // has one.
 func (r *runner) runPhase(cp *ClusterPlan, ph Phase) []StepResult {

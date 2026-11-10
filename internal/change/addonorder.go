@@ -80,16 +80,19 @@ func sortByDependency(names []string) []string {
 }
 
 // dependentPair returns an add-on of steps that has work and depends on
-// another add-on of steps that has work, and that dependency, or "" for
-// both. --no-wait cannot keep such a pair in order: it does not wait for
-// the dependency before it sends the request of the dependent.
+// an add-on with work that comes before it in steps, and that
+// dependency, or "" for both. --no-wait cannot keep such a pair in order:
+// it does not wait for the dependency before it sends the request of the
+// dependent. --all puts every dependency first. Named add-ons keep the
+// order of the user, and a dependency named after its dependent is no
+// pair: the run has no order to keep for it.
 func dependentPair(steps []Step) (dependent, dependency string) {
-	for _, s := range steps {
+	for i, s := range steps {
 		if !s.work() {
 			continue
 		}
 		for _, dep := range addonDependencies(s.Ref.Name) {
-			if slices.ContainsFunc(steps, func(d Step) bool { return d.Ref.Name == dep && d.work() }) {
+			if slices.ContainsFunc(steps[:i], func(d Step) bool { return d.Ref.Name == dep && d.work() }) {
 				return s.Ref.Name, dep
 			}
 		}
@@ -98,20 +101,22 @@ func dependentPair(steps []Step) (dependent, dependency string) {
 }
 
 // unfinishedDependency returns the result of the step of a dependency of
-// the add-on of s that did not end Succeeded or Skipped, among the steps
-// that ran before it. It returns false when s is no add-on step of --all
-// that has work, or when every dependency in done finished.
+// the add-on of s that did not end clean (see cleanStep), among the steps
+// that ran before it in the run. It returns false when s is no add-on
+// step that has work, or when every dependency in done ended clean.
 //
-// --all updates the add-ons in dependency order, and the order means that
-// an add-on is not updated after its dependency failed, timed out, is
-// busy, or was not attempted.
+// An add-on is not updated after its dependency failed, timed out, was
+// busy, was not attempted, or was updated and is not healthy. --all
+// orders the add-ons by dependency. Named add-ons run in the order given:
+// a dependency named after its dependent has not run when the dependent
+// does, so it does not stop it.
 func (r *runner) unfinishedDependency(s Step, done []StepResult) (StepResult, bool) {
-	if req, ok := r.req.(AddonUpdateRequest); !ok || !req.All || s.Ref.Kind != StepAddon || !s.work() {
+	if _, ok := r.req.(AddonUpdateRequest); !ok || s.Ref.Kind != StepAddon || !s.work() {
 		return StepResult{}, false
 	}
 	for _, dep := range addonDependencies(s.Ref.Name) {
 		i := slices.IndexFunc(done, func(d StepResult) bool { return d.Ref.Name == dep })
-		if i >= 0 && done[i].Status != StepSucceeded && done[i].Status != StepSkipped {
+		if i >= 0 && !cleanStep(done[i]) {
 			return done[i], true
 		}
 	}
@@ -119,11 +124,14 @@ func (r *runner) unfinishedDependency(s Step, done []StepResult) (StepResult, bo
 }
 
 // dependencyNotDone returns the result of step s, whose dependency dep did
-// not finish: NotAttempted, with a failure on the step. Nothing is sent
-// for it.
+// not end clean: NotAttempted, with a failure on the step that says why.
+// Nothing is sent for it.
 func (r *runner) dependencyNotDone(cp *ClusterPlan, s Step, dep StepResult) StepResult {
 	res := StepResult{Ref: s.Ref, Status: StepNotAttempted}
-	res.Failure = r.stepFailure(cp, res, apidoc.ReasonNotAttempted,
-		fmt.Sprintf("%s was not updated: its dependency %s did not finish (%s); nothing was sent", stepName(s.Ref), dep.Ref.Name, dep.Status))
+	why := fmt.Sprintf("its dependency %s did not finish (%s)", dep.Ref.Name, dep.Status)
+	if dep.Status == StepSucceeded && dep.VerifyIssue != "" {
+		why = fmt.Sprintf("its dependency %s was updated and is not healthy (%s)", dep.Ref.Name, dep.VerifyIssue)
+	}
+	res.Failure = r.stepFailure(cp, res, apidoc.ReasonNotAttempted, stepName(s.Ref)+" was not updated: "+why+"; nothing was sent")
 	return res
 }

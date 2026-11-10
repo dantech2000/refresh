@@ -706,16 +706,17 @@ const worse = "the health checks got worse since the plan (Addons: vpc-cni is DE
 // plan and is DEGRADED now is a warning that nobody accepted.
 func TestRun_AddonDegradesBeforeSubmit(t *testing.T) {
 	t.Run("--require-healthy blocks it", func(t *testing.T) {
-		e := newEnv(t, newWorld(nil))
-		degrade(e, 4)
-		req := yes(request("vpc-cni", "coredns"))
+		e := newEnv(t, withAgent(newWorld(nil)))
+		// The plan describes four add-ons: the fifth read is the fresh one.
+		degrade(e, 5)
+		req := yes(request("vpc-cni", agent))
 		req.Policy.RequireHealthy = true
 		res, err := Run(testContext(t), e.deps, req, Hooks{})
 		if err != nil {
 			t.Fatal(err)
 		}
 		// The add-on that is blocked does not stop the next one.
-		want := map[string]StepStatus{"vpc-cni": StepBlocked, "coredns": StepSucceeded}
+		want := map[string]StepStatus{"vpc-cni": StepBlocked, agent: StepSucceeded}
 		if diff := cmp.Diff(want, statuses(res)); diff != "" {
 			t.Errorf("steps (-want +got):\n%s", diff)
 		}
@@ -1005,19 +1006,20 @@ func TestRun_RecheckAfterWait_GoesOn(t *testing.T) {
 	})
 	t.Run("an add-on of the run that timed out does not block the next one", func(t *testing.T) {
 		e := newEnv(t, newWorld(func(c *fleettest.Cluster) { c.Addon("vpc-cni").UpdateScripts = []fleettest.UpdateScript{{Never: true}} }))
-		// Named add-ons: with --all, coredns would wait for its dependency.
-		res, err := Run(testContext(t), e.deps, yes(request("vpc-cni", "coredns", "kube-proxy")), Hooks{})
+		// agent does not depend on vpc-cni.
+		e.world = withAgent(e.world)
+		res, err := Run(testContext(t), e.deps, yes(request("vpc-cni", agent)), Hooks{})
 		if err != nil {
 			t.Fatal(err)
 		}
-		want := map[string]StepStatus{"vpc-cni": StepInProgress, "coredns": StepSucceeded, "kube-proxy": StepSkipped}
+		want := map[string]StepStatus{"vpc-cni": StepInProgress, agent: StepSucceeded}
 		if diff := cmp.Diff(want, statuses(res)); diff != "" {
 			t.Errorf("steps (-want +got):\n%s", diff)
 		}
 	})
 	t.Run("--no-wait reads the cluster once", func(t *testing.T) {
 		e := newEnv(t, newWorld(nil))
-		req := yes(request("vpc-cni", "coredns", "kube-proxy"))
+		req := yes(request("coredns", "vpc-cni", "kube-proxy"))
 		req.NoWait = true
 		if _, err := Run(testContext(t), e.deps, req, Hooks{}); err != nil {
 			t.Fatal(err)
