@@ -48,7 +48,7 @@ func (r *runner) guardSubmit(cp *ClusterPlan, s Step, res StepResult) (StepResul
 		if err := r.readCtx.Err(); err != nil {
 			return r.unsent(cp, res, err), false
 		}
-		snap, err := r.guardRead(cp)
+		snap, err := r.guardRead(cp, s.Ref.Kind == StepNodegroup && !gated && !r.common.Policy.Skip)
 		if err != nil {
 			return r.unsent(cp, res, err), false
 		}
@@ -102,10 +102,12 @@ func (r *runner) refreshes() int {
 	return r.refresh.ran
 }
 
-// guardRead reads the whole cluster for guardSubmit.
-func (r *runner) guardRead(cp *ClusterPlan) (*fleet.Snapshot, error) {
+// guardRead reads the whole cluster for guardSubmit. checks says that the
+// health checks of a nodegroup run on the read: only then are the
+// instance IDs read.
+func (r *runner) guardRead(cp *ClusterPlan, checks bool) (*fleet.Snapshot, error) {
 	fetch := r.d.fetcher()
-	return fetch.Fresh().Fetch(r.readCtx, r.d.AWS.Clients(cp.Region), cp.Cluster, engineNeed(r.req.kind() == ClusterRollback))
+	return fetch.Fresh().Fetch(r.readCtx, r.d.AWS.Clients(cp.Region), cp.Cluster, engineNeed(r.req.kind() == ClusterRollback, checks))
 }
 
 // blockStep returns the result of a step that guardSubmit refuses.
@@ -125,7 +127,7 @@ func (r *runner) guardRollback(cp *ClusterPlan, res StepResult, snap *fleet.Snap
 	if !ok {
 		return res, true
 	}
-	blockers, failures, err := RollbackStillEligible(snap, req, rollbackInputs(r.readCtx, r.d, r.d.AWS.Clients(cp.Region), cp.Cluster), cp.To)
+	blockers, failures, err := RollbackStillEligible(snap, req, rollbackInputs(r.readCtx, r.d, r.d.AWS.Clients(cp.Region), cp.Cluster, nil), cp.To)
 	if ended := r.readCtx.Err(); ended != nil {
 		return r.unsent(cp, res, ended), false
 	}

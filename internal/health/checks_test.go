@@ -5,6 +5,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -838,6 +840,31 @@ func TestDrainBlockers(t *testing.T) {
 	})
 }
 
+// The budgets and the nodes of a scale-down are listed in one round trip:
+// the first of the two lists is answered only once the other arrived.
+func TestScaleDownBlockers_ListsTogether(t *testing.T) {
+	h := newHarness(t)
+	other := make(chan struct{})
+	var once sync.Once
+	var first atomic.Bool
+	h.kube.OnRequest = func(ctx context.Context, r kubetest.Request) {
+		if r.Operation != fleettest.KubeListPDBs && r.Operation != fleettest.KubeListNodes {
+			return
+		}
+		if first.CompareAndSwap(false, true) {
+			select {
+			case <-other:
+			case <-ctx.Done():
+			case <-time.After(10 * time.Second):
+				t.Error("the first of the budget and node lists was alone for 10 s")
+			}
+			return
+		}
+		once.Do(func() { close(other) })
+	}
+	check(t, h.run(testContext(t), health.ScaleDownBlockers("ng-b", 1)), want{outcome: health.Pass})
+}
+
 func TestScaleDownBlockers(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -940,6 +967,7 @@ func TestUtilization(t *testing.T) {
 func TestRun(t *testing.T) {
 	t.Run("the whole set passes", testRunWholeSet)
 	t.Run("no Kubernetes", testRunNoKube)
+	t.Run("Kubernetes not requested", testRunKubeNotRequested)
 	t.Run("an unreachable API", testRunUnreachable)
 	t.Run("the run's deadline", testRunDeadline)
 	t.Run("the client's timeout on one list", testRunClientTimeout)
@@ -996,6 +1024,23 @@ func testRunNoKube(t *testing.T) {
 	}
 	if v := health.Gate(results, health.Policy{}); v.Decision != health.Ask || v.Exit != 2 {
 		t.Errorf("verdict = %+v, want Ask with exit 2", v)
+	}
+}
+
+// Without Kubernetes checks asked for, as "cluster describe" without
+// --check-readiness, the access result is Skipped and not a warning.
+func testRunKubeNotRequested(t *testing.T) {
+	h := newHarness(t)
+	ctx := testContext(t)
+	in := h.input(ctx)
+	in.Kube, in.Metrics = nil, nil
+	in.NoKube, in.KubeNotRequested = "pass --check-readiness to run the Kubernetes checks", true
+	results := health.Run(ctx, health.Preflight(), in)
+	for _, r := range results {
+		switch r.Name {
+		case "Workloads", health.AccessCheck:
+			check(t, r, want{outcome: health.Skipped, message: "pass --check-readiness to run the Kubernetes checks"})
+		}
 	}
 }
 

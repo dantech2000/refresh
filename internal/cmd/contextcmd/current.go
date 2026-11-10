@@ -6,18 +6,15 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/dantech2000/refresh/internal/cmdutil"
-	"github.com/dantech2000/refresh/internal/contexts"
 )
 
 type currentOptions struct {
-	ios   *cmdutil.IOStreams
-	store func() (*contexts.Store, error)
-
-	envContext string
+	f   *cmdutil.Factory
+	ios *cmdutil.IOStreams
 }
 
 func newCmdCurrent(f *cmdutil.Factory) *cobra.Command {
-	o := &currentOptions{ios: f.IOStreams, store: f.Contexts}
+	o := &currentOptions{f: f, ios: f.IOStreams}
 	return &cobra.Command{
 		Use:   "current",
 		Short: "Print the active context",
@@ -36,30 +33,12 @@ Exit codes:
   # Use another context for one command
   REFRESH_CONTEXT=stage refresh context current`,
 		Args: cobra.NoArgs,
-		RunE: func(*cobra.Command, []string) error {
-			o.complete()
-			if err := o.validate(); err != nil {
-				return err
-			}
-			return o.run()
-		},
+		RunE: func(*cobra.Command, []string) error { return o.run() },
 	}
 }
-
-func (o *currentOptions) complete() {
-	o.envContext = envContext()
-}
-
-// validate has nothing to reject: the command takes no argument and no flag
-// of its own.
-func (o *currentOptions) validate() error { return nil }
 
 func (o *currentOptions) run() error {
-	_, file, err := loadFile(o.store)
-	if err != nil {
-		return err
-	}
-	name, c, ok, err := file.Active(o.envContext)
+	name, c, ok, err := cmdutil.ActiveContext(o.f)
 	if err != nil {
 		return err
 	}

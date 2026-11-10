@@ -80,6 +80,27 @@ func TestDescription_Plain(t *testing.T) {
 	}
 }
 
+// Two items of one name in a section, such as one issue code that EKS
+// reports twice, keep one FIELD each: the second gets its number.
+func TestDescription_PlainRepeatedItem(t *testing.T) {
+	d := view.Description{Title: "x", Sections: []view.Section{{Title: "ISSUES", Items: []view.Item{
+		{Name: "AccessDenied", Fields: []view.Field{{Name: "message", Value: "one"}}},
+		{Name: "InsufficientFreeAddresses", Fields: []view.Field{{Name: "message", Value: "two"}}},
+		{Name: "AccessDenied", Fields: []view.Field{{Name: "message", Value: "three"}}},
+	}}}}
+	var buf bytes.Buffer
+	if err := d.Plain(&buf); err != nil {
+		t.Fatal(err)
+	}
+	want := "FIELD\tVALUE\n" +
+		"issues.AccessDenied.message\tone\n" +
+		"issues.InsufficientFreeAddresses.message\ttwo\n" +
+		"issues.AccessDenied.2.message\tthree\n"
+	if diff := cmp.Diff(want, buf.String()); diff != "" {
+		t.Errorf("Plain (-want +got):\n%s", diff)
+	}
+}
+
 // The item table of a section is cut to the terminal like any list.
 func TestDescription_NarrowTerminal(t *testing.T) {
 	d := view.Description{Title: "x", Sections: []view.Section{{Title: "ISSUES", Items: []view.Item{

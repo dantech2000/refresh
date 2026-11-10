@@ -772,3 +772,67 @@ func TestUpdate_Live(t *testing.T) {
 		t.Errorf("stdout = %s, rolls = %v", e.Out, rollsOf(e))
 	}
 }
+
+// A fleet rolls the clusters of the regions of -r. Without -r it rolls
+// the clusters of the home region alone: never the default sweep of every
+// region, and never the regions of REFRESH_EKS_REGIONS. With no home
+// region either, it fails before any request.
+func TestUpdate_FleetRegions(t *testing.T) {
+	const west = "eu-west-1"
+	world := func() *fleettest.World {
+		return updateWorld(func(s *fleettest.State, _ *fleettest.Cluster) {
+			rollClusterIn(s, west, "prod-eu")
+		})
+	}
+	tests := []struct {
+		name string
+		env  string
+		args []string
+		want []string // the clusters of the plan, as name in region
+	}{
+		{name: "no -r: the home region", want: []string{"prod in " + east}},
+		{name: "no -r and REFRESH_EKS_REGIONS: the home region", env: east + "," + west, want: []string{"prod in " + east}},
+		{name: "-r names another region", args: []string{"-r", west}, want: []string{"prod-eu in " + west}},
+		{name: "-r names both", args: []string{"-r", east, "-r", west}, want: []string{"prod in " + east, "prod-eu in " + west}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := cmdtest.NewFake(t, world(), east)
+			e.UseWorldClock()
+			if tt.env != "" {
+				t.Setenv("REFRESH_EKS_REGIONS", tt.env)
+			}
+			args := append([]string{"nodegroup", "update", "--all-clusters", "--dry-run", "-o", "json"}, tt.args...)
+			err := e.Run(cmdutiltest.Context(t), args...)
+			var plan apidoc.Plan
+			if jerr := json.Unmarshal(e.Out.Bytes(), &plan); jerr != nil {
+				t.Fatalf("plan: %v (run: %v)\n%s%s", jerr, err, e.Out, e.Err)
+			}
+			var got []string
+			for _, c := range plan.Clusters {
+				got = append(got, c.Cluster+" in "+c.Region)
+			}
+			slices.Sort(got)
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("the clusters of the plan (-want +got):\n%s", diff)
+			}
+			for _, r := range e.Server.Requests() {
+				if !slices.ContainsFunc(tt.want, func(w string) bool { return strings.HasSuffix(w, " in "+r.Region) }) {
+					t.Errorf("request %s in %s left the regions of the fleet", r.Operation, r.Region)
+				}
+			}
+		})
+	}
+
+	t.Run("no -r and no home region", func(t *testing.T) {
+		e := cmdtest.NewFake(t, world(), "")
+		t.Setenv("REFRESH_EKS_REGIONS", east)
+		err := e.Run(cmdutiltest.Context(t), "nodegroup", "update", "--all-clusters", "--dry-run")
+		if err == nil || !strings.Contains(err.Error(), "no AWS region") {
+			t.Errorf("error = %v, want the no-region error", err)
+		}
+		if n := len(e.Server.Requests()); n != 0 {
+			t.Errorf("%d requests, want none: %v", n, e.Operations())
+		}
+	})
+}

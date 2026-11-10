@@ -80,15 +80,32 @@ reason `VersionAhead`.
 
 `--all` updates every installed add-on, one after another, in dependency
 order: `vpc-cni` before `coredns` and `kube-proxy`, and those before the
-storage drivers. The order is not optional. An add-on whose dependency did not
-finish is not updated: when `vpc-cni` fails, times out, or is already changing,
-`coredns` and `kube-proxy` are `NotAttempted`, with a failure that says "its
-dependency vpc-cni did not finish". The add-ons that do not depend on it go on.
-`--skip-addon` leaves an add-on out.
+storage drivers. The order is not optional. `--skip-addon` leaves an add-on
+out.
 
-`--all --no-wait` is refused, with no request, when one add-on to update
-depends on another: without a wait the order means nothing. Run without
-`--no-wait`, or update the add-ons one at a time.
+### Dependencies
+
+An add-on is not updated when a dependency of it ran before it in the same
+run and did not end clean. Clean means `Skipped`, or `Succeeded` and verified
+with no issue: the read after the update worked and found the add-on healthy.
+So when `vpc-cni` fails, times out, is already changing, ends `DEGRADED`, or
+cannot be read after its update, `coredns` and `kube-proxy` are
+`NotAttempted`. Their failure says why: "its dependency vpc-cni did not finish
+(Failed)", "its dependency vpc-cni was updated and is not healthy (...)", or
+"its dependency vpc-cni was updated and could not be read after it". The
+add-ons that do not depend on it go on.
+
+Named add-ons run in the order you give, and the same rule holds.
+`refresh addon update vpc-cni coredns` does not update `coredns` after
+`vpc-cni` failed. The command does not reorder named add-ons. In
+`refresh addon update coredns vpc-cni`, `coredns` runs first, before its
+dependency has run, so nothing stops it. The plan says so in a notice.
+
+`--no-wait` is refused, with no request, when an add-on to update depends on
+one that comes before it in the run: without a wait that order means nothing.
+With `--all`, that is any dependent pair. Run without `--no-wait`, or update
+the add-ons one at a time. A dependent named before its dependency has no
+order to keep, so `--no-wait` goes on.
 
 ```bash
 refresh addon update --all -c staging-checkout-16 --dry-run
@@ -114,14 +131,16 @@ HEALTH GATE
 2. It refuses while the cluster or anything else in it is changing.
 3. It leaves an add-on alone that is already at its target.
 4. It leaves an add-on alone that is already changing. That add-on is listed
-   in `failures`. If another add-on was updated, the run exits `4`; if not,
-   nothing changed, and the run exits `3`. There is one exception: if the add-on
+   in `failures`, and so are the add-ons that depend on it. If another add-on
+   was updated, the run exits `4`; if not, nothing changed, and the run exits
+   `3`. There is one exception: if the add-on
    is changing to the version that this run wants, the command waits for that
    update and sends none.
 5. It asks once. `--yes` skips the question.
 6. It sends each update and waits for it, for `--wait-timeout` each.
-   `--no-wait` returns once AWS accepts the updates. With `--all`, an add-on
-   whose dependency did not finish is not updated.
+   `--no-wait` returns once AWS accepts the updates. An add-on whose
+   dependency did not end clean is not updated (see
+   [Dependencies](#dependencies)).
 7. It checks that each updated add-on is `ACTIVE` at the new version.
 
 ```text

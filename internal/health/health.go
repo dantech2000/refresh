@@ -72,6 +72,11 @@ type Input struct {
 	// words of a message to the user.
 	Kube   kubernetes.Interface
 	NoKube string
+	// KubeNotRequested says that the user did not ask for the Kubernetes
+	// checks, such as "cluster describe" without --check-readiness. With
+	// no client, the result about the access is then Skipped with NoKube
+	// as its message, and not a warning.
+	KubeNotRequested bool
 	// Metrics is nil without a metrics.k8s.io client.
 	Metrics metricsv1beta1.NodeMetricsInterface
 	// Now is the time of the run.

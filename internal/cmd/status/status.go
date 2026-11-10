@@ -4,7 +4,6 @@ package status
 import (
 	"cmp"
 	"context"
-	"errors"
 	"fmt"
 	"slices"
 	"strconv"
@@ -14,7 +13,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/dantech2000/refresh/internal/apidoc"
-	"github.com/dantech2000/refresh/internal/awsx"
 	"github.com/dantech2000/refresh/internal/cmd/fleetcmd"
 	"github.com/dantech2000/refresh/internal/cmdutil"
 	"github.com/dantech2000/refresh/internal/fleet"
@@ -31,27 +29,19 @@ const (
 )
 
 type options struct {
-	ios    *cmdutil.IOStreams
-	aws    func(ctx context.Context) (*awsx.Provider, error)
-	global *cmdutil.GlobalOptions
-	// now returns the time for the age of a stale AMI. Nil means
-	// time.Now.
-	now func() time.Time
+	f   *cmdutil.Factory
+	ios *cmdutil.IOStreams
 
 	allRegions bool
-	rawFilters []string
+	filters    cmdutil.Filters
 	sortKey    string
 	desc       bool
 	output     cmdutil.Format
-
-	// filters is rawFilters, parsed by complete.
-	filters cmdutil.Filters
 }
 
 // NewCmdStatus returns the status command.
 func NewCmdStatus(f *cmdutil.Factory) *cobra.Command {
-	o := &options{ios: f.IOStreams, aws: f.AWS, global: &f.Global, now: f.Now}
-	filterKeys := []string{keyName, keyRegion, keyVersion, keySupport}
+	o := &options{f: f, ios: f.IOStreams}
 	cmd := &cobra.Command{
 		Use:   "status",
 		Short: "Show what is out of date in the fleet",
@@ -69,10 +59,6 @@ Columns:
              report them. A cluster in extended support shows what it
              costs per hour on top of standard support, such as
              +$0.50/hr, unless its upgrade policy is STANDARD.
-
-Under the table, the totals line gives that premium for the whole fleet per
-month, at 730 hours a month. The price is the one on the EKS pricing page
-when refresh was released.
   COMPUTE    the managed nodegroups, Auto Mode, Karpenter, or none
   STALE AMI  the nodegroups that do not run the latest AMI for their own
              Kubernetes version, of all nodegroups, with the age of the
@@ -82,6 +68,10 @@ when refresh was released.
   HEALTH     the health issues that EKS reports for the control plane,
              the nodegroups, and the add-ons; an add-on that is DEGRADED
              with no issue listed counts as one
+
+Under the table, the totals line gives the extended support premium for the
+whole fleet per month, at 730 hours a month. The price is the one on the
+EKS pricing page when refresh was released.
 
 When several exit codes apply, the highest wins.
 
@@ -106,9 +96,6 @@ Exit codes:
   refresh status -o json | jq -r '.clusters[] | select(any(.nodegroups[]?; .ami.status == "Outdated")) | .name'`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if err := o.complete(filterKeys); err != nil {
-				return err
-			}
 			if err := o.validate(); err != nil {
 				return err
 			}
@@ -116,33 +103,27 @@ Exit codes:
 		},
 	}
 	fleetcmd.AddAllRegionsFlag(cmd, &o.allRegions)
-	cmdutil.AddFilterFlag(cmd, &o.rawFilters, filterKeys...)
+	cmdutil.AddFilterFlag(cmd, &o.filters, keyName, keyRegion, keyVersion, keySupport)
 	cmdutil.AddSortFlags(cmd, &o.sortKey, &o.desc, keyName, keyRegion, keyVersion, keySupport, keyStale)
 	cmdutil.AddOutputFlag(cmd, &o.output, cmdutil.FormatTable, cmdutil.FormatJSON, cmdutil.FormatYAML, cmdutil.FormatPlain)
 	return cmd
-}
-
-func (o *options) complete(filterKeys []string) error {
-	filters, err := cmdutil.ParseFilters(o.rawFilters, filterKeys...)
-	o.filters = filters
-	return err
 }
 
 // need is what the command reads of each cluster.
 var need = fleet.Need{AMI: true, AMIAge: true, LatestAddons: true, Support: true, Compute: true}
 
 func (o *options) validate() error {
-	return fleetcmd.ValidateSweepFlags(o.global, o.allRegions)
+	return fleetcmd.ValidateSweepFlags(&o.f.Global, o.allRegions)
 }
 
 func (o *options) run(ctx context.Context) error {
-	ctx, cancel := cmdutil.WithTimeout(ctx, o.global.Timeout)
+	ctx, cancel := cmdutil.WithTimeout(ctx, o.f.Global.Timeout)
 	defer cancel()
-	provider, err := o.aws(ctx)
+	provider, err := o.f.AWS(ctx)
 	if err != nil {
 		return err
 	}
-	regions := fleetcmd.SweepRegions(o.global, provider.Region(), o.allRegions)
+	regions := fleetcmd.SweepRegions(&o.f.Global, provider.Region(), o.allRegions)
 
 	// The name and the region are known before any describe call, so
 	// those filters save the calls for the clusters they drop.
@@ -156,7 +137,7 @@ func (o *options) run(ctx context.Context) error {
 			partial.Failures = nil
 			return o.view(partial, answered).Render(o.ios.Theme(), width)
 		})
-	fetcher := fleet.Fetcher{Now: o.now}
+	fetcher := fleet.Fetcher{Now: o.f.Now}
 	res := fetcher.Sweep(ctx, provider, regions, fleet.SweepOptions{
 		Need:     need,
 		OnRegion: progress.Add,
@@ -176,15 +157,8 @@ func (o *options) run(ctx context.Context) error {
 	fleetcmd.ReportSkippedRegions(o.ios, res.Skipped)
 
 	doc := o.document(res)
-	if err := cmdutil.Print(o.ios, o.output, doc, o.view(doc, len(res.Answered))); err != nil {
+	if err := cmdutil.PrintResult(ctx, o.ios, o.output, doc, o.view(doc, len(res.Answered)), doc.Failures); err != nil {
 		return err
-	}
-	if o.output != cmdutil.FormatTable {
-		cmdutil.ReportFailures(o.ios, doc.Failures)
-	}
-	// An interrupt is not a partial result.
-	if errors.Is(ctx.Err(), context.Canceled) {
-		return fmt.Errorf("interrupted: %w", context.Canceled)
 	}
 	return exitError(doc)
 }
@@ -358,9 +332,6 @@ func overall(c apidoc.Cluster) view.Status {
 	return view.Healthy
 }
 
-// unknownCell is the text of a cell whose data could not be read.
-const unknownCell = "unknown"
-
 // view returns the table and plain form of doc. regions is the number of
 // regions that answered.
 func (o *options) view(doc apidoc.FleetStatus, regions int) view.List[apidoc.Cluster] {
@@ -369,16 +340,11 @@ func (o *options) view(doc apidoc.FleetStatus, regions int) view.List[apidoc.Clu
 		subtitle += " in " + strconv.Itoa(regions) + " regions"
 	}
 	now := time.Now()
-	if o.now != nil {
-		now = o.now()
+	if o.f.Now != nil {
+		now = o.f.Now()
 	}
 	// A value that was not read shows as unknown, not as empty.
-	orUnknown := func(c apidoc.Cluster, value string) string {
-		if value == "" && c.Incomplete {
-			return unknownCell
-		}
-		return value
-	}
+	orUnknown := func(c apidoc.Cluster, value string) string { return view.OrUnknown(c.Incomplete, value) }
 	return view.List[apidoc.Cluster]{
 		Title:    "FLEET",
 		Subtitle: subtitle,
@@ -390,7 +356,7 @@ func (o *options) view(doc apidoc.FleetStatus, regions int) view.List[apidoc.Clu
 			{Title: "CLUSTER", MinWidth: 12, Value: func(c apidoc.Cluster) string { return c.Name }, Status: overall},
 			{Title: "REGION", Truncate: view.TruncateNever, Value: func(c apidoc.Cluster) string { return c.Region }},
 			{Title: "VERSION", Truncate: view.TruncateNever, Value: func(c apidoc.Cluster) string { return orUnknown(c, c.Version) }},
-			{Title: "SUPPORT", Truncate: view.TruncateNever, Value: func(c apidoc.Cluster) string { return orUnknown(c, supportText(c.Support)) }},
+			{Title: "SUPPORT", Truncate: view.TruncateNever, Value: func(c apidoc.Cluster) string { return orUnknown(c, view.SupportCell(c.Support)) }},
 			{Title: "COMPUTE", Truncate: view.TruncateNever, Value: func(c apidoc.Cluster) string { return orUnknown(c, computeText(c)) }},
 			{Title: "STALE AMI", MinWidth: 9, Value: func(c apidoc.Cluster) string { return orUnknown(c, staleText(c, now)) }},
 			{Title: "ADDONS", MinWidth: 6, MaxWidth: 32, Value: func(c apidoc.Cluster) string { return orUnknown(c, addonsText(c)) }},
@@ -405,10 +371,10 @@ func computeText(c apidoc.Cluster) string {
 	n := len(c.Nodegroups)
 	switch c.Compute {
 	case apidoc.ComputeManagedNodegroups:
-		return plural(n, "nodegroup")
+		return view.Plural(n, "nodegroup")
 	case apidoc.ComputeAutoMode:
 		if n > 0 {
-			return "Auto Mode, " + plural(n, "nodegroup")
+			return "Auto Mode, " + view.Plural(n, "nodegroup")
 		}
 		return "Auto Mode"
 	case apidoc.ComputeKarpenter:
@@ -418,7 +384,7 @@ func computeText(c apidoc.Cluster) string {
 	}
 	// The compute type could not be found out, and that is not a failure.
 	if c.Nodegroups != nil || c.Status != "" {
-		return unknownCell
+		return view.UnknownCell
 	}
 	return ""
 }
@@ -446,7 +412,7 @@ func staleText(c apidoc.Cluster, now time.Time) string {
 		}
 	}
 	if unread == len(c.Nodegroups) {
-		return unknownCell
+		return view.UnknownCell
 	}
 	var parts []string
 	switch {
@@ -488,7 +454,7 @@ func addonsText(c apidoc.Cluster) string {
 	behind := findingsOf(c).behindAddons
 	switch {
 	case unread > 0 && unread == len(c.Addons):
-		return unknownCell
+		return view.UnknownCell
 	case unread > 0:
 		return strconv.Itoa(len(behind)) + ", " + strconv.Itoa(unread) + " unknown"
 	case len(behind) == 0:
@@ -507,7 +473,7 @@ func addonsText(c apidoc.Cluster) string {
 // control plane, its nodegroups, and its add-ons.
 func healthText(c apidoc.Cluster) string {
 	if n := healthIssues(c); n > 0 {
-		return plural(n, "issue")
+		return view.Plural(n, "issue")
 	}
 	if c.HealthIssues == nil {
 		return ""
@@ -573,7 +539,7 @@ func totals(clusters []apidoc.Cluster) string {
 			premium += c.Support.ExtendedSupportPremiumUSDPerHour * hoursPerMonth
 		}
 	}
-	supportPart := plural(support, "cluster") + " out of standard support"
+	supportPart := view.Plural(support, "cluster") + " out of standard support"
 	if premium > 0 {
 		supportPart += fmt.Sprintf(" (+$%.0f/mo)", premium)
 	}
@@ -582,9 +548,9 @@ func totals(clusters []apidoc.Cluster) string {
 		n    int
 		text string
 	}{
-		{stale, plural(stale, "stale AMI")},
-		{addons, plural(addons, "add-on") + " behind"},
-		{behind, plural(behind, "nodegroup") + " behind the control plane"},
+		{stale, view.Plural(stale, "stale AMI")},
+		{addons, view.Plural(addons, "add-on") + " behind"},
+		{behind, view.Plural(behind, "nodegroup") + " behind the control plane"},
 		{support, supportPart},
 	} {
 		if p.n > 0 {
@@ -614,9 +580,9 @@ func hint(th view.Theme, clusters []apidoc.Cluster) string {
 	case overall(c) == view.Fail:
 		reason = "is on a version that EKS no longer supports"
 	case f.issues > 0:
-		reason = "has " + plural(f.issues, "health issue")
+		reason = "has " + view.Plural(f.issues, "health issue")
 	case f.behindNodegroups > 0:
-		reason = "has " + plural(f.behindNodegroups, "nodegroup") + " behind the control plane"
+		reason = "has " + view.Plural(f.behindNodegroups, "nodegroup") + " behind the control plane"
 	case supportRisk(c):
 		reason = "is out of standard support"
 	case f.total() > 0:
@@ -627,34 +593,4 @@ func hint(th view.Theme, clusters []apidoc.Cluster) string {
 		command += " -r " + c.Region
 	}
 	return th.Token(overall(c), c.Name) + " " + reason + ": " + th.Strong(command)
-}
-
-// plural returns n and noun, with an "s" unless n is 1.
-func plural(n int, noun string) string {
-	if n == 1 {
-		return "1 " + noun
-	}
-	return strconv.Itoa(n) + " " + noun + "s"
-}
-
-// supportText returns the support of a cluster as a short cell: the tier,
-// the days left while a window is open, and the premium of extended
-// support, such as "standard (61d)" or "extended (40d) +$0.50/hr". A "*"
-// marks dates that refresh ships with, because EKS did not report them.
-// It returns "" when the support was not read.
-func supportText(s *apidoc.Support) string {
-	if s == nil {
-		return ""
-	}
-	text := strings.ToLower(string(s.Tier))
-	if s.DaysRemaining > 0 {
-		text += " (" + strconv.Itoa(s.DaysRemaining) + "d)"
-	}
-	if s.BuiltIn {
-		text += "*"
-	}
-	if s.ExtendedSupportPremiumUSDPerHour > 0 {
-		text += fmt.Sprintf(" +$%.2f/hr", s.ExtendedSupportPremiumUSDPerHour)
-	}
-	return text
 }

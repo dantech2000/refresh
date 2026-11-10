@@ -13,6 +13,7 @@ import (
 
 	"github.com/dantech2000/refresh/internal/apidoc"
 	"github.com/dantech2000/refresh/internal/awsx"
+	"github.com/dantech2000/refresh/internal/fanout"
 	"github.com/dantech2000/refresh/internal/fleet"
 	"github.com/dantech2000/refresh/internal/health"
 )
@@ -22,11 +23,12 @@ import (
 const categoryRollbackReadiness = string(ekstypes.CategoryRollbackReadiness)
 
 // engineNeed is what the plan and each phase of an upgrade or a rollback
-// read of the cluster: the nodegroups with their instances, for the
-// health gate, and the add-ons. A rollback plan also reads the update
-// history.
-func engineNeed(history bool) fleet.Need {
-	return fleet.Need{Nodegroups: true, Addons: true, InstanceIDs: true, Updates: history}
+// read of the cluster: the nodegroups and the add-ons. A rollback also
+// reads the update history. instances reads the instance IDs of the
+// nodegroups too, for a read whose snapshot goes to the health checks of
+// a nodegroup: the Capacity and Quotas checks count the instances.
+func engineNeed(history, instances bool) fleet.Need {
+	return fleet.Need{Nodegroups: true, Addons: true, InstanceIDs: instances, Updates: history}
 }
 
 // planUpgrade builds the plan of a cluster upgrade. It reads the cluster
@@ -48,9 +50,12 @@ func planUpgrade(ctx context.Context, d Deps, req UpgradeRequest, refresh *insig
 		return nil, errors.New("no cluster to upgrade")
 	}
 	clients := d.AWS.Clients(req.Region)
+	// The two plans share the catalogue reads: the catalogue is a fact
+	// about EKS, and the refresh between them does not change it.
+	cat := newCatalogue(d.Fetch, clients)
 	var p *Plan
 	for again := false; ; again = true {
-		snap, err := d.Fetch.Fetch(ctx, clients, req.Cluster, engineNeed(false))
+		snap, err := d.Fetch.Fetch(ctx, clients, req.Cluster, engineNeed(false, true))
 		if err != nil {
 			return nil, &ClusterReadError{Target: Target{Region: clients.Region, Cluster: req.Cluster}, Err: err}
 		}
@@ -58,7 +63,7 @@ func planUpgrade(ctx context.Context, d Deps, req UpgradeRequest, refresh *insig
 		if refresh != nil {
 			ran = refresh.ran
 		}
-		p, err = PlanUpgrade(snap, req, upgradeInputs(ctx, d, clients, snap, refresh))
+		p, err = PlanUpgrade(snap, req, upgradeInputs(ctx, d, clients, snap, req, refresh, cat))
 		if err := planEnded(ctx, err); err != nil {
 			return nil, err
 		}
@@ -88,17 +93,125 @@ func planEnded(ctx context.Context, err error) error {
 }
 
 // upgradeInputs returns the reads of PlanUpgrade and of HopReadiness
-// against live AWS.
-func upgradeInputs(ctx context.Context, d Deps, clients *awsx.Clients, snap *fleet.Snapshot, refresh *insightsRefresher) UpgradeInputs {
+// against live AWS. The add-on catalogue is read through cat.
+func upgradeInputs(ctx context.Context, d Deps, clients *awsx.Clients, snap *fleet.Snapshot, req UpgradeRequest, refresh *insightsRefresher, cat *catalogue) UpgradeInputs {
 	t := Target{Region: snap.Cluster.Region, Cluster: snap.Cluster.Name}
 	return UpgradeInputs{
-		Now:     d.now(),
-		Version: versionOffer(ctx, clients),
-		AddonVersions: func(addon string, kubernetes fleet.Version) ([]string, error) {
-			return d.Fetch.AddonVersions(ctx, clients, addon, kubernetes)
-		},
-		Insights: upgradeInsights(ctx, clients, t, snap.Cluster.Version.String(), refresh),
-		Command:  d.FollowUp,
+		Now:           d.now(),
+		Version:       versionOffer(ctx, clients),
+		AddonVersions: cat.lookup(ctx, upgradeCatalogueKeys(snap, req)),
+		Insights:      upgradeInsights(ctx, clients, t, snap.Cluster.Version.String(), refresh),
+		Command:       d.FollowUp,
+	}
+}
+
+// catalogueKey is one read of the add-on catalogue: an add-on at a
+// Kubernetes version.
+type catalogueKey struct {
+	addon   string
+	version fleet.Version
+}
+
+// catalogue holds the add-on catalogue reads of a plan. A planner asks
+// for them one at a time, so its first ask reads every pair that the plan
+// will ask for in one bounded fan-out, and the asks after it are answered
+// from those reads. A pair that was not foreseen, and a pair whose read
+// failed, is read when the planner asks for it: a failure is not kept.
+type catalogue struct {
+	fetch   *fleet.Fetcher
+	clients *awsx.Clients
+	reads   map[catalogueKey][]string
+}
+
+func newCatalogue(fetch *fleet.Fetcher, clients *awsx.Clients) *catalogue {
+	return &catalogue{fetch: fetch, clients: clients, reads: map[catalogueKey][]string{}}
+}
+
+// lookup returns the AddonVersions read of one plan. keys returns the
+// pairs that the plan will ask for, given the version of its first ask.
+// The planner asks from one goroutine.
+func (c *catalogue) lookup(ctx context.Context, keys func(first fleet.Version) []catalogueKey) func(string, fleet.Version) ([]string, error) {
+	first := true
+	return func(addon string, kubernetes fleet.Version) ([]string, error) {
+		if first {
+			first = false
+			c.read(ctx, keys(kubernetes))
+		}
+		key := catalogueKey{addon: addon, version: kubernetes}
+		if versions, ok := c.reads[key]; ok {
+			return versions, nil
+		}
+		versions, err := c.fetch.AddonVersions(ctx, c.clients, addon, kubernetes)
+		if err == nil {
+			c.reads[key] = versions
+		}
+		return versions, err
+	}
+}
+
+// read reads the pairs that c does not have yet, side by side, and keeps
+// the ones that succeeded.
+func (c *catalogue) read(ctx context.Context, keys []catalogueKey) {
+	var missing []catalogueKey
+	for _, k := range keys {
+		if _, ok := c.reads[k]; !ok && !slices.Contains(missing, k) {
+			missing = append(missing, k)
+		}
+	}
+	type result struct {
+		versions []string
+		ok       bool
+	}
+	got := fanout.ForEach(ctx, missing, 0, func(ctx context.Context, k catalogueKey) result {
+		versions, err := c.fetch.AddonVersions(ctx, c.clients, k.addon, k.version)
+		return result{versions: versions, ok: err == nil}
+	})
+	for i, r := range got {
+		if r.ok {
+			c.reads[missing[i]] = r.versions
+		}
+	}
+}
+
+// upgradeCatalogueKeys returns the catalogue reads that PlanUpgrade asks
+// for: each installed add-on that was read and that the request does not
+// skip, at the live version when the plan has a catch-up hop, and at each
+// hop.
+func upgradeCatalogueKeys(snap *fleet.Snapshot, req UpgradeRequest) func(fleet.Version) []catalogueKey {
+	return func(fleet.Version) []catalogueKey {
+		live := snap.Cluster.Version
+		hops, _ := Hops(live, req.To)
+		if len(hops) == 0 {
+			hops = []fleet.Version{req.To}
+		}
+		if hops[0] != live {
+			hops = append([]fleet.Version{live}, hops...)
+		}
+		var keys []catalogueKey
+		for _, a := range snap.Addons {
+			if a.State != fleet.Collected || slices.Contains(req.SkipAddons, a.Name) {
+				continue
+			}
+			for _, v := range hops {
+				keys = append(keys, catalogueKey{addon: a.Name, version: v})
+			}
+		}
+		return keys
+	}
+}
+
+// rollbackCatalogueKeys returns the catalogue reads that PlanRollback
+// asks for: each installed add-on that was read, at the target of the
+// rollback, which is the version of the first ask.
+func rollbackCatalogueKeys(addons []fleet.Addon) func(fleet.Version) []catalogueKey {
+	return func(target fleet.Version) []catalogueKey {
+		var keys []catalogueKey
+		for _, a := range addons {
+			if a.State == fleet.Collected {
+				keys = append(keys, catalogueKey{addon: a.Name, version: target})
+			}
+		}
+		return keys
 	}
 }
 
@@ -157,11 +270,11 @@ func planRollback(ctx context.Context, d Deps, req RollbackRequest) (*Plan, erro
 		return nil, err
 	}
 	clients := d.AWS.Clients(req.Region)
-	snap, err := d.Fetch.Fetch(ctx, clients, req.Cluster, engineNeed(true))
+	snap, err := d.Fetch.Fetch(ctx, clients, req.Cluster, engineNeed(true, true))
 	if err != nil {
 		return nil, &ClusterReadError{Target: Target{Region: clients.Region, Cluster: req.Cluster}, Err: err}
 	}
-	p, err := PlanRollback(snap, req, rollbackInputs(ctx, d, clients, snap.Cluster.Name))
+	p, err := PlanRollback(snap, req, rollbackInputs(ctx, d, clients, snap.Cluster.Name, snap.Addons))
 	if err := planEnded(ctx, err); err != nil {
 		return nil, err
 	}
@@ -176,15 +289,13 @@ func planRollback(ctx context.Context, d Deps, req RollbackRequest) (*Plan, erro
 }
 
 // rollbackInputs returns the reads of PlanRollback and of
-// RollbackStillEligible against live AWS.
-func rollbackInputs(ctx context.Context, d Deps, clients *awsx.Clients, cluster string) RollbackInputs {
-	fetch := d.fetcher()
+// RollbackStillEligible against live AWS. The first catalogue read reads
+// the catalogue of each of addons with it.
+func rollbackInputs(ctx context.Context, d Deps, clients *awsx.Clients, cluster string, addons []fleet.Addon) RollbackInputs {
 	return RollbackInputs{
-		Now:     d.now(),
-		Version: versionOffer(ctx, clients),
-		AddonVersions: func(addon string, kubernetes fleet.Version) ([]string, error) {
-			return fetch.AddonVersions(ctx, clients, addon, kubernetes)
-		},
+		Now:           d.now(),
+		Version:       versionOffer(ctx, clients),
+		AddonVersions: newCatalogue(d.fetcher(), clients).lookup(ctx, rollbackCatalogueKeys(addons)),
 		Insights: func() InsightsRead {
 			insights, err := health.ListInsights(ctx, clients, cluster, categoryRollbackReadiness)
 			return InsightsRead{Insights: insights, Err: err}

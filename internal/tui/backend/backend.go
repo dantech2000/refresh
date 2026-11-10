@@ -98,6 +98,10 @@ type Live struct {
 	entries   []*entry
 	byCluster map[state.Key][]state.ChangeID
 	ended     map[state.Key]time.Time
+	// idle has the resources whose watch found no change of refresh,
+	// with when it ended: adoption leaves them alone while the sweeps
+	// show them UPDATING, for at most idleRetry.
+	idle map[change.Resource]time.Time
 	// proposal is the newest dry run, which Start consumes.
 	proposal     *proposal
 	nextProposal state.ProposalID
@@ -141,6 +145,7 @@ func New(ctx context.Context, provider *awsx.Provider, o Options) *Live {
 		readiness:    map[state.Key]*state.Readiness{},
 		byCluster:    map[state.Key][]state.ChangeID{},
 		ended:        map[state.Key]time.Time{},
+		idle:         map[change.Resource]time.Time{},
 	}
 }
 

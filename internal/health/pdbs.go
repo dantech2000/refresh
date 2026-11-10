@@ -345,6 +345,8 @@ func runScaleDown(in *Input, nodegroup string, remove int32) Result {
 		return Result{Outcome: Pass, Message: "a scale-up removes no node"}
 	}
 	cluster := in.Snapshot.Cluster.Name
+	// The two lists in one round trip, as runDrainBlockers makes them.
+	together(func() { _, _ = in.reads.PDBs() }, func() { _, _ = in.reads.Nodes() })
 	list, err := in.reads.PDBs()
 	if err != nil {
 		f := kubeFailure(cluster, "listing PodDisruptionBudgets", err)

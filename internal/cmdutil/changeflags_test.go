@@ -59,7 +59,7 @@ func TestAddChangeFlags(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var f cmdutil.ChangeFlags
 			cmd := &cobra.Command{Use: "x"}
-			cmdutil.AddChangeFlags(cmd, &f, 5*time.Minute, "the change", tt.noWait, tt.force)
+			cmdutil.AddChangeFlags(cmd, &f, cmdutil.ChangeFlagOptions{Wait: 5 * time.Minute, WaitFor: "the change", NoWait: tt.noWait, Force: tt.force})
 			for _, name := range shared {
 				if cmd.Flags().Lookup(name) == nil {
 					t.Errorf("no --%s", name)

@@ -3,8 +3,6 @@ package cluster
 import (
 	"cmp"
 	"context"
-	"errors"
-	"fmt"
 	"slices"
 	"strconv"
 	"time"
@@ -30,16 +28,10 @@ const (
 )
 
 type listOptions struct {
-	ios    *cmdutil.IOStreams
-	aws    func(ctx context.Context) (*awsx.Provider, error)
-	global *cmdutil.GlobalOptions
-	// now returns the time that a snapshot records.
-	now func() time.Time
-	// after is the pause between two reads of a watch.
-	after func(time.Duration) <-chan time.Time
+	f *cmdutil.Factory
 
 	allRegions bool
-	rawFilters []string
+	filters    cmdutil.Filters
 	sortKey    string
 	desc       bool
 	showHealth bool
@@ -47,8 +39,6 @@ type listOptions struct {
 	interval   time.Duration
 	output     cmdutil.Format
 
-	// filters is rawFilters, parsed by complete.
-	filters cmdutil.Filters
 	// health holds the results of --show-health for each cluster, by
 	// region and name, and the failures of its checks.
 	health map[string]clusterHealth
@@ -61,7 +51,8 @@ type clusterHealth struct {
 }
 
 // checkHealth runs the checks that need no Kubernetes access on every
-// cluster that was read, with the clients of its region, all at once.
+// cluster of snaps that was read, with the clients of its region, all at
+// once. The caller passes the clusters that the filters select.
 func (o *listOptions) checkHealth(ctx context.Context, provider *awsx.Provider, snaps []*fleet.Snapshot) map[string]clusterHealth {
 	results := fanout.ForEach(ctx, snaps, max(len(snaps), 1), func(ctx context.Context, snap *fleet.Snapshot) clusterHealth {
 		if snap.Have.Cluster != fleet.Collected {
@@ -80,7 +71,7 @@ func (o *listOptions) checkHealth(ctx context.Context, provider *awsx.Provider, 
 }
 
 func newCmdList(f *cmdutil.Factory) *cobra.Command {
-	o := &listOptions{ios: f.IOStreams, aws: f.AWS, global: &f.Global, now: f.Now, after: f.After}
+	o := &listOptions{f: f}
 	cmd := &cobra.Command{
 		Use:     "list",
 		Aliases: []string{"ls"},
@@ -119,60 +110,52 @@ Exit codes:
   refresh cluster list -o json | jq -r '.clusters[] | "\(.name) \(.version)"'`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if err := o.complete(); err != nil {
-				return err
-			}
 			if err := o.validate(); err != nil {
 				return err
 			}
 			if o.watch {
-				return cmdutil.Watch(cmd.Context(), o.ios, o.interval, o.after, o.run)
+				return cmdutil.Watch(cmd.Context(), f.IOStreams, o.interval, f.After, o.run)
 			}
-			return o.run(cmd.Context())
+			return o.run(cmd.Context(), f.IOStreams)
 		},
 	}
 	fleetcmd.AddAllRegionsFlag(cmd, &o.allRegions)
 	cmd.Flags().BoolVar(&o.showHealth, "show-health", false, "Run the health checks that need no Kubernetes access on every cluster, and add a HEALTH column")
-	cmdutil.AddFilterFlag(cmd, &o.rawFilters, keyName, keyRegion, keyStatus, keyVersion)
+	cmdutil.AddFilterFlag(cmd, &o.filters, keyName, keyRegion, keyStatus, keyVersion)
 	cmdutil.AddSortFlags(cmd, &o.sortKey, &o.desc, keyName, keyRegion, keyStatus, keyVersion)
 	cmdutil.AddWatchFlags(cmd, &o.watch, &o.interval)
 	cmdutil.AddOutputFlag(cmd, &o.output, cmdutil.FormatTable, cmdutil.FormatJSON, cmdutil.FormatYAML, cmdutil.FormatPlain)
 	return cmd
 }
 
-func (o *listOptions) complete() error {
-	filters, err := cmdutil.ParseFilters(o.rawFilters, keyName, keyRegion, keyStatus, keyVersion)
-	o.filters = filters
-	return err
-}
-
 func (o *listOptions) validate() error {
-	if err := fleetcmd.ValidateSweepFlags(o.global, o.allRegions); err != nil {
+	if err := fleetcmd.ValidateSweepFlags(&o.f.Global, o.allRegions); err != nil {
 		return err
 	}
-	return cmdutil.ValidateWatch(o.ios, o.output, o.watch, o.interval)
+	return cmdutil.ValidateWatch(o.f.IOStreams, o.output, o.watch, o.interval)
 }
 
-func (o *listOptions) run(ctx context.Context) error {
-	ctx, cancel := cmdutil.WithTimeout(ctx, o.global.Timeout)
+// run reads the clusters once and prints them to ios.
+func (o *listOptions) run(ctx context.Context, ios *cmdutil.IOStreams) error {
+	ctx, cancel := cmdutil.WithTimeout(ctx, o.f.Global.Timeout)
 	defer cancel()
-	provider, err := o.aws(ctx)
+	provider, err := o.f.AWS(ctx)
 	if err != nil {
 		return err
 	}
-	regions := fleetcmd.SweepRegions(o.global, provider.Region(), o.allRegions)
+	regions := fleetcmd.SweepRegions(&o.f.Global, provider.Region(), o.allRegions)
 
 	// The name and the region are known before any describe call, so
 	// those filters save the calls for the clusters they drop.
 	early := o.filters.Only(keyName, keyRegion)
 	// A watch redraws the whole screen for each read, so it shows no rows
 	// before the read is done.
-	progress := fleetcmd.NewProgress(o.ios, o.output == cmdutil.FormatTable && !o.watch, len(regions.Names),
+	progress := fleetcmd.NewProgress(ios, o.output == cmdutil.FormatTable && !o.watch, len(regions.Names),
 		func(snaps []*fleet.Snapshot, answered int) []string {
-			width, _ := o.ios.Size()
-			return o.view(apidoc.ClusterList{Clusters: o.rows(snaps)}, answered).Render(o.ios.Theme(), width)
+			width, _ := ios.Size()
+			return o.view(apidoc.ClusterList{Clusters: o.rows(snaps)}, answered).Render(ios.Theme(), width)
 		})
-	fetcher := fleet.Fetcher{Now: o.now}
+	fetcher := fleet.Fetcher{Now: o.f.Now}
 	var need fleet.Need
 	if o.showHealth {
 		need = fleet.Need{Nodegroups: true, InstanceIDs: true}
@@ -193,24 +176,13 @@ func (o *listOptions) run(ctx context.Context) error {
 	if err := fleetcmd.SweepError(ctx, provider, res); err != nil {
 		return err
 	}
-	fleetcmd.ReportSkippedRegions(o.ios, res.Skipped)
+	fleetcmd.ReportSkippedRegions(ios, res.Skipped)
 	if o.showHealth {
-		o.health = o.checkHealth(ctx, provider, res.Snapshots)
+		o.health = o.checkHealth(ctx, provider, o.selected(res.Snapshots))
 	}
 
 	doc := o.document(res)
-	if err := cmdutil.Print(o.ios, o.output, doc, o.view(doc, len(res.Answered))); err != nil {
-		return err
-	}
-	if o.output != cmdutil.FormatTable {
-		cmdutil.ReportFailures(o.ios, doc.Failures)
-	}
-	// An interrupt is not a partial result: the document above shows what
-	// was read, and the run fails.
-	if errors.Is(ctx.Err(), context.Canceled) {
-		return fmt.Errorf("interrupted: %w", context.Canceled)
-	}
-	return cmdutil.IncompleteError(doc.Failures)
+	return cmdutil.PrintResult(ctx, ios, o.output, doc, o.view(doc, len(res.Answered)), doc.Failures)
 }
 
 // document builds the document from the result of a sweep: the rows that
@@ -233,8 +205,9 @@ func (o *listOptions) document(res *fleet.SweepResult) apidoc.ClusterList {
 	return doc
 }
 
-// rows returns the rows for snaps: filtered, then sorted.
-func (o *listOptions) rows(snaps []*fleet.Snapshot) []apidoc.Cluster {
+// selected returns the snapshots that the filters on the status and the
+// version keep. The filters on the name and the region ran in the sweep.
+func (o *listOptions) selected(snaps []*fleet.Snapshot) []*fleet.Snapshot {
 	late := o.filters.Only(keyStatus, keyVersion)
 	selected := make([]*fleet.Snapshot, 0, len(snaps))
 	for _, snap := range snaps {
@@ -248,6 +221,12 @@ func (o *listOptions) rows(snaps []*fleet.Snapshot) []apidoc.Cluster {
 			selected = append(selected, snap)
 		}
 	}
+	return selected
+}
+
+// rows returns the rows for snaps: filtered, then sorted.
+func (o *listOptions) rows(snaps []*fleet.Snapshot) []apidoc.Cluster {
+	selected := o.selected(snaps)
 	slices.SortStableFunc(selected, func(a, b *fleet.Snapshot) int {
 		c := compareBy(o.sortKey, a.Cluster, b.Cluster)
 		if o.desc {
@@ -282,9 +261,6 @@ func compareBy(key string, a, b fleet.Cluster) int {
 	return cmp.Compare(a.Name, b.Name)
 }
 
-// unknownCell is the text of a cell whose data could not be read.
-const unknownCell = "unknown"
-
 // view returns the table and plain form of doc. regions is the number of
 // regions that answered.
 func (o *listOptions) view(doc apidoc.ClusterList, regions int) view.List[apidoc.Cluster] {
@@ -293,12 +269,7 @@ func (o *listOptions) view(doc apidoc.ClusterList, regions int) view.List[apidoc
 		subtitle += " in " + strconv.Itoa(regions) + " regions"
 	}
 	// A value that was not read shows as unknown, not as empty.
-	orUnknown := func(c apidoc.Cluster, value string) string {
-		if value == "" && c.Incomplete {
-			return unknownCell
-		}
-		return value
-	}
+	orUnknown := func(c apidoc.Cluster, value string) string { return view.OrUnknown(c.Incomplete, value) }
 	l := view.List[apidoc.Cluster]{
 		Title:    "CLUSTERS",
 		Subtitle: subtitle,

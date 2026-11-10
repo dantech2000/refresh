@@ -31,10 +31,11 @@ type Factory struct {
 	// configuration and resolves the credentials.
 	AWS func(ctx context.Context) (*awsx.Provider, error)
 
-	// Kube returns the Kubernetes client for a target, once per target and
-	// run. It makes no request. A *kube.MismatchError, or any other error,
-	// is returned and not printed: the command says what it does without
-	// Kubernetes.
+	// Kube returns the Kubernetes client for a target. A client is made
+	// once per target and run; a failure is not kept, and the next call
+	// resolves the target again. It makes no request. A
+	// *kube.MismatchError, or any other error, is returned and not
+	// printed: the command says what it does without Kubernetes.
 	Kube func(target kube.Target) (*kube.Client, error)
 
 	// Now returns the time for what a command computes from the clock:

@@ -105,6 +105,11 @@ func TestObserver_PodReadsScopedToDrainingNodes(t *testing.T) {
 	if diff := cmp.Diff(want, rec.calls()); diff != "" {
 		t.Fatalf("the selectors of the pod lists, one per draining node (-want +got):\n%s", diff)
 	}
+	// A view of the drain is answered from the watch cache of the API
+	// server, not from etcd.
+	if diff := cmp.Diff([]string{"0", "0"}, rec.resourceVersions()); diff != "" {
+		t.Errorf("the resource versions of the pod lists (-want +got):\n%s", diff)
+	}
 	if v := nodeOf(s, "ip-1"); v.Pods != 1 || v.PodsTotal != 1 {
 		t.Errorf("ip-1: %d of %d pods, want 1 of 1", v.Pods, v.PodsTotal)
 	}

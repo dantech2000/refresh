@@ -3,10 +3,12 @@ package change
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -286,6 +288,54 @@ func TestInFlightUpdate(t *testing.T) {
 	}
 	if got.ID != started.ID || got.Type != "VersionUpdate" || got.CreatedAt.IsZero() {
 		t.Errorf("update = %+v, want the ID %s, the type VersionUpdate, and a time", got, started.ID)
+	}
+}
+
+// A resource with a long history: EKS lists the updates in no promised
+// order, so the update in progress is found wherever it is in the list.
+// The update listed last is described alone, first; the describe calls
+// after it run side by side.
+func TestInFlightUpdate_LongHistory(t *testing.T) {
+	const finished = 40
+	for _, at := range []int{0, finished / 2, finished} {
+		t.Run(fmt.Sprintf("in progress at %d", at), func(t *testing.T) {
+			created := fleettest.New().Now().Add(-48 * time.Hour)
+			world := engineWorld(func(_ *fleettest.State, c *fleettest.Cluster) {
+				for i := range finished + 1 {
+					u := &fleettest.Update{ID: fmt.Sprintf("00000000-0000-4000-8000-%012d", i), Type: fleettest.TypeVersionUpdate, CreatedAt: created.Add(time.Duration(i) * time.Minute)}
+					if i == at {
+						u.Status = fleettest.UpdateInProgress
+					}
+					c.Updates = append(c.Updates, u)
+				}
+			})
+			e := newEnv(t, world)
+			// The second describe waits until a third one arrives.
+			third := make(chan struct{})
+			var once sync.Once
+			e.onRequest(fleettest.EKSDescribeUpdate, func(n int) {
+				switch n {
+				case 2:
+					select {
+					case <-third:
+					case <-time.After(10 * time.Second):
+						t.Error("the second describe was alone for 10 s: the describes are serial")
+					}
+				case 3:
+					once.Do(func() { close(third) })
+				}
+			})
+			got, err := inFlightUpdate(testContext(t), e.deps.AWS.Clients(east), Resource{Target: Target{Region: east, Cluster: "prod"}, Kind: StepControlPlane})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if want := fmt.Sprintf("00000000-0000-4000-8000-%012d", at); got.ID != want {
+				t.Errorf("update = %+v, want %s", got, want)
+			}
+			if n := e.count(fleettest.EKSDescribeUpdate); at == finished && n != 1 {
+				t.Errorf("%d DescribeUpdate requests, want 1 for an update in progress that is listed last", n)
+			}
+		})
 	}
 }
 

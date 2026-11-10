@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
-	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -16,32 +14,18 @@ import (
 	"github.com/dantech2000/refresh/internal/cmd/fleetcmd"
 	"github.com/dantech2000/refresh/internal/cmdutil"
 	"github.com/dantech2000/refresh/internal/fleet"
+	"github.com/dantech2000/refresh/internal/fleet/aminotes"
 )
 
 // updateWaitTimeout is the default of --wait-timeout.
 const updateWaitTimeout = 40 * time.Minute
 
 type updateOptions struct {
+	f   *cmdutil.Factory
 	ios *cmdutil.IOStreams
-	// deps builds the dependencies of the change of one cluster, and
-	// fleetDeps the ones of a fleet. Calling either is the first use of
-	// the network.
-	deps, fleetDeps func(ctx context.Context) (change.Deps, error)
-	// resolve returns the cluster of the run, the way a change does:
-	// never from the kubeconfig.
-	resolve func(explicit string) (cmdutil.Target, error)
-	// timeout returns --timeout, regions the regions of -r, and
-	// kubeContext --kube-context. The root command sets them before the
-	// command runs.
-	timeout     func() time.Duration
-	regions     func(home string) fleet.Regions
-	kubeContext func() string
-	// httpClient reads the AMI release notes of --changelog. Nil means
-	// that the run has no access to the web.
-	httpClient *http.Client
 
 	cluster     string
-	rawFilters  []string
+	filters     cmdutil.Filters
 	allClusters bool
 	reroll      bool
 	skipVerify  bool
@@ -50,28 +34,14 @@ type updateOptions struct {
 	output      cmdutil.Format
 	change      cmdutil.ChangeFlags
 
-	// nodegroups are the names from the arguments, filters the parsed
-	// -f values, and target the cluster, all set by complete.
+	// nodegroups are the names from the arguments, and target the
+	// cluster, both set by complete.
 	nodegroups []string
-	filters    cmdutil.Filters
 	target     cmdutil.Target
 }
 
-// updateFilterKeys are the keys of -f for a roll: what one read of the
-// nodegroups gives.
-var updateFilterKeys = []string{keyName, keyStatus, keyInstanceType, keyAMIStatus, keyVersion}
-
 func newCmdUpdate(f *cmdutil.Factory) *cobra.Command {
-	o := &updateOptions{
-		ios:         f.IOStreams,
-		deps:        changecmd.Deps(f),
-		fleetDeps:   changecmd.FleetDeps(f),
-		resolve:     func(explicit string) (cmdutil.Target, error) { return cmdutil.ResolveCluster(f, explicit, false) },
-		timeout:     func() time.Duration { return f.Global.Timeout },
-		regions:     func(home string) fleet.Regions { return fleetcmd.SweepRegions(&f.Global, home, true) },
-		kubeContext: func() string { return f.Global.KubeContext },
-		httpClient:  f.HTTPClient,
-	}
+	o := &updateOptions{f: f, ios: f.IOStreams}
 	cmd := &cobra.Command{
 		Use:   "update [nodegroup...]",
 		Short: "Roll nodegroups onto the latest AMI",
@@ -107,8 +77,9 @@ once AWS accepted the rolls, and --skip-verify leaves the verification
 out.
 
 --all-clusters rolls every cluster of the regions of -r, one cluster
-after another, after one confirmation for all of them. A cluster that is
-blocked or fails does not stop the next one.
+after another, after one confirmation for all of them. Without -r it rolls
+the clusters of the configured region alone. A cluster that is blocked or
+fails does not stop the next one.
 
 The cluster comes from -c/--cluster, then REFRESH_CLUSTER, then the active
 refresh context. It never comes from the kubeconfig. --all-clusters
@@ -150,30 +121,27 @@ ignores all three.
 	}
 	cmdutil.AddChangeClusterFlag(cmd, &o.cluster)
 	fleetcmd.RegisterClusterFlagCompletion(cmd, f)
-	cmdutil.AddFilterFlag(cmd, &o.rawFilters, updateFilterKeys...)
-	cmd.Flags().BoolVar(&o.allClusters, "all-clusters", false, "Roll every cluster of the regions of -r, one after another")
+	cmdutil.AddFilterFlag(cmd, &o.filters, filterKeys...)
+	cmd.Flags().BoolVar(&o.allClusters, "all-clusters", false, "Roll every cluster of the regions of -r, or of the configured region, one after another")
 	cmd.Flags().BoolVar(&o.reroll, "reroll", false, "Also roll a nodegroup that is on the latest AMI")
 	cmd.Flags().BoolVar(&o.skipVerify, "skip-verify", false, "Skip the verification after each nodegroup roll")
 	cmd.Flags().BoolVar(&o.changelog, "changelog", false, "With --dry-run, show the AMI release notes of each roll")
 	cmd.Flags().BoolVar(&o.live, "live", false, "Show the nodes of the roll as they drain and join, also without a terminal")
-	cmdutil.AddChangeFlags(cmd, &o.change, updateWaitTimeout, "the rolls of a cluster", true, true)
+	cmdutil.AddChangeFlags(cmd, &o.change, cmdutil.ChangeFlagOptions{Wait: updateWaitTimeout, WaitFor: "the rolls of a cluster", NoWait: true, Force: true})
 	cmdutil.AddOutputFlag(cmd, &o.output, cmdutil.FormatTable, cmdutil.FormatJSON, cmdutil.FormatYAML, cmdutil.FormatPlain)
 	return cmd
 }
 
 func (o *updateOptions) complete(args []string) error {
 	o.nodegroups = args
-	filters, err := cmdutil.ParseFilters(o.rawFilters, updateFilterKeys...)
-	if err != nil {
-		return err
-	}
-	o.filters = filters
 	// A fleet names no cluster: it ignores REFRESH_CLUSTER and the active
 	// context. validate rejects -c with it.
 	if o.allClusters {
 		return nil
 	}
-	o.target, err = o.resolve(o.cluster)
+	// A change never takes its cluster from the kubeconfig.
+	var err error
+	o.target, err = cmdutil.ResolveCluster(o.f, o.cluster, false)
 	return err
 }
 
@@ -186,7 +154,7 @@ func (o *updateOptions) validate() error {
 		return errors.New("--all-clusters and -c/--cluster cannot be used together: one names every cluster and the other names one")
 	case o.allClusters && len(o.nodegroups) > 0:
 		return errors.New("--all-clusters takes no nodegroup name: a name belongs to one cluster. Select with -f, such as -f name=web-*")
-	case o.allClusters && o.kubeContext() != "":
+	case o.allClusters && o.f.Global.KubeContext != "":
 		return errors.New("--all-clusters and --kube-context cannot be used together: each cluster has its own kubeconfig context, matched by its endpoint")
 	case o.changelog && !o.change.DryRun:
 		return errors.New("--changelog shows the release notes of a plan; pass --dry-run with it")
@@ -194,11 +162,6 @@ func (o *updateOptions) validate() error {
 		return fmt.Errorf("--live draws the nodes of the roll, which -o %s cannot hold; use -o table", o.output)
 	case o.live && o.change.Quiet:
 		return errors.New("--live and --quiet cannot be used together: one shows the progress and the other hides it")
-	}
-	if o.allClusters {
-		if err := fleetcmd.CheckEnvRegions(); err != nil {
-			return err
-		}
 	}
 	return o.change.Validate()
 }
@@ -211,25 +174,8 @@ func (o *updateOptions) selector() *change.Selector {
 	}
 	filters := o.filters
 	return &change.Selector{
-		Text: "-f " + strings.Join(o.rawFilters, " -f "),
-		Match: func(n fleet.Nodegroup) bool {
-			return filters.Match(func(key string) []string {
-				switch key {
-				case keyName:
-					return []string{n.Name}
-				case keyStatus:
-					return []string{n.Status}
-				case keyInstanceType:
-					return n.InstanceTypes
-				case keyVersion:
-					return []string{n.Version.String()}
-				case keyAMIStatus:
-					status, _ := n.AMIStatus()
-					return []string{string(status)}
-				}
-				return nil
-			})
-		},
+		Text:  filters.String(),
+		Match: func(n fleet.Nodegroup) bool { return filters.Match(filterValues(n)) },
 	}
 }
 
@@ -239,12 +185,12 @@ func (o *updateOptions) nodes() bool {
 	return o.live || (o.output == cmdutil.FormatTable && o.ios.ErrTTY && !o.change.Quiet)
 }
 
-// request returns the change that the flags describe. home is the region
-// of the AWS configuration, which a fleet sweeps when -r names none.
-func (o *updateOptions) request(home string) change.RollRequest {
+// request returns the change that the flags describe. regions are the
+// regions of a fleet.
+func (o *updateOptions) request(regions fleet.Regions) change.RollRequest {
 	// A fleet has no budget for its whole plan: each cluster has its own.
 	req := change.RollRequest{
-		Common:     changecmd.Common(&o.change, o.timeout()),
+		Common:     changecmd.Common(&o.change, o.f.Global.Timeout),
 		Target:     change.Target{Cluster: o.target.Cluster},
 		Nodegroups: o.nodegroups,
 		Select:     o.selector(),
@@ -253,21 +199,29 @@ func (o *updateOptions) request(home string) change.RollRequest {
 	req.SkipVerify = o.skipVerify
 	req.Nodes = o.nodes() && !o.change.DryRun
 	if o.allClusters {
-		req.Fleet = &change.FleetScope{Regions: o.regions(home)}
+		req.Fleet = &change.FleetScope{Regions: regions}
 	}
 	return req
 }
 
 func (o *updateOptions) run(ctx context.Context) error {
-	deps, timeout := o.deps, o.timeout()
+	deps, timeout := changecmd.Deps, o.f.Global.Timeout
 	if o.allClusters {
-		deps, timeout = o.fleetDeps, 0
+		deps, timeout = changecmd.FleetDeps, 0
 	}
-	d, err := deps(ctx)
+	d, err := deps(ctx, o.f)
 	if err != nil {
 		return err
 	}
-	req := o.request(d.AWS.Region())
+	var regions fleet.Regions
+	if o.allClusters {
+		// A fleet rolls where -r points, or in the home region alone:
+		// never in the default sweep of every region.
+		if regions, err = fleetcmd.ChangeRegions(&o.f.Global, d.AWS.Region()); err != nil {
+			return err
+		}
+	}
+	req := o.request(regions)
 	if o.change.DryRun {
 		var after func(ctx context.Context, plan *change.Plan)
 		if o.changelog {
@@ -286,19 +240,19 @@ func (o *updateOptions) run(ctx context.Context) error {
 // stderr, after the plan. The notes come from the web, and the plan does
 // not depend on them: what cannot be fetched is a warning.
 func (o *updateOptions) printChangelog(ctx context.Context, plan *change.Plan) {
-	var targets []changelogTarget
+	var targets []aminotes.Target
 	for i := range plan.Clusters {
 		cp := &plan.Clusters[i]
 		for _, s := range cp.Steps() {
 			if n, ok := cp.Nodegroup(s.Ref.Name); ok && s.Action == change.Submit {
-				targets = append(targets, changelogTarget{Nodegroup: s.Ref.Name, AMIType: n.AMIType, Release: n.ReleaseVersion})
+				targets = append(targets, aminotes.Target{Nodegroup: s.Ref.Name, AMIType: n.AMIType, Release: n.ReleaseVersion})
 			}
 		}
 	}
 	if len(targets) == 0 {
 		return
 	}
-	lines, warnings := changelogLines(ctx, o.httpClient, "", targets)
+	lines, warnings := aminotes.Lines(ctx, o.f.HTTPClient, targets)
 	th := o.ios.ErrTheme()
 	// Nothing can report a failed write to stderr.
 	if len(lines) > 0 {

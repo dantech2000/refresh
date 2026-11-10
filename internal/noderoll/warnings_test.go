@@ -45,7 +45,7 @@ func TestScopeWarnings(t *testing.T) {
 		{Node: "ip-1", Object: "Node/ip-1", Reason: "NodeNotReady", Message: "kubelet stopped posting status"},
 		{Node: "ip-2", Object: "Pod/web-x", Reason: "FailedCreatePodSandbox", Message: "network plugin not ready"},
 	}
-	if diff := cmp.Diff(want, scopeWarnings(events, names, now)); diff != "" {
+	if diff := cmp.Diff(want, scopeWarnings(pointers(events), names, now)); diff != "" {
 		t.Errorf("scopeWarnings (-want +got):\n%s", diff)
 	}
 }
@@ -77,7 +77,7 @@ func TestScopeWarnings_StartupDiskCapacity(t *testing.T) {
 		{Node: "new", Object: "Node/new", Reason: "NodeNotReady", Message: "kubelet stopped posting status"},
 		{Node: "old", Object: "Node/old", Reason: "InvalidDiskCapacity", Message: "invalid capacity 0 on image filesystem"},
 	}
-	if diff := cmp.Diff(want, scopeWarnings(events, names, now)); diff != "" {
+	if diff := cmp.Diff(want, scopeWarnings(pointers(events), names, now)); diff != "" {
 		t.Errorf("scopeWarnings (-want +got):\n%s", diff)
 	}
 }
@@ -100,7 +100,7 @@ func TestScopeWarnings_DedupKeepsLatest(t *testing.T) {
 			{Type: "Warning", Reason: "FailedDraining", Message: "older", InvolvedObject: obj, LastTimestamp: older},
 		},
 	} {
-		got := scopeWarnings(events, names, now)
+		got := scopeWarnings(pointers(events), names, now)
 		if len(got) != 1 || got[0].Message != "newer" {
 			t.Errorf("scopeWarnings = %+v, want the newest of the two alone", got)
 		}
@@ -298,4 +298,14 @@ func TestObserver_WarningEventsReadFails(t *testing.T) {
 	if lists != before+2 {
 		t.Errorf("%d event lists while the read fails, want one per snapshot", lists-before)
 	}
+}
+
+// pointers returns a pointer to each event, as the cache of a watch holds
+// them.
+func pointers(events []corev1.Event) []*corev1.Event {
+	out := make([]*corev1.Event, len(events))
+	for i := range events {
+		out[i] = &events[i]
+	}
+	return out
 }

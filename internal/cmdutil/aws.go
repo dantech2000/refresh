@@ -2,12 +2,10 @@ package cmdutil
 
 import (
 	"context"
-	"os"
 	"strings"
 	"sync"
 
 	"github.com/dantech2000/refresh/internal/awsx"
-	"github.com/dantech2000/refresh/internal/contexts"
 )
 
 // NewAWS returns the function for Factory.AWS of a real run. The first call
@@ -95,15 +93,7 @@ func awsOptions(f *Factory) (awsx.Options, error) {
 		}
 	}
 
-	store, err := f.Contexts()
-	if err != nil {
-		return awsx.Options{}, err
-	}
-	file, err := store.Load()
-	if err != nil {
-		return awsx.Options{}, err
-	}
-	name, active, ok, err := file.Active(os.Getenv(contexts.EnvContext))
+	name, active, ok, err := ActiveContext(f)
 	if err != nil {
 		return awsx.Options{}, err
 	}

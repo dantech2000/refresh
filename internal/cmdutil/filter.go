@@ -22,33 +22,63 @@ type Filter struct {
 // of them matches.
 type Filters []Filter
 
-// AddFilterFlag adds -f/--filter to cmd. The flag is repeatable and stores
-// its raw values in p; the command parses them with ParseFilters and the
-// same keys.
-func AddFilterFlag(cmd *cobra.Command, p *[]string, keys ...string) {
-	cmd.Flags().StringArrayVarP(p, "filter", "f", nil,
+// AddFilterFlag adds -f/--filter to cmd. The flag is repeatable. Each value
+// is key=pattern, and is parsed into p as cobra reads it: the key must be
+// one of keys, in any case, and the pattern must not be empty. Spaces
+// around the key and around the pattern do not count. A value that does
+// not parse is an error and never a filter that matches nothing.
+func AddFilterFlag(cmd *cobra.Command, p *Filters, keys ...string) {
+	cmd.Flags().VarP(&filterValue{filters: p, keys: keys}, "filter", "f",
 		"Select by key=value, where * matches any text; repeatable, and all must match. Keys: "+strings.Join(keys, ", "))
 }
 
-// ParseFilters reads the values of the filter flag. Each is key=pattern.
-// The key must be one of keys, in any case, and the pattern must not be
-// empty. Spaces around the key and around the pattern do not count. A value that does not parse is an error and never a filter that
-// matches nothing.
-func ParseFilters(raw []string, keys ...string) (Filters, error) {
-	filters := make(Filters, 0, len(raw))
-	for _, r := range raw {
-		key, pattern, ok := strings.Cut(r, "=")
-		key, pattern = strings.TrimSpace(key), strings.TrimSpace(pattern)
-		if !ok || key == "" || pattern == "" {
-			return nil, fmt.Errorf("invalid filter %q: want key=value, with one of the keys %s", r, strings.Join(keys, ", "))
-		}
-		i := slices.IndexFunc(keys, func(k string) bool { return strings.EqualFold(k, key) })
-		if i < 0 {
-			return nil, fmt.Errorf("invalid filter %q: unknown key %q; the keys are %s", r, key, strings.Join(keys, ", "))
-		}
-		filters = append(filters, Filter{Key: keys[i], Pattern: pattern})
+// filterValue is the pflag.Value of the filter flag.
+type filterValue struct {
+	filters *Filters
+	keys    []string
+}
+
+// String returns the filters as pflag shows a string array, and "" for
+// none, so that the help shows no default.
+func (v *filterValue) String() string {
+	if len(*v.filters) == 0 {
+		return ""
 	}
-	return filters, nil
+	parts := make([]string, len(*v.filters))
+	for i, f := range *v.filters {
+		parts[i] = f.String()
+	}
+	return "[" + strings.Join(parts, ",") + "]"
+}
+
+// Type is the type that the help shows. A filter is a string that repeats.
+func (v *filterValue) Type() string { return "stringArray" }
+
+func (v *filterValue) Set(raw string) error {
+	key, pattern, ok := strings.Cut(raw, "=")
+	key, pattern = strings.TrimSpace(key), strings.TrimSpace(pattern)
+	if !ok || key == "" || pattern == "" {
+		return fmt.Errorf("invalid filter %q: want key=value, with one of the keys %s", raw, strings.Join(v.keys, ", "))
+	}
+	i := slices.IndexFunc(v.keys, func(k string) bool { return strings.EqualFold(k, key) })
+	if i < 0 {
+		return fmt.Errorf("invalid filter %q: unknown key %q; the keys are %s", raw, key, strings.Join(v.keys, ", "))
+	}
+	*v.filters = append(*v.filters, Filter{Key: v.keys[i], Pattern: pattern})
+	return nil
+}
+
+// String returns the filter as the flag takes it: key=pattern.
+func (f Filter) String() string { return f.Key + "=" + f.Pattern }
+
+// String returns the filters as flags, such as "-f name=web-* -f
+// status=ACTIVE", for a message that names the selection.
+func (fs Filters) String() string {
+	parts := make([]string, len(fs))
+	for i, f := range fs {
+		parts[i] = "-f " + f.String()
+	}
+	return strings.Join(parts, " ")
 }
 
 // Match reports whether every filter matches. get returns the values of
