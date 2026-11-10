@@ -5,6 +5,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -836,6 +838,31 @@ func TestDrainBlockers(t *testing.T) {
 		h.world.SetFault(fleettest.KubeListPods, fleettest.Fault{Deny: true})
 		check(t, h.run(testContext(t), health.DrainBlockers(), "ng-a"), want{outcome: health.Unreadable, message: "could not list the pods of default", failures: 1})
 	})
+}
+
+// The budgets and the nodes of a scale-down are listed in one round trip:
+// the first of the two lists is answered only once the other arrived.
+func TestScaleDownBlockers_ListsTogether(t *testing.T) {
+	h := newHarness(t)
+	other := make(chan struct{})
+	var once sync.Once
+	var first atomic.Bool
+	h.kube.OnRequest = func(ctx context.Context, r kubetest.Request) {
+		if r.Operation != fleettest.KubeListPDBs && r.Operation != fleettest.KubeListNodes {
+			return
+		}
+		if first.CompareAndSwap(false, true) {
+			select {
+			case <-other:
+			case <-ctx.Done():
+			case <-time.After(10 * time.Second):
+				t.Error("the first of the budget and node lists was alone for 10 s")
+			}
+			return
+		}
+		once.Do(func() { close(other) })
+	}
+	check(t, h.run(testContext(t), health.ScaleDownBlockers("ng-b", 1)), want{outcome: health.Pass})
 }
 
 func TestScaleDownBlockers(t *testing.T) {

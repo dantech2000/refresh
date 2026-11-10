@@ -3,6 +3,7 @@ package noderoll
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -214,5 +215,41 @@ func TestAttach_FailsWhenTheNodesCannotBeListed(t *testing.T) {
 	}
 	if obs != nil {
 		t.Errorf("attach returned an observer with its error: %+v", obs)
+	}
+}
+
+// The pod lists of the draining nodes run side by side: the first list
+// is answered only once the second one has arrived.
+func TestDrainingPods_ListsRunTogether(t *testing.T) {
+	w := kubeWorld()
+	h := kubetest.NewHandler(w, region, "prod")
+	second := make(chan struct{})
+	var n atomic.Int32
+	h.OnRequest = func(ctx context.Context, r kubetest.Request) {
+		if r.Operation != fleettest.KubeListPods {
+			return
+		}
+		switch n.Add(1) {
+		case 1:
+			select {
+			case <-second:
+			case <-ctx.Done():
+			case <-time.After(10 * time.Second):
+				t.Error("the first pod list was alone for 10 s: the lists are serial")
+			}
+		case 2:
+			close(second)
+		}
+	}
+	srv := kubetest.Serve(h)
+	t.Cleanup(srv.Close)
+	client, err := kubernetes.NewForConfig(srv.Config())
+	if err != nil {
+		t.Fatal(err)
+	}
+	o := &Observer{client: client, nodegroup: ng, now: newClock().now}
+	counts, _ := o.drainingPods(testContext(t), []string{"a-1", "a-2"})
+	if diff := cmp.Diff(map[string]int{"a-1": 1, "a-2": 1}, counts); diff != "" {
+		t.Errorf("pods of each node (-want +got):\n%s", diff)
 	}
 }
