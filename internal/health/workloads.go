@@ -10,7 +10,9 @@ import (
 	"github.com/dantech2000/refresh/internal/apidoc"
 )
 
-// criticalNamespaces hold the pods that every node needs.
+// criticalNamespaces hold the pods that every node needs. The PDB coverage
+// check leaves them out too; "default" is not one of them: real workloads
+// run there.
 var criticalNamespaces = []string{"kube-system", "kube-public", "kube-node-lease"}
 
 // minRunningPodPercent is the share of the critical pods that must be
@@ -38,11 +40,11 @@ func runWorkloads(_ context.Context, in *Input) Result {
 		unread         []string
 	)
 	// The three lists in one round trip.
-	together(
-		func() { _, _ = in.reads.Pods(criticalNamespaces[0]) },
-		func() { _, _ = in.reads.Pods(criticalNamespaces[1]) },
-		func() { _, _ = in.reads.Pods(criticalNamespaces[2]) },
-	)
+	reads := make([]func(), len(criticalNamespaces))
+	for i, ns := range criticalNamespaces {
+		reads[i] = func() { _, _ = in.reads.Pods(ns) }
+	}
+	together(reads...)
 	for _, ns := range criticalNamespaces {
 		pods, err := in.reads.Pods(ns)
 		if err != nil {
@@ -60,7 +62,7 @@ func runWorkloads(_ context.Context, in *Input) Result {
 			if problem := podProblem(pod); problem == "" {
 				nsRunning++
 			} else {
-				problems = append(problems, finding{ns + "/" + pod.Name, ns + "/" + pod.Name + " (" + problem + ")"})
+				problems = append(problems, finding{name: ns + "/" + pod.Name, text: ns + "/" + pod.Name + " (" + problem + ")"})
 			}
 		}
 		total += nsTotal

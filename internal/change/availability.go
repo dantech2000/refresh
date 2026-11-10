@@ -10,17 +10,15 @@ import (
 
 // availabilityNotices returns one notice for each target nodegroup with an
 // instance type that EC2 does not offer in one of its availability zones.
-// It runs health.Availability beside the gate: what it finds is advice and
-// never part of the verdict, and a read that fails gives nothing.
+// It runs beside the gate: what it finds is advice and never part of the
+// verdict, and a read that fails gives nothing.
 func availabilityNotices(ctx context.Context, c *awsx.Clients, snap *fleet.Snapshot, targets []string) []string {
 	if len(targets) == 0 {
 		return nil
 	}
-	results := health.Run(ctx, []health.Check{health.Availability()}, &health.Input{
-		Snapshot: snap, Targets: targets, Clients: c, Now: snap.FetchedAt,
-	})
-	if results[0].Outcome != health.Warn {
+	notices, err := health.InstanceTypeNotices(ctx, c, snap, targets)
+	if err != nil {
 		return nil
 	}
-	return results[0].Details
+	return notices
 }
