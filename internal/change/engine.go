@@ -395,7 +395,7 @@ func (r *runner) confirmPhase(cp *ClusterPlan, ph Phase) bool {
 	if r.engineEnded(cp, phaseTitle(ph)) {
 		return false
 	}
-	q := Question{Kind: ConfirmPhase, Step: StepRef{Phase: ph.Ref}, Text: phaseQuestion(cp, ph)}
+	q := Question{Kind: ConfirmPhase, Step: StepRef{Phase: ph.Ref}, Text: phaseText(cp, ph) + "?"}
 	if r.hooks.Ask == nil {
 		r.stop = &stop{status: Failed, err: phaseUnanswered(ph)}
 		return false
@@ -464,23 +464,24 @@ func phaseTitle(ph Phase) string {
 	return "the add-on updates for " + ph.Ref.Hop.String()
 }
 
-// phaseQuestion is the question before one phase of an upgrade.
-func phaseQuestion(cp *ClusterPlan, ph Phase) string {
+// phaseText is the question before one phase of an upgrade, without its
+// question mark: the first question of a run adds the gate warnings.
+func phaseText(cp *ClusterPlan, ph Phase) string {
 	names := workNames(ph.Steps)
 	list := strings.Join(names, ", ")
 	switch ph.Ref.Kind {
 	case PhaseControlPlane:
 		// The phase has one step.
 		if s := ph.Steps[0]; s.Action == Attach {
-			return fmt.Sprintf("Wait for the control-plane update of %s to %s that is running?", cp.Cluster, s.To)
+			return fmt.Sprintf("Wait for the control-plane update of %s to %s that is running", cp.Cluster, s.To)
 		}
-		return fmt.Sprintf("Upgrade the control plane of %s from %s to %s?", cp.Cluster, ph.Steps[0].From, ph.Steps[0].To)
+		return fmt.Sprintf("Upgrade the control plane of %s from %s to %s", cp.Cluster, ph.Steps[0].From, ph.Steps[0].To)
 	case PhaseAddonsBefore:
-		return fmt.Sprintf("Update %d add-on(s) of %s that Kubernetes %s cannot run as they are (%s)?", len(names), cp.Cluster, ph.Ref.Hop, list)
+		return fmt.Sprintf("Update %d add-on(s) of %s that Kubernetes %s cannot run as they are (%s)", len(names), cp.Cluster, ph.Ref.Hop, list)
 	case PhaseNodegroups:
-		return fmt.Sprintf("Roll %d nodegroup(s) of %s to Kubernetes %s (%s)?", len(names), cp.Cluster, ph.Ref.Hop, list)
+		return fmt.Sprintf("Roll %d nodegroup(s) of %s to Kubernetes %s (%s)", len(names), cp.Cluster, ph.Ref.Hop, list)
 	}
-	return fmt.Sprintf("Update %d add-on(s) of %s for Kubernetes %s (%s)?", len(names), cp.Cluster, ph.Ref.Hop, list)
+	return fmt.Sprintf("Update %d add-on(s) of %s for Kubernetes %s (%s)", len(names), cp.Cluster, ph.Ref.Hop, list)
 }
 
 // engineQuestion is the question before the first change of an upgrade
@@ -502,7 +503,7 @@ func (r *runner) engineQuestion(p *Plan) *Question {
 		for _, ph := range cp.Phases {
 			if slices.ContainsFunc(ph.Steps, Step.work) {
 				q.Kind, q.Step = ConfirmPhase, StepRef{Phase: ph.Ref}
-				text = strings.TrimSuffix(phaseQuestion(cp, ph), "?")
+				text = phaseText(cp, ph)
 				break
 			}
 		}
