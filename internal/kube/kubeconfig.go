@@ -27,9 +27,10 @@ var eksctlCluster = regexp.MustCompile(`^([A-Za-z0-9][A-Za-z0-9_-]*)\.(` + awsx.
 // eksServer matches the host of an EKS API server and captures its region:
 // <id>.<suffix>.<region>.eks.amazonaws.com, with .cn in China and .eu in
 // the European Sovereign Cloud, and the dual-stack host of an IPv6
-// cluster, which ends in <region>.api.aws or in
-// <region>.api.amazonwebservices.com.cn.
-var eksServer = regexp.MustCompile(`\.(` + awsx.RegionShape + `)\.(?:eks\.amazonaws\.(?:com|com\.cn|eu)|api\.aws|api\.amazonwebservices\.com\.cn)$`)
+// cluster, which ends in <region>.api.aws, in
+// <region>.api.amazonwebservices.com.cn, or in
+// <region>.api.amazonwebservices.eu.
+var eksServer = regexp.MustCompile(`\.(` + awsx.RegionShape + `)\.(?:eks\.amazonaws\.(?:com|com\.cn|eu)|api\.aws|api\.amazonwebservices\.(?:com\.cn|eu))$`)
 
 // clusterName matches the names that EKS accepts for a cluster.
 var clusterName = regexp.MustCompile(`^[0-9A-Za-z][A-Za-z0-9_-]*$`)

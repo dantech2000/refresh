@@ -30,6 +30,8 @@ clusters:
   cluster: {server: https://PQR.gr7.eu-south-1.api.aws}
 - name: sovereign
   cluster: {server: https://STU.gr7.eusc-de-east-1.eks.amazonaws.eu}
+- name: sovereign-dual-stack
+  cluster: {server: https://BCD.gr7.eusc-de-east-1.api.amazonwebservices.eu}
 - name: prod-eusc.eusc-de-east-1.eksctl.io
   cluster: {server: https://VWX.gr7.eusc-de-east-1.eks.amazonaws.eu}
 - name: prod-twelve.ap-southeast-12.eksctl.io
@@ -53,6 +55,8 @@ contexts:
   context: {cluster: dual-stack, user: aws-cli-equals}
 - name: sovereign
   context: {cluster: sovereign, user: aws-cli-equals}
+- name: sovereign-dual-stack
+  context: {cluster: sovereign-dual-stack, user: aws-cli-equals}
 - name: by-eksctl-sovereign
   context: {cluster: prod-eusc.eusc-de-east-1.eksctl.io, user: none}
 - name: by-eksctl-two-digits
@@ -156,6 +160,7 @@ func TestCurrentCluster(t *testing.T) {
 		// Every region that awsx.CheckRegion accepts: the European
 		// Sovereign Cloud, and a number of two digits.
 		{"sovereign", "prod-equals", "eusc-de-east-1", true},
+		{"sovereign-dual-stack", "prod-equals", "eusc-de-east-1", true},
 		{"by-eksctl-sovereign", "prod-eusc", "eusc-de-east-1", true},
 		{"by-eksctl-two-digits", "prod-twelve", "ap-southeast-12", true},
 		// The ID of a cluster on Outposts is not its name.

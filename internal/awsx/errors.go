@@ -193,12 +193,13 @@ func isAWSHost(host string) bool {
 // connection, or a response cut short. Context cancellation and deadlines are
 // not network errors; callers check those first. A connect timeout is a
 // network error, also when it reports itself as context.DeadlineExceeded:
-// the request never reached AWS.
+// the request never reached AWS. A DNS lookup that the deadline cut is
+// not, as in Classify.
 func IsNetworkError(err error) bool {
 	if err == nil {
 		return false
 	}
-	if errors.Is(err, context.Canceled) || (isContextDeadline(err) && !IsDialFailure(err)) {
+	if errors.Is(err, context.Canceled) || (isContextDeadline(err) && (!IsDialFailure(err) || isDNS(err))) {
 		return false
 	}
 	var urlErr *url.Error

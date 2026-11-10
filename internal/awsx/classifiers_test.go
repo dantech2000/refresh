@@ -61,6 +61,7 @@ func TestClassifiersAgree(t *testing.T) {
 		{name: "a body that stalls", err: sdkOpErr(&awshttp.ResponseTimeoutError{TimeoutDur: time.Second}), class: ClassNetworkError, retryable: true, network: true, message: network},
 		{name: "a client timeout", err: sdkOpErr(timeoutError{}), class: ClassNetworkError, retryable: true, network: true, message: network},
 		{name: "a reset connection", err: sdkOpErr(syscall.ECONNRESET), class: ClassNetworkError, retryable: true, network: true, message: network},
+		{name: "a DNS lookup that the deadline cut", err: fmt.Errorf("%w: %w", dnsErr("eks.us-east-1.amazonaws.com"), context.DeadlineExceeded), class: ClassTimeout, message: timedOut},
 		{name: "an AWS host that does not resolve", err: dnsErr("eks.xx-nowhere-1.amazonaws.com"), class: ClassRegionUnavailable, network: true, message: region},
 		{name: "throttled", err: apiErr("ThrottlingException", "slow down"), class: ClassThrottled, retryable: true},
 		{name: "a failure of AWS", err: apiErr("InternalFailure", "oops"), class: ClassServiceError, retryable: true},
