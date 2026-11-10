@@ -187,6 +187,12 @@ func pdbs(c *fleettest.Cluster) []item {
 		if p.Unsynced {
 			budget.Status.ObservedGeneration = 0
 		}
+		if p.DisruptedPods > 0 {
+			budget.Status.DisruptedPods = make(map[string]metav1.Time, p.DisruptedPods)
+			for i := range p.DisruptedPods {
+				budget.Status.DisruptedPods[fmt.Sprintf("gone-%d", i)] = metav1.NewTime(c.CreatedAt)
+			}
+		}
 		if p.SyncFailed {
 			budget.Status.Conditions[0] = metav1.Condition{Type: policyv1.DisruptionAllowedCondition, Status: metav1.ConditionFalse, Reason: policyv1.SyncFailedReason}
 		}

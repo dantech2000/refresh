@@ -22,8 +22,8 @@ type fuzzCluster struct {
 	pods    []*corev1.Pod
 	budgets []*policyv1.PodDisruptionBudget
 	// nilSelector and emptyBlocks are the names of the budgets with no
-	// selector, and of the synced budgets with the selector {} that allow
-	// no disruption.
+	// selector, and of the budgets with the selector {} that allow no
+	// disruption or whose status is of an older generation.
 	nilSelector, emptyBlocks []string
 	// readyOnNodegroup says that a Ready pod that eviction looks at runs
 	// on a node of ng.
@@ -79,7 +79,7 @@ func newFuzzCluster(data []byte) fuzzCluster {
 			c.nilSelector = append(c.nilSelector, "default/"+p.Name)
 		case 1:
 			p.Spec.Selector = &metav1.LabelSelector{}
-			if allowed == 0 && !unsynced {
+			if allowed == 0 || unsynced {
 				c.emptyBlocks = append(c.emptyBlocks, "default/"+p.Name)
 			}
 		default:
@@ -130,9 +130,9 @@ func (c fuzzCluster) blockers(t *testing.T, remove int32, reversed bool) []strin
 
 // The scale-down gate on arbitrary clusters (REF-4): it reads every
 // cluster, a budget that blocks the removal of k nodes blocks the removal
-// of k+1, a budget with no selector never blocks, a synced budget with
-// the selector {} that allows nothing blocks when a Ready pod runs on the
-// nodegroup, and the answer does not depend on the order of the lists.
+// of k+1, a budget with no selector never blocks, a budget with the
+// selector {} that allows nothing, or whose status is not synced, blocks
+// when a Ready pod runs on the nodegroup, and the answer does not depend on the order of the lists.
 func FuzzScaleDownBlockers(f *testing.F) {
 	for _, seed := range [][]byte{
 		nil,
@@ -141,6 +141,7 @@ func FuzzScaleDownBlockers(f *testing.F) {
 		{2, 3, 0x40, 0x20, 0x30, 3, 0x00, 0x11, 0x03},       // a pod that is not ready, a pending one, a done one
 		{0, 8, 0, 1, 2, 3, 4, 5, 6, 7, 3, 0x01, 0x02, 0x0b}, // one node
 		{1, 4, 0x00, 0x02, 0x01, 0x03, 2, 0x00, 0x06},       // ready pods on both nodes, a budget with no selector that allows nothing
+		{1, 2, 0x00, 0x02, 1, 0x15},                         // an unsynced budget with the selector {} whose stale status allows one
 	} {
 		f.Add(seed)
 	}
@@ -161,7 +162,7 @@ func FuzzScaleDownBlockers(f *testing.F) {
 			}
 			for _, name := range c.emptyBlocks {
 				if c.readyOnNodegroup && !slices.Contains(got, name) {
-					t.Errorf("removing %d: %s selects every pod and allows nothing, and does not block (%v)", remove, name, got)
+					t.Errorf("removing %d: %s selects every pod and allows nothing or is not synced, and does not block (%v)", remove, name, got)
 				}
 			}
 			if other := c.blockers(t, remove, true); !slices.Equal(got, other) {
