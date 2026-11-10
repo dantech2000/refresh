@@ -253,7 +253,7 @@ Unchanged.
 | `4` | Incomplete data or partial failure |
 | `5` | The change was applied and the check after it found issues |
 
-Exit 5 needs a check after the change: the verification after a nodegroup roll, and the health of an add-on after its update. `nodegroup scale` has no such check, so it never exits 5. It waits until EKS reports the update done and the nodegroup is `ACTIVE` at the new sizes. A nodegroup that is not `ACTIVE` then, such as `DEGRADED`, is a failed change, exit 1.
+Exit 5 needs a check after the change: the verification after a nodegroup roll, and the health of an add-on after its update. `nodegroup scale` has no such check, so it never exits 5. It waits until EKS reports the update done and the nodegroup is `ACTIVE` at the new sizes. A nodegroup that is not `ACTIVE` then, such as `DEGRADED`, is a failed change, exit 1. The min and max sizes must be the ones that were sent. A desired size that something else changed after the update, such as Cluster Autoscaler, is no failure while it is inside the min and max: the step is `Succeeded`, with a notice that says what the desired size is now (owner decision of 2026-11-09).
 
 The message on stderr of an exit 2 or 3 is a verdict and prints alone, such as `upgrade needs review: ...`. Every other message starts with `Error:`: exit 1, 4, and 5.
 

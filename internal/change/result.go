@@ -65,7 +65,9 @@ type StepResult struct {
 	// Note says what the fresh read before the request found, when the
 	// run then did something else than the plan said: a nodegroup that
 	// was rolled elsewhere since the plan, or that has a custom AMI now.
-	// The plan is the plan that was confirmed, and stays as it was.
+	// The plan is the plan that was confirmed, and stays as it was. After
+	// a scale, it says that something else changed the desired size after
+	// the update.
 	Note string
 }
 

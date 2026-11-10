@@ -309,6 +309,12 @@ The command refuses while the cluster or anything else in it is changing. It
 asks once. Then it waits until EKS reports the update done and the nodegroup is
 `ACTIVE` at the new sizes. `--no-wait` returns once AWS accepts the change.
 
+The min and max sizes must be the ones that the command sent. The desired size
+can move after the update: Cluster Autoscaler, for one, sets it on its own
+schedule. A desired size inside the min and max is no failure. The scale ends
+`Succeeded`, with a notice such as "the desired size of nodegroup ng-b is 5
+now, not 6: something else changed it after the update".
+
 ```text
 PLAN  NodegroupScale, dev-orders-32 in us-east-1
   ng-b  scale from desired 4, min 1, max 12 to desired 6, min 1, max 12

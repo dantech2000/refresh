@@ -74,10 +74,15 @@ func (r *runner) runScaleStep(cp *ClusterPlan, s Step) StepResult {
 	if err := WaitUpdate(ctx, poll, resource, id, r.waitOptions(s, wait)); err != nil {
 		return r.waitFailed(ctx, cp, res, err)
 	}
-	if _, err := WaitSettled(ctx, poll, resource, scaleSettled(s.Ref.Name, id, req), r.waitOptions(s, wait)); err != nil {
+	settled, err := WaitSettled(ctx, poll, resource, scaleSettled(s.Ref.Name, id, req), r.waitOptions(s, wait))
+	if err != nil {
 		return r.waitFailed(ctx, cp, res, err)
 	}
 	res.Status, res.FinishedAt = StepSucceeded, r.d.now()
+	if req.Desired != nil && settled.Sizes.Desired != *req.Desired {
+		res.Note = fmt.Sprintf("the desired size of nodegroup %s is %d now, not %d: something else changed it after the update", s.Ref.Name, settled.Sizes.Desired, *req.Desired)
+		r.notice(res.Note)
+	}
 	return res
 }
 
@@ -105,10 +110,16 @@ func submitScale(ctx context.Context, c *awsx.Clients, r Resource, req ScaleRequ
 // that EKS reported Successful. It judges every answer on the sizes and
 // the status together.
 //
-//   - A size that was sent and that the nodegroup does not have: an error
-//     at once. The update did not do what it reported. Every answer that
-//     reaches this function has all three sizes: describe turns one
-//     without them into a poll that says nothing.
+//   - A min or max size that was sent and that the nodegroup does not
+//     have: an error at once. The update did not do what it reported.
+//     Every answer that reaches this function has all three sizes:
+//     describe turns one without them into a poll that says nothing.
+//   - A desired size that was sent and that the nodegroup does not have:
+//     an error only when it is outside the min and max of the nodegroup.
+//     Inside them, something else changed it after the update, such as
+//     Cluster Autoscaler, which sets the desired capacity of the Auto
+//     Scaling group on its own schedule. The update did what it reported,
+//     and the step says what the size is now.
 //   - No desired size was sent: done. Only the bounds changed, and no node
 //     has to come or go.
 //   - ACTIVE: done.
@@ -121,7 +132,8 @@ func scaleSettled(nodegroup, updateID string, req ScaleRequest) func(Settled) (b
 			want *int32
 			got  int32
 		}{{"desired", req.Desired, s.Sizes.Desired}, {"min", req.Min, s.Sizes.Min}, {"max", req.Max, s.Sizes.Max}} {
-			if size.want != nil && *size.want != size.got {
+			moved := size.name == "desired" && s.Sizes.Min <= size.got && size.got <= s.Sizes.Max
+			if size.want != nil && *size.want != size.got && !moved {
 				return false, fmt.Errorf("update %s of nodegroup %s reported Successful, but the %s size of the nodegroup is %d, not %d",
 					updateID, nodegroup, size.name, size.got, *size.want)
 			}
