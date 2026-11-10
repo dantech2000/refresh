@@ -622,9 +622,9 @@ func oneStep(t *testing.T, res Result) StepResult {
 	return res.Clusters[0].Steps[0]
 }
 
-// The confirmation of a scale. The wait follows the update first, and
-// then judges the nodegroup on its sizes and its status together.
-func TestRunScale_Confirm(t *testing.T) {
+// After the update is Successful, the min and max sizes must be the ones
+// that were sent. The desired size may have moved since, inside them.
+func TestRunScale_SizesAfterSuccessful(t *testing.T) {
 	t.Run("a desired size that something else changed after Successful: succeeded, with a notice", func(t *testing.T) {
 		e := newEnv(t, scaleWorld(nil))
 		// The plan and the fresh read are the first two describes. The
@@ -676,7 +676,11 @@ func TestRunScale_Confirm(t *testing.T) {
 			t.Errorf("%d describes, exit %d; want 3 and 1: the wait ends at the first answer", n, res.ExitCode())
 		}
 	})
+}
 
+// The confirmation of a scale. The wait follows the update first, and
+// then judges the nodegroup on its sizes and its status together.
+func TestRunScale_Confirm(t *testing.T) {
 	t.Run("the desired size waits for ACTIVE", func(t *testing.T) {
 		e := newEnv(t, scaleWorld(nil))
 		// The update ends at once, and the nodegroup still says UPDATING

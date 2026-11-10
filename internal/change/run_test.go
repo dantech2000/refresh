@@ -834,7 +834,11 @@ func TestRun_AllStopsDependents(t *testing.T) {
 			}
 		})
 	}
+}
 
+// --all --no-wait is refused when one add-on to update depends on another:
+// without a wait, the order of --all means nothing.
+func TestRun_AllNoWait(t *testing.T) {
 	t.Run("--no-wait with a dependent pair is refused, and nothing is sent", func(t *testing.T) {
 		e := newEnv(t, newWorld(nil))
 		req := all(health.Policy{Yes: true})
