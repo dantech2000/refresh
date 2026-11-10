@@ -64,9 +64,11 @@ skip the confirmation prompts.`,
 		// unknown command with "Did you mean this?" suggestions, and an Args
 		// function here would replace it.
 		//
-		// No Version either: cobra prints it through a text/template, and
-		// a reachable text/template keeps every exported method in the
-		// binary (more than half its size). RunE prints --version.
+		// No Version either: cobra's default prints "refresh version X",
+		// not our three lines, and the only way to change that is
+		// SetVersionTemplate, which runs a text/template. A reachable
+		// text/template keeps every exported method in the binary (more
+		// than half its size). RunE prints --version.
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
