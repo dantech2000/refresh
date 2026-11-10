@@ -4,6 +4,12 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
 
+# A new push to the PR starts a new run, which decides on its own head
+# commit; the superseded run stops polling.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 permissions:
   contents: write
   pull-requests: write
@@ -12,8 +18,9 @@ permissions:
 jobs:
   auto-merge:
     runs-on: ubuntu-latest
-    # Above the two 900s (15m) check-waits below so they can resolve first.
-    timeout-minutes: 20
+    # Above the 40-minute wait for the checks below, which covers Race stress
+    # (25-minute timeout) and the time a job can spend in the queue.
+    timeout-minutes: 45
     if: github.actor == 'dependabot[bot]'
 
     steps:
@@ -31,39 +38,95 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Determine eligibility (patch/minor only)
+      # Only Go module and uv (docs site) bumps merge without a person. A
+      # GitHub Actions bump is never merged here: actions such as
+      # goreleaser-action and cosign-installer run in release.yml with
+      # `contents: write`, `id-token: write`, and GH_PAT, and no check of the
+      # PR runs release.yml, so passing checks prove nothing about them.
+      - name: Determine eligibility (Go modules or uv, patch/minor only)
         id: check
+        env:
+          UPDATE_TYPE: ${{ steps.meta.outputs.update-type }}
+          ECOSYSTEM: ${{ steps.meta.outputs.package-ecosystem }}
         run: |
-          update_type="${{ steps.meta.outputs.update-type }}"
-          echo "update-type: $update_type"
-          if [[ "$update_type" == "version-update:semver-patch" || \
-                "$update_type" == "version-update:semver-minor" ]]; then
-            echo "eligible=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "eligible=false" >> "$GITHUB_OUTPUT"
+          echo "update-type: $UPDATE_TYPE"
+          echo "package-ecosystem: $ECOSYSTEM"
+          eligible=false
+          case "$ECOSYSTEM" in
+            go_modules | uv)
+              if [[ "$UPDATE_TYPE" == "version-update:semver-patch" || \
+                    "$UPDATE_TYPE" == "version-update:semver-minor" ]]; then
+                eligible=true
+              fi
+              ;;
+          esac
+          echo "eligible=$eligible" >> "$GITHUB_OUTPUT"
+
+      # Every check of the head commit must pass, not a chosen few: with no
+      # branch protection nothing else enforces them. `gh pr checks --watch`
+      # cannot be used, because it would also wait for this job, which is a
+      # check of the same commit. So the loop polls, leaves out the checks of
+      # this workflow, and waits until none is pending. The checks of the
+      # other workflows may not exist yet when this job starts, so the loop
+      # also waits until each check named in `required` has appeared, and
+      # each of those must pass.
+      - name: Wait for every check of the head commit
+        if: steps.check.outputs.eligible == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          SELF: ${{ github.workflow }}
+          ECOSYSTEM: ${{ steps.meta.outputs.package-ecosystem }}
+        run: |
+          required=("Run go test" "Race stress (shuffled, x5)" "Run govulncheck" "Run deadcode" "Binary size" "Run golangci-lint")
+          if [ "$ECOSYSTEM" = "uv" ]; then
+            required+=("Build site")
           fi
-
-      # Both the build/test gate AND the lint gate must pass — a PR that breaks
-      # the build/tests but passes lint must NOT auto-merge. (REF-60)
-      - name: Wait for Test check
-        if: steps.check.outputs.eligible == 'true'
-        uses: fountainhead/action-wait-for-check@5a908a24814494009c4bb27c242ea38c93c593be # v1.2.0
-        id: wait-test
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          checkName: "Run go test"
-          ref: ${{ github.event.pull_request.head.sha }}
-          timeoutSeconds: 900
-
-      - name: Wait for Lint check
-        if: steps.check.outputs.eligible == 'true'
-        uses: fountainhead/action-wait-for-check@5a908a24814494009c4bb27c242ea38c93c593be # v1.2.0
-        id: wait-lint
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          checkName: "Run golangci-lint"
-          ref: ${{ github.event.pull_request.head.sha }}
-          timeoutSeconds: 900
+          deadline=$((SECONDS + 2400))
+          while :; do
+            # With --json, gh prints the checks and does not use the exit
+            # code for pending or failed checks. A failed call (no checks
+            # reported yet, a transient API error) is retried.
+            if checks="$(gh pr checks "$PR" --json name,bucket,workflow \
+                --jq "[.[] | select(.workflow != \"$SELF\")]")"; then
+              failed="$(jq -r '.[] | select(.bucket == "fail" or .bucket == "cancel") | .name' <<<"$checks")"
+              if [ -n "$failed" ]; then
+                echo "::error::A check failed or was cancelled; not merging:"
+                echo "$failed"
+                exit 1
+              fi
+              # A required check must pass. Skipped or neutral is not a pass:
+              # this gate is the only one, so a required check that did not
+              # run fails it. One that is absent or pending is waited for.
+              missing=()
+              for name in "${required[@]}"; do
+                if jq -e --arg n "$name" 'any(.[]; .name == $n and .bucket == "pass")' <<<"$checks" >/dev/null; then
+                  continue
+                fi
+                ended="$(jq -r --arg n "$name" '.[] | select(.name == $n and .bucket != "pending") | .bucket' <<<"$checks")"
+                if [ -n "$ended" ]; then
+                  echo "::error::The required check \"$name\" ended as ${ended//$'\n'/, }, not pass; not merging."
+                  exit 1
+                fi
+                missing+=("$name")
+              done
+              pending="$(jq -r '.[] | select(.bucket == "pending") | .name' <<<"$checks")"
+              if [ ${#missing[@]} -eq 0 ] && [ -z "$pending" ]; then
+                echo "Every required check passed, and no check failed:"
+                jq -r '.[] | "  \(.bucket)\t\(.workflow) / \(.name)"' <<<"$checks"
+                exit 0
+              fi
+              echo "Waiting: pending=[${pending//$'\n'/, }] required, not passed yet=[${missing[*]}]"
+            else
+              echo "Could not read the checks; retrying."
+            fi
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo "::error::The checks did not finish in 40 minutes; not merging."
+              exit 1
+            fi
+            sleep 30
+          done
 
       # GH_PAT, not GITHUB_TOKEN, and ONLY on this step. GitHub does not trigger
       # workflows from pushes made with GITHUB_TOKEN (its recursion guard), so
@@ -73,15 +136,14 @@ jobs:
       # the same reason. Every other step here stays on the scoped, auto-rotating
       # GITHUB_TOKEN — they only read metadata and checks.
       - name: Auto-merge Dependabot PR
-        if: |
-          steps.check.outputs.eligible == 'true' &&
-          steps.wait-test.outputs.conclusion == 'success' &&
-          steps.wait-lint.outputs.conclusion == 'success'
+        if: steps.check.outputs.eligible == 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+          GH_REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          echo "Test + Lint passed. Merging Dependabot PR..."
+          echo "Every check passed. Merging Dependabot PR..."
           # A direct merge, NOT `--auto`. GitHub's auto-merge is disabled on this
           # repo (allow_auto_merge=false), so `--auto` failed with "Auto merge is
           # not allowed for this repository (enablePullRequestAutoMerge)" whenever
@@ -89,9 +151,13 @@ jobs:
           # Enabling the repo setting would be the other fix, but it is worse: with
           # no branch protection there are no REQUIRED checks, so repo-wide
           # auto-merge would merge any PR the moment it is mergeable, checks or not.
-          # We do not need it — the two wait-for-check gates above already prove
-          # Test and Lint passed before we get here, so merging now is equivalent
-          # and fails loudly on conflict instead of queueing silently.
+          # We do not need it — the wait step above already proves every check
+          # passed before we get here, so merging now is equivalent and fails
+          # loudly on conflict instead of queueing silently.
+          #
+          # --match-head-commit: the checks were read for the PR's head at the
+          # time. If Dependabot pushed again since, the merge is refused, and
+          # the run of that push decides on its own checks.
           #
           # Retried, because `mergePullRequest` rejects with "Base branch was
           # modified" when another PR lands on main between GitHub computing
@@ -102,7 +168,7 @@ jobs:
           # workflow only fires on opened/synchronize/reopened, so a PR that loses
           # the race sits open until someone merges it by hand.
           for attempt in 1 2 3 4 5; do
-            if gh pr merge "$PR" --squash --delete-branch; then
+            if gh pr merge "$PR" --squash --delete-branch --match-head-commit "$HEAD_SHA"; then
               echo "Merged on attempt ${attempt}."
               exit 0
             fi
@@ -111,6 +177,12 @@ jobs:
             if [ "$(gh pr view "$PR" --json state -q .state)" = "MERGED" ]; then
               echo "PR #${PR} is already merged."
               exit 0
+            fi
+
+            # A new head commit has its own run of this workflow.
+            if [ "$(gh pr view "$PR" --json headRefOid -q .headRefOid)" != "$HEAD_SHA" ]; then
+              echo "::error::PR #${PR} has a new head commit; its own run decides."
+              exit 1
             fi
 
             # A genuine conflict will not resolve by retrying. Dependabot rebases
@@ -132,5 +204,7 @@ jobs:
         if: steps.check.outputs.eligible == 'false'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
         run: |
-          gh pr comment ${{ github.event.pull_request.number }} --body "⚠️ This Dependabot PR requires manual review (major version update or non-version change)."
+          gh pr comment "$PR" --body "⚠️ This Dependabot PR requires manual review (a GitHub Actions bump, a major version update, or a non-version change)."

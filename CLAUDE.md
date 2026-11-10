@@ -49,13 +49,14 @@ task dev:full       # everything CI runs; run it before you push
 
 CI runs the same checks on every PR: tidy, the docs freshness check, `go test
 -race` with coverage, a shuffled `-race -count=5` run, golangci-lint,
-govulncheck, and deadcode. A nightly workflow runs `-race -count=20`, every
-fuzz target for 60s, and govulncheck.
+govulncheck, deadcode, and the binary size check (`task size:check`). A
+nightly workflow runs `-race -count=20`, every fuzz target for 60s, and
+govulncheck.
 
 **Toolchain.** The Taskfile sets `GOTOOLCHAIN` to the `toolchain` line of
 `go.mod`, which is the Go that CI uses. A newer local Go formats differently.
-The versions of golangci-lint, govulncheck, and deadcode are pinned in the
-Taskfile `vars` and must match the workflows.
+The versions of golangci-lint, govulncheck, and deadcode are pinned once, in
+the Taskfile `vars`. The workflows read them from there.
 
 **The fake fleet.** `tools/fakefleet` serves a fake AWS and a fake Kubernetes
 API from one world: many clusters in many regions, a slow region, a closed

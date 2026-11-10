@@ -142,7 +142,7 @@ that the other does not have.
 ```bash
 go test ./test/parity/                                  # the binary against the recorded traces
 REFRESH_PARITY_V2=/path/to/refresh go test ./test/parity/ -run TestPaired   # test a binary you built
-REFRESH_PARITY_RACE=1 go test ./test/parity/            # build the binary with the race detector
+go test -race ./test/parity/                            # the binary is built with the race detector too
 ```
 
 ## Limits

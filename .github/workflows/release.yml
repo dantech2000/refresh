@@ -5,9 +5,9 @@ on:
     tags:
       - 'v*'
 
+# No `packages: write`: .goreleaser.yml builds no container image.
 permissions:
   contents: write
-  packages: write
   # Required for cosign keyless signing via the GitHub OIDC provider. (REF-74)
   id-token: write
 
@@ -26,11 +26,19 @@ jobs:
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-          cache: true
+          # No cache: the release builds from a clean module download, never
+          # from a cache that a CI job wrote. A cache saved from a tag would
+          # serve that tag only.
+          cache: false
 
       # SBOM generation (syft) and signing (cosign) used by .goreleaser.yml. (REF-74)
       - name: Install syft
         uses: anchore/sbom-action/download-syft@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          # Pinned, as GoReleaser is below: the version that built v0.17.3.
+          # Dependabot bumps the action, not this input: bump it by hand here
+          # (https://github.com/anchore/syft/releases).
+          syft-version: v1.54.0
 
       # Installer stays on latest; the cosign *binary* is held at v2 on purpose.
       # v4 defaults to Cosign v3, where `sign-blob` requires --bundle and emits a
@@ -46,7 +54,12 @@ jobs:
         uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
         with:
           distribution: goreleaser
-          version: "~> v2"
+          # An exact version, not a range: a new GoReleaser release must not
+          # change what a tag publishes without a reviewed commit. Dependabot
+          # bumps the action, not this input: bump it by hand here
+          # (https://github.com/goreleaser/goreleaser/releases), and check it
+          # with `task release:test` first.
+          version: v2.20.0
           args: release --clean
         env:
           # The release itself (creating the GitHub release, uploading assets to

@@ -37,7 +37,9 @@ updates:
       - dependency-name: "github.com/aws/aws-sdk-go-v2/*"
         update-types: ["version-update:semver-major"]
 
-  # Enable version updates for GitHub Actions
+  # Enable version updates for GitHub Actions. auto-merge.yml never merges
+  # these: a person reviews each one, because the release job runs actions with
+  # write access and GH_PAT, and no PR check runs the release job.
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:

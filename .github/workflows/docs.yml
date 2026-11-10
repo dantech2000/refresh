@@ -42,10 +42,13 @@ on:
 permissions:
   contents: read
 
-# Never cancel an in-flight Pages deploy.
+# Never cancel an in-flight Pages deploy. A push to main shares one group, so
+# deploys queue. A PR build has its own group per PR: it can no longer cancel
+# or wait behind the build of another PR or a deploy, and a new push to the
+# same PR cancels its superseded build.
 concurrency:
-  group: pages
-  cancel-in-progress: false
+  group: ${{ github.event_name == 'push' && 'pages' || format('docs-{0}', github.ref) }}
+  cancel-in-progress: ${{ github.event_name != 'push' }}
 
 jobs:
   build:
