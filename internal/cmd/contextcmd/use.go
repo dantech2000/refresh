@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strconv"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -61,9 +63,9 @@ Exit codes:
 
 func (o *useOptions) complete(args []string) {
 	if len(args) == 1 {
-		o.name, o.named = contextName(args[0]), true
+		o.name, o.named = strings.TrimSpace(args[0]), true
 	}
-	o.envContext = envContext()
+	o.envContext = os.Getenv(contexts.EnvContext)
 }
 
 func (o *useOptions) validate() error {

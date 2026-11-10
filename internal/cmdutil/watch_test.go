@@ -67,12 +67,12 @@ func TestWatch(t *testing.T) {
 	}
 	const clearScreen = "\x1b[H\x1b[2J"
 	reads := 0
-	draw := func(context.Context) error {
+	draw := func(_ context.Context, read *cmdutil.IOStreams) error {
 		reads++
 		if want := strings.Repeat(clearScreen+"read\n", reads-1); out.String() != want {
 			t.Errorf("the screen during read %d = %q, want %q", reads, out.String(), want)
 		}
-		_, _ = fmt.Fprintln(ios.Out, "read")
+		_, _ = fmt.Fprintln(read.Out, "read")
 		switch reads {
 		case 2:
 			// A partial read: the watch goes on.
@@ -100,11 +100,42 @@ func TestWatch(t *testing.T) {
 	}
 }
 
+// What a read writes to stderr, such as a note about skipped regions,
+// shows under its table: the clear before the table does not erase it.
+// The streams of the caller stay as they were.
+func TestWatch_NotesUnderTheFrame(t *testing.T) {
+	var screen bytes.Buffer
+	ios := &cmdutil.IOStreams{Out: &screen, ErrOut: &screen, OutTTY: true}
+	ctx2, cancel2 := context.WithCancel(t.Context())
+	defer cancel2()
+	draw2 := func(_ context.Context, read *cmdutil.IOStreams) error {
+		if read.Out == ios.Out || read.ErrOut == ios.ErrOut {
+			t.Error("the read writes to the streams of the screen; want buffers")
+		}
+		_, _ = fmt.Fprintln(read.ErrOut, "note")
+		_, _ = fmt.Fprintln(read.Out, "table")
+		return nil
+	}
+	after2 := func(time.Duration) <-chan time.Time {
+		cancel2()
+		return make(chan time.Time)
+	}
+	if err := cmdutil.Watch(ctx2, ios, time.Second, after2, draw2); !errors.Is(err, cmdutil.ErrStopped) {
+		t.Fatalf("error = %v, want ErrStopped", err)
+	}
+	if got, want := screen.String(), "\x1b[H\x1b[2Jtable\nnote\n"; got != want {
+		t.Errorf("screen = %q, want %q: the note under the table", got, want)
+	}
+	if ios.Out != &screen || ios.ErrOut != &screen {
+		t.Error("the watch changed the streams of the caller")
+	}
+}
+
 // An error that is not a partial result ends the watch.
 func TestWatch_ErrorEndsIt(t *testing.T) {
 	ios := &cmdutil.IOStreams{Out: &bytes.Buffer{}, OutTTY: true}
 	boom := errors.New("credentials expired")
-	err := cmdutil.Watch(t.Context(), ios, time.Second, nil, func(context.Context) error { return boom })
+	err := cmdutil.Watch(t.Context(), ios, time.Second, nil, func(context.Context, *cmdutil.IOStreams) error { return boom })
 	if !errors.Is(err, boom) {
 		t.Errorf("error = %v, want the error of the read", err)
 	}
@@ -118,7 +149,7 @@ func TestWatch_StoppedDuringThePause(t *testing.T) {
 		cancel()
 		return make(chan time.Time)
 	}
-	err := cmdutil.Watch(ctx, ios, time.Second, after, func(context.Context) error { return nil })
+	err := cmdutil.Watch(ctx, ios, time.Second, after, func(context.Context, *cmdutil.IOStreams) error { return nil })
 	if !errors.Is(err, cmdutil.ErrStopped) {
 		t.Errorf("error = %v, want ErrStopped", err)
 	}

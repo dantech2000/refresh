@@ -12,7 +12,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/dantech2000/refresh/internal/awsx"
-	"github.com/dantech2000/refresh/internal/contexts"
 	"github.com/dantech2000/refresh/internal/kube"
 )
 
@@ -39,6 +38,11 @@ const (
 type Target struct {
 	Cluster string
 	Source  TargetSource
+	// Region is where the kubeconfig says the cluster is, for a cluster
+	// from the kubeconfig (TargetKubeconfig). It is "" for every other
+	// source: the run then reads the region of -r, the context, or the
+	// AWS configuration. ClusterClients reads it.
+	Region string
 }
 
 // AddClusterFlag adds -c/--cluster to cmd.
@@ -64,9 +68,8 @@ func AddChangeClusterFlag(cmd *cobra.Command, p *string) {
 //  4. For a read-only command: the cluster of the kubeconfig context, which
 //     --kubeconfig and --kube-context choose. Only a context that names an
 //     EKS cluster and its region counts (see kube.CurrentCluster). The
-//     command then reads that region: ResolveCluster stores it in
-//     f.Global.Regions when -r/--region named none, so a command must
-//     resolve its cluster before it calls f.AWS.
+//     target then holds that region, and ClusterClients reads the cluster
+//     there unless -r/--region names a region.
 //
 // A command that changes something passes readOnly false, with or without
 // --dry-run: a kubeconfig that happens to point at production must never
@@ -81,15 +84,7 @@ func ResolveCluster(f *Factory, explicit string, readOnly bool) (Target, error) 
 	if name := strings.TrimSpace(os.Getenv(EnvCluster)); name != "" {
 		return checkedTarget(name, TargetEnv, EnvCluster)
 	}
-	store, err := f.Contexts()
-	if err != nil {
-		return Target{}, err
-	}
-	file, err := store.Load()
-	if err != nil {
-		return Target{}, err
-	}
-	ctxName, active, ok, err := file.Active(os.Getenv(contexts.EnvContext))
+	ctxName, active, ok, err := ActiveContext(f)
 	if err != nil {
 		return Target{}, err
 	}
@@ -102,13 +97,9 @@ func ResolveCluster(f *Factory, explicit string, readOnly bool) (Target, error) 
 			return Target{}, fmt.Errorf("reading the kubeconfig for the cluster: %w", err)
 		}
 		if ok {
-			// The kubeconfig also says where the cluster is. That region
-			// is the region of the run unless -r/--region names one: the
-			// region of the AWS configuration may be another one.
-			if len(f.Global.Regions) == 0 {
-				f.Global.Regions = []string{region}
-			}
-			return Target{Cluster: name, Source: TargetKubeconfig}, nil
+			// The kubeconfig also says where the cluster is: the region
+			// of the AWS configuration may be another one.
+			return Target{Cluster: name, Source: TargetKubeconfig, Region: region}, nil
 		}
 	}
 	return Target{}, errors.New("no cluster specified\n" +
@@ -258,12 +249,30 @@ func editDistance(a, b string) int {
 	return prev[len(b)]
 }
 
-// ClusterClients returns the clients for a command that reads one cluster,
-// in the region of the run. It fails when the run has more than one region
-// or none.
-func ClusterClients(ctx context.Context, f *Factory) (*awsx.Clients, error) {
+// ClusterClients returns the clients for a command that reads or changes
+// the one cluster of target, in the region of the run. See ClusterProvider.
+func ClusterClients(ctx context.Context, f *Factory, target Target) (*awsx.Clients, error) {
+	provider, err := ClusterProvider(ctx, f, target)
+	if err != nil {
+		return nil, err
+	}
+	return provider.Clients(""), nil
+}
+
+// ClusterProvider returns the provider for a command about the one cluster
+// of target. The region of the run is the one of -r/--region, else the
+// region of a target from the kubeconfig, else the one of the context or
+// the AWS configuration. It fails when the run has more than one region or
+// none.
+//
+// It is the first use of f.AWS in such a command: the region of the
+// target must be in f.Global before the provider loads.
+func ClusterProvider(ctx context.Context, f *Factory, target Target) (*awsx.Provider, error) {
 	if len(f.Global.Regions) > 1 {
 		return nil, fmt.Errorf("this command reads one cluster in one region, and -r/--region names %d", len(f.Global.Regions))
+	}
+	if target.Region != "" && len(f.Global.Regions) == 0 {
+		f.Global.Regions = []string{target.Region}
 	}
 	provider, err := f.AWS(ctx)
 	if err != nil {
@@ -272,5 +281,5 @@ func ClusterClients(ctx context.Context, f *Factory) (*awsx.Clients, error) {
 	if provider.Region() == "" {
 		return nil, errors.New("no AWS region: pass -r/--region, set AWS_REGION, or use a context with a region")
 	}
-	return provider.Clients(""), nil
+	return provider, nil
 }

@@ -59,11 +59,3 @@ func TestListView_Widths(t *testing.T) {
 		}
 	}
 }
-
-// A nodegroup whose sizes EKS did not return has an unknown nodes cell,
-// never 0.
-func TestNodesCellUnknownSizes(t *testing.T) {
-	if got := nodesCell(apidoc.Nodegroup{Name: "web", Status: "ACTIVE"}); got != unknownCell {
-		t.Errorf("nodes cell = %q, want %q", got, unknownCell)
-	}
-}

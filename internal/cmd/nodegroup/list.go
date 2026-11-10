@@ -3,16 +3,14 @@ package nodegroup
 import (
 	"cmp"
 	"context"
-	"errors"
-	"fmt"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/dantech2000/refresh/internal/apidoc"
-	"github.com/dantech2000/refresh/internal/awsx"
 	"github.com/dantech2000/refresh/internal/cmd/fleetcmd"
 	"github.com/dantech2000/refresh/internal/cmdutil"
 	"github.com/dantech2000/refresh/internal/fleet"
@@ -20,33 +18,12 @@ import (
 	"github.com/dantech2000/refresh/internal/view"
 )
 
-// The keys of --filter and --sort. The first sort key is the default.
-const (
-	keyName         = "name"
-	keyStatus       = "status"
-	keyInstanceType = "instanceType"
-	keyNodes        = "nodes"
-	keyVersion      = "version"
-	keyAMIStatus    = "amiStatus"
-)
-
 type listOptions struct {
-	ios    *cmdutil.IOStreams
-	global *cmdutil.GlobalOptions
-	// now returns the time that a snapshot records.
-	now func() time.Time
-	// resolve returns the cluster of the run, from the flag or the
-	// defaults, and clients the AWS clients of its region.
-	resolve func(cluster string) (cmdutil.Target, error)
-	clients func(ctx context.Context) (*awsx.Clients, error)
-	// after is the pause between two reads of a watch.
-	after func(time.Duration) <-chan time.Time
-	// kube returns the Kubernetes client of a cluster, for
-	// --check-readiness.
-	kube func(target kube.Target) (*kube.Client, error)
+	f   *cmdutil.Factory
+	ios *cmdutil.IOStreams
 
 	cluster        string
-	rawFilters     []string
+	filters        cmdutil.Filters
 	sortKey        string
 	desc           bool
 	checkReadiness bool
@@ -54,19 +31,12 @@ type listOptions struct {
 	interval       time.Duration
 	output         cmdutil.Format
 
-	// filters and target are set by complete.
-	filters cmdutil.Filters
-	target  cmdutil.Target
+	// target is the cluster, resolved by complete.
+	target cmdutil.Target
 }
 
 func newCmdList(f *cmdutil.Factory) *cobra.Command {
-	o := &listOptions{
-		ios: f.IOStreams, global: &f.Global, now: f.Now,
-		resolve: func(cluster string) (cmdutil.Target, error) { return cmdutil.ResolveCluster(f, cluster, true) },
-		clients: func(ctx context.Context) (*awsx.Clients, error) { return cmdutil.ClusterClients(ctx, f) },
-		after:   f.After, kube: f.Kube,
-	}
-	filterKeys := []string{keyName, keyStatus, keyInstanceType, keyAMIStatus, keyVersion}
+	o := &listOptions{f: f, ios: f.IOStreams}
 	cmd := &cobra.Command{
 		Use:     "list",
 		Aliases: []string{"ls"},
@@ -103,21 +73,21 @@ Exit codes:
   refresh nodegroup list -c prod -o json | jq -r '.nodegroups[] | select(.ami.status == "Outdated") | .name'`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if err := o.complete(filterKeys); err != nil {
+			if err := o.complete(); err != nil {
 				return err
 			}
 			if err := o.validate(); err != nil {
 				return err
 			}
 			if o.watch {
-				return cmdutil.Watch(cmd.Context(), o.ios, o.interval, o.after, o.run)
+				return cmdutil.Watch(cmd.Context(), o.ios, o.interval, f.After, o.run)
 			}
-			return o.run(cmd.Context())
+			return o.run(cmd.Context(), o.ios)
 		},
 	}
 	cmdutil.AddClusterFlag(cmd, &o.cluster)
 	fleetcmd.RegisterClusterFlagCompletion(cmd, f)
-	cmdutil.AddFilterFlag(cmd, &o.rawFilters, filterKeys...)
+	cmdutil.AddFilterFlag(cmd, &o.filters, filterKeys...)
 	cmdutil.AddSortFlags(cmd, &o.sortKey, &o.desc, keyName, keyStatus, keyInstanceType, keyNodes, keyVersion, keyAMIStatus)
 	cmd.Flags().BoolVar(&o.checkReadiness, "check-readiness", false, "Read the Ready nodes of each nodegroup from the Kubernetes API; NODES then shows ready/desired")
 	cmdutil.AddWatchFlags(cmd, &o.watch, &o.interval)
@@ -125,13 +95,9 @@ Exit codes:
 	return cmd
 }
 
-func (o *listOptions) complete(filterKeys []string) error {
-	filters, err := cmdutil.ParseFilters(o.rawFilters, filterKeys...)
-	if err != nil {
-		return err
-	}
-	o.filters = filters
-	o.target, err = o.resolve(o.cluster)
+func (o *listOptions) complete() error {
+	var err error
+	o.target, err = cmdutil.ResolveCluster(o.f, o.cluster, true)
 	return err
 }
 
@@ -144,30 +110,26 @@ func (o *listOptions) validate() error {
 	if !o.checkReadiness {
 		return nil
 	}
-	return kube.CheckContext(o.global.Kubeconfig, o.global.KubeContext)
+	return kube.CheckContext(o.f.Global.Kubeconfig, o.f.Global.KubeContext)
 }
 
-func (o *listOptions) run(ctx context.Context) error {
-	ios := o.ios
-	ctx, cancel := cmdutil.WithTimeout(ctx, o.global.Timeout)
+// run reads the nodegroups once and prints them to ios.
+func (o *listOptions) run(ctx context.Context, ios *cmdutil.IOStreams) error {
+	ctx, cancel := cmdutil.WithTimeout(ctx, o.f.Global.Timeout)
 	defer cancel()
-	clients, err := o.clients(ctx)
+	read, err := fleetcmd.FetchCluster(ctx, o.f, o.target, fleet.Need{AMI: true})
 	if err != nil {
 		return err
 	}
-	fetcher := fleet.Fetcher{Now: o.now}
-	snap, err := fetcher.Fetch(ctx, clients, o.target.Cluster, fleet.Need{AMI: true})
-	if err != nil {
-		return fleetcmd.ClusterError(ctx, &fetcher, clients, o.target.Cluster, err)
-	}
+	snap := read.Snapshot
 	if o.checkReadiness {
-		access, err := fleetcmd.ConnectKube(o.kube, snap)
+		access, err := fleetcmd.ConnectKube(o.f.Kube, snap)
 		if err != nil {
 			return err
 		}
 		fleetcmd.ReportKube(ios, access)
 		if access.Client != nil {
-			fetcher.FetchKube(ctx, access.Client, snap, fleet.KubeNeed{Ready: true})
+			read.Fetcher.FetchKube(ctx, access.Client, snap, fleet.KubeNeed{Ready: true})
 		}
 	}
 
@@ -178,38 +140,14 @@ func (o *listOptions) run(ctx context.Context) error {
 		Failures:   snap.Failures,
 	}
 	apidoc.SortFailures(doc.Failures)
-	if err := cmdutil.Print(ios, o.output, doc, listView(doc)); err != nil {
-		return err
-	}
-	if o.output != cmdutil.FormatTable {
-		cmdutil.ReportFailures(ios, doc.Failures)
-	}
-	// An interrupt is not a partial result.
-	if errors.Is(ctx.Err(), context.Canceled) {
-		return fmt.Errorf("interrupted: %w", context.Canceled)
-	}
-	return cmdutil.IncompleteError(doc.Failures)
+	return cmdutil.PrintResult(ctx, ios, o.output, doc, listView(doc), doc.Failures)
 }
 
 // rows returns the rows for the nodegroups of snap: filtered, then sorted.
 func (o *listOptions) rows(snap *fleet.Snapshot) []apidoc.Nodegroup {
 	selected := make([]fleet.Nodegroup, 0, len(snap.Nodegroups))
 	for _, n := range snap.Nodegroups {
-		matches := o.filters.Match(func(key string) []string {
-			switch key {
-			case keyStatus:
-				return []string{n.Status}
-			case keyInstanceType:
-				return n.InstanceTypes
-			case keyVersion:
-				return []string{n.Version.String()}
-			case keyAMIStatus:
-				status, _ := n.AMIStatus()
-				return []string{string(status)}
-			}
-			return []string{n.Name}
-		})
-		if matches {
+		if o.filters.Match(filterValues(n)) {
 			selected = append(selected, n)
 		}
 	}
@@ -260,17 +198,19 @@ func listView(doc apidoc.NodegroupList) view.List[apidoc.Nodegroup] {
 			{Title: "NAME", MinWidth: 8, Value: func(n apidoc.Nodegroup) string { return n.Name }},
 			{
 				Title: "STATUS", Truncate: view.TruncateNever,
-				Value:  func(n apidoc.Nodegroup) string { return orUnknown(n, n.Status) },
+				Value:  func(n apidoc.Nodegroup) string { return view.OrUnknown(n.Incomplete, n.Status) },
 				Status: func(n apidoc.Nodegroup) view.Status { return view.StatusOf(n.Status) },
 			},
-			{Title: "INSTANCE", MinWidth: 10, MaxWidth: 30, Value: instanceTypes},
+			{Title: "INSTANCE", MinWidth: 10, MaxWidth: 30, Value: func(n apidoc.Nodegroup) string {
+				return view.OrUnknown(n.Incomplete, strings.Join(n.InstanceTypes, ","))
+			}},
 			{
 				Title: "VERSION", Truncate: view.TruncateNever,
-				Value:  func(n apidoc.Nodegroup) string { return orUnknown(n, n.Version) },
-				Status: versionStatus,
+				Value:  func(n apidoc.Nodegroup) string { return view.OrUnknown(n.Incomplete, n.Version) },
+				Status: view.BehindStatus,
 			},
 			{Title: "AMI", Truncate: view.TruncateNever, Value: amiText, Status: amiStatus},
-			{Title: "NODES", Align: view.AlignRight, Truncate: view.TruncateNever, Value: nodes},
+			{Title: "NODES", Align: view.AlignRight, Truncate: view.TruncateNever, Value: view.NodesCell},
 		},
 	}
 }

@@ -2,14 +2,11 @@
 package nodegroup
 
 import (
-	"strconv"
-	"strings"
-	"time"
-
 	"github.com/spf13/cobra"
 
 	"github.com/dantech2000/refresh/internal/apidoc"
 	"github.com/dantech2000/refresh/internal/cmdutil"
+	"github.com/dantech2000/refresh/internal/fleet"
 	"github.com/dantech2000/refresh/internal/view"
 )
 
@@ -45,22 +42,11 @@ do.`,
 	return cmd
 }
 
-// unknownCell is the text of a cell whose data could not be read.
-const unknownCell = "unknown"
-
-// orUnknown returns value, or "unknown" for a nodegroup that was not read.
-func orUnknown(n apidoc.Nodegroup, value string) string {
-	if value == "" && n.Incomplete {
-		return unknownCell
-	}
-	return value
-}
-
 // amiText returns the text of the AMI status of a nodegroup: "" when the
 // AMIs were not asked for, and "unknown" when they could not be read.
 func amiText(n apidoc.Nodegroup) string {
 	if n.AMI == nil {
-		return orUnknown(n, "")
+		return view.OrUnknown(n.Incomplete, "")
 	}
 	return string(n.AMI.Status)
 }
@@ -83,41 +69,33 @@ func amiStatus(n apidoc.Nodegroup) view.Status {
 	return view.Unknown
 }
 
-// versionStatus returns the status that draws the version of a nodegroup:
-// a warning when it is behind the control plane.
-func versionStatus(n apidoc.Nodegroup) view.Status {
-	if n.VersionBehind != nil && *n.VersionBehind {
-		return view.Warn
-	}
-	return view.NoStatus
-}
+// The keys of --filter and --sort. The first sort key is the default.
+const (
+	keyName         = "name"
+	keyStatus       = "status"
+	keyInstanceType = "instanceType"
+	keyNodes        = "nodes"
+	keyVersion      = "version"
+	keyAMIStatus    = "amiStatus"
+)
 
-// instanceTypes returns the instance types of a nodegroup as one cell.
-func instanceTypes(n apidoc.Nodegroup) string {
-	return orUnknown(n, strings.Join(n.InstanceTypes, ","))
-}
+// filterKeys are the keys of -f: what one read of the nodegroups gives.
+var filterKeys = []string{keyName, keyStatus, keyInstanceType, keyAMIStatus, keyVersion}
 
-// nodes returns the desired size of a nodegroup as a cell, with the Ready
-// count before it when it was read: "5/6". A nodegroup without sizes was
-// not read, or EKS did not return them: unknown.
-func nodes(n apidoc.Nodegroup) string {
-	if n.Scaling == nil {
-		return unknownCell
+// filterValues returns the values of n for a key of -f.
+func filterValues(n fleet.Nodegroup) func(key string) []string {
+	return func(key string) []string {
+		switch key {
+		case keyStatus:
+			return []string{n.Status}
+		case keyInstanceType:
+			return n.InstanceTypes
+		case keyVersion:
+			return []string{n.Version.String()}
+		case keyAMIStatus:
+			status, _ := n.AMIStatus()
+			return []string{string(status)}
+		}
+		return []string{n.Name}
 	}
-	desired := strconv.Itoa(int(n.Scaling.Desired))
-	if n.ReadyNodes != nil {
-		return strconv.Itoa(*n.ReadyNodes) + "/" + desired
-	}
-	return desired
-}
-
-// dateLayout is how a describe view prints a time.
-const dateLayout = "2006-01-02 15:04 UTC"
-
-// formatTime returns t for a describe view, or "" for the zero time.
-func formatTime(t time.Time) string {
-	if t.IsZero() {
-		return ""
-	}
-	return t.UTC().Format(dateLayout)
 }

@@ -940,6 +940,7 @@ func TestUtilization(t *testing.T) {
 func TestRun(t *testing.T) {
 	t.Run("the whole set passes", testRunWholeSet)
 	t.Run("no Kubernetes", testRunNoKube)
+	t.Run("Kubernetes not requested", testRunKubeNotRequested)
 	t.Run("an unreachable API", testRunUnreachable)
 	t.Run("the run's deadline", testRunDeadline)
 	t.Run("the client's timeout on one list", testRunClientTimeout)
@@ -996,6 +997,23 @@ func testRunNoKube(t *testing.T) {
 	}
 	if v := health.Gate(results, health.Policy{}); v.Decision != health.Ask || v.Exit != 2 {
 		t.Errorf("verdict = %+v, want Ask with exit 2", v)
+	}
+}
+
+// Without Kubernetes checks asked for, as "cluster describe" without
+// --check-readiness, the access result is Skipped and not a warning.
+func testRunKubeNotRequested(t *testing.T) {
+	h := newHarness(t)
+	ctx := testContext(t)
+	in := h.input(ctx)
+	in.Kube, in.Metrics = nil, nil
+	in.NoKube, in.KubeNotRequested = "pass --check-readiness to run the Kubernetes checks", true
+	results := health.Run(ctx, health.Preflight(), in)
+	for _, r := range results {
+		switch r.Name {
+		case "Workloads", health.AccessCheck:
+			check(t, r, want{outcome: health.Skipped, message: "pass --check-readiness to run the Kubernetes checks"})
+		}
 	}
 }
 

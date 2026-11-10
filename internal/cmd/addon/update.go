@@ -21,16 +21,8 @@ import (
 const addonWaitTimeout = 5 * time.Minute
 
 type updateOptions struct {
+	f   *cmdutil.Factory
 	ios *cmdutil.IOStreams
-	// deps builds the dependencies of the change. Calling it is the first
-	// use of the network.
-	deps func(ctx context.Context) (change.Deps, error)
-	// resolve returns the cluster of the run, the way a change does:
-	// never from the kubeconfig.
-	resolve func(explicit string) (cmdutil.Target, error)
-	// timeout returns --timeout, which the root command sets before the
-	// command runs.
-	timeout func() time.Duration
 
 	cluster string
 	version string
@@ -46,12 +38,7 @@ type updateOptions struct {
 }
 
 func newCmdUpdate(f *cmdutil.Factory) *cobra.Command {
-	o := &updateOptions{
-		ios:     f.IOStreams,
-		deps:    changecmd.Deps(f),
-		resolve: func(explicit string) (cmdutil.Target, error) { return cmdutil.ResolveCluster(f, explicit, false) },
-		timeout: func() time.Duration { return f.Global.Timeout },
-	}
+	o := &updateOptions{f: f, ios: f.IOStreams}
 	cmd := &cobra.Command{
 		Use:   "update [addon...]",
 		Short: "Update add-ons of a cluster",
@@ -64,8 +51,8 @@ the storage drivers. Named add-ons run in the order given. An add-on whose
 dependency ran before it and did not end clean is not updated; the others
 go on. Clean means skipped, or updated and verified healthy: a dependency
 that failed, timed out, was already changing, is not healthy after its
-update, or could not be read after it stops its dependents. --no-wait is refused when an add-on to update depends on one
-that comes before it.
+update, or could not be read after it stops its dependents. --no-wait is
+refused when an add-on to update depends on one that comes before it.
 
 Before any change the command reads the whole cluster. It refuses while
 the cluster or anything else in it is changing. An add-on that is DEGRADED,
@@ -117,14 +104,15 @@ refresh context. It never comes from the kubeconfig.
 	cmd.Flags().StringVar(&o.version, "version", "", "Add-on version to move to, with exactly one add-on (default: the latest that the cluster can run)")
 	cmd.Flags().BoolVar(&o.all, "all", false, "Update every installed add-on, in dependency order")
 	cmd.Flags().StringSliceVar(&o.skip, "skip-addon", nil, "Leave these add-ons out of --all, by exact name")
-	cmdutil.AddChangeFlags(cmd, &o.change, addonWaitTimeout, "each add-on", true, false)
+	cmdutil.AddChangeFlags(cmd, &o.change, cmdutil.ChangeFlagOptions{Wait: addonWaitTimeout, WaitFor: "each add-on", NoWait: true})
 	cmdutil.AddOutputFlag(cmd, &o.output, cmdutil.FormatTable, cmdutil.FormatJSON, cmdutil.FormatYAML, cmdutil.FormatPlain)
 	return cmd
 }
 
 func (o *updateOptions) complete(args []string) error {
 	o.addons = args
-	target, err := o.resolve(o.cluster)
+	// A change never takes its cluster from the kubeconfig.
+	target, err := cmdutil.ResolveCluster(o.f, o.cluster, false)
 	o.target = target
 	return err
 }
@@ -154,7 +142,7 @@ func (o *updateOptions) validate() error {
 func (o *updateOptions) request() change.AddonUpdateRequest {
 	return change.AddonUpdateRequest{
 		// --wait-timeout bounds each add-on alone.
-		Common:  changecmd.Common(&o.change, o.timeout()),
+		Common:  changecmd.Common(&o.change, o.f.Global.Timeout),
 		Target:  change.Target{Cluster: o.target.Cluster},
 		Addons:  o.addons,
 		All:     o.all,
@@ -164,13 +152,13 @@ func (o *updateOptions) request() change.AddonUpdateRequest {
 }
 
 func (o *updateOptions) run(ctx context.Context) error {
-	d, err := o.deps(ctx)
+	d, err := changecmd.Deps(ctx, o.f)
 	if err != nil {
 		return err
 	}
 	req := o.request()
 	if o.change.DryRun {
-		return changecmd.PrintPlan(ctx, o.ios, o.output, d, req, o.timeout(), nil)
+		return changecmd.PrintPlan(ctx, o.ios, o.output, d, req, o.f.Global.Timeout, nil)
 	}
 	return changecmd.RunChange(ctx, o.ios, o.output, d, req, changecmd.NewRenderer(o.ios, o.change.Quiet))
 }

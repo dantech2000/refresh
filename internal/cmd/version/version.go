@@ -52,9 +52,6 @@ Exit codes:
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			o.complete()
-			if err := o.validate(); err != nil {
-				return err
-			}
 			return o.run(cmd.Context())
 		},
 	}
@@ -83,10 +80,6 @@ func (o *options) complete() {
 		o.noUpdateCheck = envTruthy(os.Getenv(envNoUpdateCheck))
 	}
 }
-
-// validate has nothing to reject: the output flag is checked as it is
-// parsed.
-func (o *options) validate() error { return nil }
 
 func (o *options) run(ctx context.Context) error {
 	if o.output.IsMachine() {

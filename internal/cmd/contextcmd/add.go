@@ -3,6 +3,7 @@ package contextcmd
 import (
 	"fmt"
 	"regexp"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -60,7 +61,7 @@ Exit codes:
 }
 
 func (o *addOptions) complete(args []string) {
-	o.name = contextName(args[0])
+	o.name = strings.TrimSpace(args[0])
 }
 
 // newNamePattern is the set of characters of a new context name: few
