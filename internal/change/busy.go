@@ -91,7 +91,7 @@ func Busy(snap *fleet.Snapshot, kind Kind, ours []Step) (refuse []Blocker, notic
 		}
 	}
 	if all := slices.Concat(busy, deleting); len(all) > 0 {
-		refuse = append(refuse, Blocker{Kind: BlockerBusy, Message: cluster + " is busy (" + strings.Join(all, ", ") + "); nothing was started. Run it again once that finishes"})
+		refuse = append(refuse, busyBlocker(cluster+" is busy ("+strings.Join(all, ", ")+")", nil))
 	}
 	return refuse, notices
 }

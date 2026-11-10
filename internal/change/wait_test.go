@@ -85,8 +85,12 @@ func TestWaitUpdate_TerminalStatuses(t *testing.T) {
 				if diff := cmp.Diff(want, ue.Issues); diff != "" || ue.Status != "Failed" || ue.Cancelled() {
 					t.Errorf("status %s, cancelled %v, issues (-want +got):\n%s", ue.Status, ue.Cancelled(), diff)
 				}
-				if !strings.Contains(err.Error(), "ended Failed: ConfigurationConflict: Conflicts found (kube-system/aws-node)") {
-					t.Errorf("message = %q", err)
+				const outcome = "ended Failed: ConfigurationConflict: Conflicts found (kube-system/aws-node)"
+				if got := ue.Outcome(); got != outcome {
+					t.Errorf("outcome = %q, want %q", got, outcome)
+				}
+				if want := "update " + ue.UpdateID + " of add-on vpc-cni " + outcome; err.Error() != want {
+					t.Errorf("message = %q, want %q", err, want)
 				}
 			},
 		},

@@ -150,7 +150,15 @@ type UpdateError struct {
 }
 
 func (e *UpdateError) Error() string {
-	msg := fmt.Sprintf("update %s of %s ended %s", e.UpdateID, e.Resource, e.Status)
+	return fmt.Sprintf("update %s of %s %s", e.UpdateID, e.Resource, e.Outcome())
+}
+
+// Outcome says how the update ended, with the errors that EKS reports,
+// such as "ended Failed: PodEvictionFailure: ...". It is the Error text
+// without the update and the resource, for a caller that names them in
+// its own words.
+func (e *UpdateError) Outcome() string {
+	msg := "ended " + e.Status
 	parts := make([]string, 0, len(e.Issues))
 	for _, issue := range e.Issues {
 		part := issue.Code
