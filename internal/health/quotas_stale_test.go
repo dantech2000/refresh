@@ -22,12 +22,12 @@ func staleUsage(quota, value float64, lag time.Duration) edit {
 	}
 }
 
-// TestQuotas_StaleMetric counts the instance list next to an AWS/Usage
-// metric whose newest data point is old, and takes the smaller of the two:
-// the metric lags, and never counts fewer vCPUs than the instances that
-// run. Right after a roll the metric said 6 of 8 vCPUs while 2 t4g.small
-// instances (4 vCPU) ran, and a scale-up by 2 t3.medium nodes (4 vCPU)
-// that fits was reported as one that does not.
+// TestQuotas_StaleMetric lets the instance list decide when the newest
+// data point of the AWS/Usage metric is old, in both directions. Right
+// after a roll the metric said 6 of 8 vCPUs while 2 t4g.small instances
+// (4 vCPU) ran, and a scale-up by 2 t3.medium nodes (4 vCPU) that fits was
+// reported as one that does not. A metric that lags behind nodes that
+// started counts too few, and a surge that does not fit passed.
 func TestQuotas_StaleMetric(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -48,8 +48,22 @@ func TestQuotas_StaleMetric(t *testing.T) {
 		{
 			name:   "a stale metric below the instance list",
 			edit:   staleUsage(8, 2, 6*time.Minute),
-			want:   want{outcome: health.Pass, message: "25% of the vCPU quota in use (2 of 8)"},
-			detail: "the vCPUs in use come from the AWS/Usage metric (2): its newest data point is 6m0s old, and the instance list counts at least 4",
+			want:   want{outcome: health.Pass, message: "50% of the vCPU quota in use (4 of 8)"},
+			detail: "the vCPUs in use come from the instance list (4), not from the AWS/Usage metric (2)",
+			lists:  true,
+		},
+		{
+			name:   "a stale metric that hides a surge over the quota",
+			edit:   staleUsage(6, 2, 6*time.Minute),
+			want:   want{outcome: health.Fail, message: "scaling ng-a up by 2 launches 2 t3.medium nodes (4 vCPU) and 4 of 6 vCPU are in use"},
+			detail: "the vCPUs in use come from the instance list (4), not from the AWS/Usage metric (2)",
+			lists:  true,
+		},
+		{
+			name:   "a stale metric, and the list passes the quota",
+			edit:   staleUsage(3, 2, 6*time.Minute),
+			want:   want{outcome: health.Fail},
+			detail: "the vCPUs in use come from the instance list (at least 4; the list stopped once the sum passed the quota), not from the AWS/Usage metric (2)",
 			lists:  true,
 		},
 		{
