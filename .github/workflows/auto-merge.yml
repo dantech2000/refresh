@@ -72,7 +72,7 @@ jobs:
           SELF: ${{ github.workflow }}
           ECOSYSTEM: ${{ steps.meta.outputs.package-ecosystem }}
         run: |
-          required=("Run go test" "Race stress (shuffled, x5)" "Run govulncheck" "Run deadcode" "Run golangci-lint")
+          required=("Run go test" "Race stress (shuffled, x5)" "Run govulncheck" "Run deadcode" "Binary size" "Run golangci-lint")
           if [ "$ECOSYSTEM" = "uv" ]; then
             required+=("Build site")
           fi
