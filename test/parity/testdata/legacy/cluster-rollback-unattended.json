@@ -1,7 +1,6 @@
 {
   "exitCode": 1,
   "stdout": "",
-  "stderr": "[X] Error: cluster rollback -o json does not prompt for confirmation; add --yes to proceed, or --dry-run to preview\n",
   "refusedBeforeMutation": true,
   "changes": [],
   "operations": null,

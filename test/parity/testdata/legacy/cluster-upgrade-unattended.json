@@ -1,7 +1,6 @@
 {
   "exitCode": 1,
   "stdout": "",
-  "stderr": "[X] Error: cluster upgrade -o json does not prompt before each phase; add --yes to execute, or --dry-run to print the plan only\n",
   "refusedBeforeMutation": true,
   "changes": [],
   "operations": null,

@@ -1,7 +1,5 @@
 {
   "exitCode": 0,
-  "stdout": "{\n  \"apiVersion\": \"refresh.drod.dev/v1\",\n  \"kind\": \"NodegroupUpdatePlan\",\n  \"cluster\": \"prod\",\n  \"dryRun\": true,\n  \"force\": false,\n  \"nodegroups\": [\n    {\n      \"name\": \"ng-a\",\n      \"action\": \"Update\",\n      \"currentAmi\": \"ami-old32x\",\n      \"latestAmi\": \"ami-latest132\",\n      \"reason\": \"AMI is outdated\"\n    }\n  ],\n  \"failures\": []\n}\n",
-  "stderr": "Warning: skipping Kubernetes checks: the resolved Kubernetes config does not point at EKS cluster prod (https://prod.eks.fake.invalid), and no other kubeconfig context does\n  To add a context for prod, run: aws eks update-kubeconfig --name prod --region us-east-1 (or pass --kube-context)\n  Workload/PDB checks will be skipped; node readiness falls back to an estimate.\n",
   "refusedBeforeMutation": false,
   "changes": [],
   "decision": [

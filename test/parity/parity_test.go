@@ -205,8 +205,8 @@ func TestMatrix(t *testing.T) {
 		}
 		byName[sc.Name] = sc
 		switch {
-		case len(sc.Legacy) == 0 || sc.Seed == nil:
-			t.Errorf("%s needs a seed and a legacy command line", sc.Name)
+		case len(sc.V2) == 0 || sc.Seed == nil:
+			t.Errorf("%s needs a seed and a command line", sc.Name)
 		case sc.Behaviour == "" && len(sc.Checks) == 0:
 			t.Errorf("%s has no behaviour and no checks: nothing says what it is for", sc.Name)
 		case sc.Behaviour != "" && !slices.Contains(behaviours, sc.Behaviour):

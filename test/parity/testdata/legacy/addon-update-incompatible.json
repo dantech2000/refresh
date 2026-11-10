@@ -1,7 +1,5 @@
 {
   "exitCode": 1,
-  "stdout": "",
-  "stderr": "[X] Error: addon vpc-cni version v1.20.0-eksbuild.1 is not compatible with Kubernetes 1.32; supported versions (newest first): v1.19.0-eksbuild.1, v1.18.0-eksbuild.1\n",
   "refusedBeforeMutation": true,
   "changes": [],
   "decision": [

@@ -1,7 +1,5 @@
 {
   "exitCode": 1,
-  "stdout": "",
-  "stderr": "[X] Error: interrupted while waiting for nodegroup prod/ng-a scaling update 00000000-0000-4000-8000-000000000001: context canceled (last poll error: operation error EKS: DescribeUpdate, https response error StatusCode: 0, RequestID: , canceled, context canceled)\n",
   "refusedBeforeMutation": false,
   "changes": [
     {

@@ -1,7 +1,5 @@
 {
   "exitCode": 1,
-  "stdout": "",
-  "stderr": "[X] Error: AWS API error while updating addon vpc-cni: Cannot update prod because it has update 00000000-0000-4000-8000-000000000001 in progress (ResourceInUseException)\n",
   "refusedBeforeMutation": false,
   "changes": [
     {

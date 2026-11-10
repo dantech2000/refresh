@@ -1,7 +1,5 @@
 {
   "exitCode": 0,
-  "stdout": "{\n  \"apiVersion\": \"refresh.drod.dev/v1\",\n  \"kind\": \"AddonUpdate\",\n  \"addonName\": \"vpc-cni\",\n  \"previousVersion\": \"v1.18.0-eksbuild.1\",\n  \"newVersion\": \"v1.19.0-eksbuild.1\",\n  \"updateId\": \"00000000-0000-4000-8000-000000000001\",\n  \"status\": \"Started\",\n  \"startedAt\": \"\u003cnow\u003e\",\n  \"failures\": []\n}\n",
-  "stderr": "",
   "refusedBeforeMutation": false,
   "changes": [
     {

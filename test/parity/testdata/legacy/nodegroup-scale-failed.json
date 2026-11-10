@@ -1,7 +1,5 @@
 {
   "exitCode": 1,
-  "stdout": "",
-  "stderr": "[X] Error: nodegroup prod/ng-a scaling update 00000000-0000-4000-8000-000000000001 Failed: NodeCreationFailure: instances failed to join the cluster [i-0abc]\n",
   "refusedBeforeMutation": false,
   "changes": [
     {

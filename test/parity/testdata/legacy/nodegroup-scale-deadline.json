@@ -1,7 +1,5 @@
 {
   "exitCode": 1,
-  "stdout": "",
-  "stderr": "[X] Error: timed out waiting for nodegroup prod/ng-a scaling update 00000000-0000-4000-8000-000000000001 (last status InProgress): context deadline exceeded\n",
   "refusedBeforeMutation": false,
   "changes": [
     {

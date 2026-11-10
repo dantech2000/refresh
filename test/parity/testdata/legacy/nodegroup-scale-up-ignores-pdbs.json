@@ -1,7 +1,5 @@
 {
   "exitCode": 0,
-  "stdout": "{\n  \"apiVersion\": \"refresh.drod.dev/v1\",\n  \"kind\": \"NodegroupScale\",\n  \"cluster\": \"prod\",\n  \"nodegroup\": \"ng-a\",\n  \"region\": \"us-east-1\",\n  \"outcome\": \"Requested\",\n  \"dryRun\": false,\n  \"before\": {\n    \"desired\": 2,\n    \"min\": 1,\n    \"max\": 3\n  },\n  \"after\": {\n    \"desired\": 3,\n    \"min\": 1,\n    \"max\": 3\n  },\n  \"waited\": false,\n  \"pdbGate\": {\n    \"result\": \"NotScaleDown\",\n    \"blockers\": [],\n    \"scoped\": false\n  },\n  \"failures\": []\n}\n",
-  "stderr": "",
   "refusedBeforeMutation": false,
   "changes": [
     {

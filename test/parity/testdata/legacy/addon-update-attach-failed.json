@@ -1,7 +1,5 @@
 {
   "exitCode": 1,
-  "stdout": "{\n  \"apiVersion\": \"refresh.drod.dev/v1\",\n  \"kind\": \"AddonUpdate\",\n  \"addonName\": \"vpc-cni\",\n  \"previousVersion\": \"v1.19.0-eksbuild.1\",\n  \"newVersion\": \"v1.19.0-eksbuild.1\",\n  \"status\": \"WaitFailed\",\n  \"failure\": {\n    \"kind\": \"Addon\",\n    \"name\": \"vpc-cni\",\n    \"cluster\": \"prod\",\n    \"region\": \"us-east-1\",\n    \"reason\": \"Unknown\",\n    \"retryable\": false,\n    \"error\": \"addon update failed: status UPDATE_FAILED\"\n  },\n  \"startedAt\": \"\u003cnow\u003e\",\n  \"failures\": [\n    {\n      \"kind\": \"Addon\",\n      \"name\": \"vpc-cni\",\n      \"cluster\": \"prod\",\n      \"region\": \"us-east-1\",\n      \"reason\": \"Unknown\",\n      \"retryable\": false,\n      \"error\": \"addon update failed: status UPDATE_FAILED\"\n    }\n  ]\n}\n",
-  "stderr": "warning: addon prod/vpc-cni (us-east-1): Unknown: addon update failed: status UPDATE_FAILED\nadd-on vpc-cni update  did not complete\n",
   "refusedBeforeMutation": true,
   "changes": [],
   "decision": [

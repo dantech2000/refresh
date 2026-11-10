@@ -1,7 +1,5 @@
 {
   "exitCode": 3,
-  "stdout": "{\n  \"apiVersion\": \"refresh.drod.dev/v1\",\n  \"kind\": \"NodegroupScale\",\n  \"cluster\": \"prod\",\n  \"nodegroup\": \"ng-a\",\n  \"region\": \"us-east-1\",\n  \"outcome\": \"Blocked\",\n  \"dryRun\": false,\n  \"before\": {\n    \"desired\": 2,\n    \"min\": 1,\n    \"max\": 3\n  },\n  \"after\": {\n    \"desired\": 1,\n    \"min\": 1,\n    \"max\": 3\n  },\n  \"waited\": false,\n  \"pdbGate\": {\n    \"result\": \"Refused\",\n    \"blockers\": [\n      \"default/web (2/2 pods healthy, 0 disruption(s) allowed; covered pods run on 2 of the nodegroup's nodes, so removing 1 node(s) can take down 1 pod(s), more than the 0 allowed)\"\n    ],\n    \"scoped\": true\n  },\n  \"failures\": []\n}\n",
-  "stderr": "refusing to scale prod/ng-a down from 2 to 1: 1 PodDisruptionBudget(s) could lose more pods on this nodegroup's nodes than they allow:\n  - default/web (2/2 pods healthy, 0 disruption(s) allowed; covered pods run on 2 of the nodegroup's nodes, so removing 1 node(s) can take down 1 pod(s), more than the 0 allowed)\nA scaling change does not wait for PDBs: EKS terminates the removed nodes and their pods go down with them.\nScale up the workload or relax the PDB first, or re-run with --force to scale down anyway.\n",
   "refusedBeforeMutation": true,
   "changes": [],
   "decision": [

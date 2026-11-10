@@ -33,11 +33,10 @@ type Scenario struct {
 	// update or to set a fault.
 	Seed    func(s *fleettest.State)
 	Prepare func(w *fleettest.World) error
-	// Legacy and V2 are the arguments of the legacy binary and of the v2
-	// binary for the same intent. An empty one means that binary has no
-	// such run yet.
-	Legacy []string
-	V2     []string
+	// V2 are the arguments of the binary. The recorded trace of the old
+	// CLI holds what it did for the same intent; its command lines went with
+	// its source.
+	V2 []string
 	// Stdin is what the binary reads when it has no Terminal.
 	Stdin string
 	// Terminal, when set, runs the binary on a pseudo-terminal and answers
@@ -74,12 +73,11 @@ type Scenario struct {
 	// notice the contract requires. The legacy trace is not held to either.
 	V2Require []Fact
 	V2Checks  []Check
-	// LegacyPreview and V2Preview are a command line to run first on the
-	// same world, such as the dry run of the change. AfterPreview then
-	// changes the world, and the trace is that of the main run alone.
-	LegacyPreview []string
-	V2Preview     []string
-	AfterPreview  func(w *fleettest.World) error
+	// V2Preview is a command line to run first on the same world, such as
+	// the dry run of the change. AfterPreview then changes the world, and
+	// the trace is that of the main run alone.
+	V2Preview    []string
+	AfterPreview func(w *fleettest.World) error
 	// Cluster is a cluster whose final state the trace records even when
 	// no request names it. Empty means "prod".
 	Cluster string

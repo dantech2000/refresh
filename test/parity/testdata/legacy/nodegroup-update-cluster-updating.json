@@ -1,7 +1,5 @@
 {
   "exitCode": 3,
-  "stdout": "{\n  \"apiVersion\": \"refresh.drod.dev/v1\",\n  \"kind\": \"NodegroupUpdate\",\n  \"cluster\": \"prod\",\n  \"nodegroups\": [],\n  \"changesInProgress\": [\n    \"cluster UPDATING\"\n  ],\n  \"failures\": []\n}\n",
-  "stderr": "prod is busy (cluster UPDATING); nothing was started. Run it again once that finishes\n",
   "refusedBeforeMutation": true,
   "changes": [],
   "decision": [

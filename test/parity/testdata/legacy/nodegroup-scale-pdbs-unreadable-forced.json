@@ -1,7 +1,5 @@
 {
   "exitCode": 4,
-  "stdout": "{\n  \"apiVersion\": \"refresh.drod.dev/v1\",\n  \"kind\": \"NodegroupScale\",\n  \"cluster\": \"prod\",\n  \"nodegroup\": \"ng-a\",\n  \"region\": \"us-east-1\",\n  \"outcome\": \"Requested\",\n  \"dryRun\": false,\n  \"before\": {\n    \"desired\": 2,\n    \"min\": 1,\n    \"max\": 3\n  },\n  \"after\": {\n    \"desired\": 1,\n    \"min\": 1,\n    \"max\": 3\n  },\n  \"waited\": false,\n  \"pdbGate\": {\n    \"result\": \"Unchecked\",\n    \"blockers\": [],\n    \"scoped\": false\n  },\n  \"failures\": [\n    {\n      \"kind\": \"Cluster\",\n      \"name\": \"prod\",\n      \"region\": \"us-east-1\",\n      \"reason\": \"Unknown\",\n      \"retryable\": false,\n      \"error\": \"listing PodDisruptionBudgets: listing PodDisruptionBudgets: PodDisruptionBudget is forbidden: User \\\"fake\\\" cannot list the resource at the cluster scope\"\n    }\n  ]\n}\n",
-  "stderr": "warning: cluster prod (us-east-1): Unknown: listing PodDisruptionBudgets: listing PodDisruptionBudgets: PodDisruptionBudget is forbidden: User \"fake\" cannot list the resource at the cluster scope\nincomplete data: 1 failure(s) (1 cluster)\n",
   "refusedBeforeMutation": false,
   "changes": [
     {

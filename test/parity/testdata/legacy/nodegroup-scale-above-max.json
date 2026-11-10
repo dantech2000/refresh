@@ -1,7 +1,5 @@
 {
   "exitCode": 1,
-  "stdout": "",
-  "stderr": "[X] Error: AWS API error while updating nodegroup scaling for prod/ng-a: Desired capacity 9 can't be greater than max size 3 (InvalidParameterException)\n",
   "refusedBeforeMutation": false,
   "changes": [
     {
