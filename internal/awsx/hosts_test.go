@@ -45,8 +45,8 @@ func TestMalformedRegionOnEveryEndpointFamily(t *testing.T) {
 			dns := &net.DNSError{Err: "no such host", Name: tt.host, IsNotFound: true}
 			err := sdkOpErr(&url.Error{Op: "Get", URL: "https://" + tt.host + "/clusters", Err: &net.OpError{Op: "dial", Net: "tcp", Err: dns}})
 
-			if got := IsRegionError(err); got != tt.want {
-				t.Errorf("IsRegionError() = %t, want %t", got, tt.want)
+			if got := isRegionError(err); got != tt.want {
+				t.Errorf("isRegionError() = %t, want %t", got, tt.want)
 			}
 			msg := FormatAWSError(err, "listing clusters").Error()
 			wantPrefix := "network connectivity issue while listing clusters"

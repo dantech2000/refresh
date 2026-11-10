@@ -33,7 +33,7 @@ func logAttempts(stack *middleware.Stack) error {
 				"duration", time.Since(start).Round(time.Millisecond),
 			}
 			if err != nil {
-				attrs = append(attrs, "class", string(Classify(err)), "retryable", IsRetryable(err), "error", err)
+				attrs = append(attrs, "class", string(Classify(err)), "retryable", isRetryable(err), "error", err)
 				logger.DebugContext(ctx, "AWS call attempt failed", attrs...)
 			} else {
 				logger.DebugContext(ctx, "AWS call", attrs...)

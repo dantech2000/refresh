@@ -58,7 +58,7 @@ type Context struct {
 // configuration. Load cannot tell that keys which resolve are revoked: the
 // first API call reports that.
 func Load(ctx context.Context, opts Options) (aws.Config, error) {
-	return load(ctx, opts, NewHTTPClient(opts.MaxConcurrency), nil)
+	return load(ctx, opts, defaultHTTPClient(opts.MaxConcurrency), nil)
 }
 
 // load is Load with the HTTP client given by the caller, and with the delay
@@ -150,7 +150,7 @@ func checkLoadedRegion(loaded, given string, opts Options) error {
 	return fmt.Errorf("invalid AWS region from AWS_REGION, AWS_DEFAULT_REGION, or the profile in ~/.aws/config: %w", err)
 }
 
-// NewHTTPClient returns the HTTP client that every region and service
+// defaultHTTPClient returns the HTTP client that every region and service
 // shares. maxConcurrency is the limit for parallel calls; the client keeps
 // that many idle connections for each endpoint, so a fan-out reuses its
 // connections in place of opening new ones.
@@ -164,7 +164,7 @@ func checkLoadedRegion(loaded, given string, opts Options) error {
 // does not answer a ping in 15. Both failures are transient, so the retry
 // policy of the call applies. Load adds a limit for a response body that
 // stops coming.
-func NewHTTPClient(maxConcurrency int) *awshttp.BuildableClient {
+func defaultHTTPClient(maxConcurrency int) *awshttp.BuildableClient {
 	return newHTTPClient(maxConcurrency, defaultStallLimits())
 }
 
@@ -297,8 +297,8 @@ func (o Options) profileNotFound(name string, err error) error {
 		from = "the active refresh context"
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "AWS profile %q not found\nCause: %s names it, and it is in neither %s nor %s", name, from, tildePath(ConfigFile()), tildePath(CredentialsFile()))
-	if ps := Profiles(); len(ps) > 0 {
+	fmt.Fprintf(&b, "AWS profile %q not found\nCause: %s names it, and it is in neither %s nor %s", name, from, tildePath(configFile()), tildePath(credentialsFile()))
+	if ps := profiles(); len(ps) > 0 {
 		b.WriteString("\n\nProfiles there:")
 		for _, p := range ps {
 			if p.SSO {
@@ -334,12 +334,12 @@ func (o Options) resolveCredentials(ctx context.Context, cfg aws.Config, login f
 		return nil
 	}
 	switch {
-	case IsNoCredentials(err):
-		return FormatNoCredentials(err, SSOProfiles())
-	case IsSSONotLoggedIn(err):
-		return FormatSSONotLoggedIn(err, login())
+	case isNoCredentials(err):
+		return formatNoCredentials(err, ssoProfiles())
+	case isSSONotLoggedIn(err):
+		return formatSSONotLoggedIn(err, login())
 	}
-	return NoteKeysShadowProfile(ctx, cfg, FormatAWSError(err, "loading AWS credentials"))
+	return noteKeysShadowProfile(ctx, cfg, FormatAWSError(err, "loading AWS credentials"))
 }
 
 // ssoLoginProfile returns the profile to log in with when the SSO login of
@@ -347,7 +347,7 @@ func (o Options) resolveCredentials(ctx context.Context, cfg aws.Config, login f
 // profile at the end of its source_profile chain.
 func (o Options) ssoLoginProfile(ctx context.Context) string {
 	profile, _, _ := o.EffectiveProfile()
-	if login := SSOLoginProfile(ctx, profile); login != "" {
+	if login := ssoLoginProfile(ctx, profile); login != "" {
 		return login
 	}
 	return profile
@@ -364,7 +364,7 @@ func addCredentialHints(profile func() string, keysShadow func() bool) func(*mid
 				out, metadata, err := next.HandleInitialize(ctx, in)
 				switch {
 				case err == nil:
-				case IsSSONotLoggedIn(err):
+				case isSSONotLoggedIn(err):
 					err = &ssoLoginError{profile: profile(), err: err}
 				case IsCredentialError(err) && keysShadow():
 					err = &keysShadowError{err: err}
@@ -386,11 +386,11 @@ func keysShadowProfile(ctx context.Context, provider aws.CredentialsProvider) bo
 	return err == nil && creds.Source == config.CredentialsSourceName
 }
 
-// NoteKeysShadowProfile adds a note to a credential error when the keys of
+// noteKeysShadowProfile adds a note to a credential error when the keys of
 // cfg came from the environment while AWS_PROFILE is set. The SDK uses the
 // keys first, as the AWS CLI does, so the profile that the user chose has no
 // effect. Any other error comes back as it is.
-func NoteKeysShadowProfile(ctx context.Context, cfg aws.Config, err error) error {
+func noteKeysShadowProfile(ctx context.Context, cfg aws.Config, err error) error {
 	if err == nil || !IsCredentialError(err) || !keysShadowProfile(ctx, cfg.Credentials) {
 		return err
 	}

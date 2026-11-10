@@ -108,11 +108,11 @@ func IsNotFound(err error) bool {
 	return notFoundErrorCodes[code] || strings.HasSuffix(code, ".NotFound")
 }
 
-// IsValidation reports whether err is an API error for a malformed request:
+// isValidation reports whether err is an API error for a malformed request:
 // InvalidParameter*, InvalidRequest*, ValidationException, and similar codes.
 // A not-found code is not a validation error, even when it starts with
 // "Invalid" (InvalidInstanceID.NotFound).
-func IsValidation(err error) bool {
+func isValidation(err error) bool {
 	code := ErrorCode(err)
 	if code == "" || IsNotFound(err) {
 		return false
@@ -122,9 +122,9 @@ func IsValidation(err error) bool {
 		strings.HasPrefix(code, "InvalidRequest")
 }
 
-// IsServerError reports whether err is a failure on the AWS side: a server
+// isServerError reports whether err is a failure on the AWS side: a server
 // error code, an API error with a server fault, or an HTTP 5xx response.
-func IsServerError(err error) bool {
+func isServerError(err error) bool {
 	if err == nil {
 		return false
 	}
@@ -135,8 +135,8 @@ func IsServerError(err error) bool {
 	return httpStatus(err) >= 500 && httpStatus(err) <= 599
 }
 
-// IsRegionDisabled reports whether err is an API error that says the region
+// isRegionDisabled reports whether err is an API error that says the region
 // is not enabled for the account (OptInRequired, RegionDisabledException).
-func IsRegionDisabled(err error) bool {
+func isRegionDisabled(err error) bool {
 	return regionDisabledErrorCodes[ErrorCode(err)]
 }

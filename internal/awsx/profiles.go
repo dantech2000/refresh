@@ -18,8 +18,8 @@ type Profile struct {
 	SSO bool
 }
 
-// ConfigFile is the AWS config file: AWS_CONFIG_FILE, else ~/.aws/config.
-func ConfigFile() string {
+// configFile is the AWS config file: AWS_CONFIG_FILE, else ~/.aws/config.
+func configFile() string {
 	if p := strings.TrimSpace(os.Getenv("AWS_CONFIG_FILE")); p != "" {
 		return p
 	}
@@ -29,9 +29,9 @@ func ConfigFile() string {
 	return ""
 }
 
-// CredentialsFile is the AWS credentials file: AWS_SHARED_CREDENTIALS_FILE,
+// credentialsFile is the AWS credentials file: AWS_SHARED_CREDENTIALS_FILE,
 // else ~/.aws/credentials.
-func CredentialsFile() string {
+func credentialsFile() string {
 	if p := strings.TrimSpace(os.Getenv("AWS_SHARED_CREDENTIALS_FILE")); p != "" {
 		return p
 	}
@@ -41,10 +41,10 @@ func CredentialsFile() string {
 	return ""
 }
 
-// Profiles lists the profiles in the AWS config and credentials files, in
+// profiles lists the profiles in the AWS config and credentials files, in
 // file order, each once. It reads names and the SSO keys only (never a
 // secret) and skips a file it cannot read.
-func Profiles() []Profile {
+func profiles() []Profile {
 	var out []Profile
 	add := func(p Profile) {
 		for i := range out {
@@ -58,7 +58,7 @@ func Profiles() []Profile {
 	for _, f := range []struct {
 		path   string
 		config bool
-	}{{ConfigFile(), true}, {CredentialsFile(), false}} {
+	}{{configFile(), true}, {credentialsFile(), false}} {
 		for _, p := range readProfiles(f.path, f.config) {
 			add(p)
 		}
@@ -66,18 +66,18 @@ func Profiles() []Profile {
 	return out
 }
 
-// SSOLoginProfile is the profile to log in with for profile ("" for the
+// ssoLoginProfile is the profile to log in with for profile ("" for the
 // default): the profile at the end of its source_profile chain, as the SDK
 // resolves it, when that profile signs in with IAM Identity Center (profile
 // itself when it has no source_profile). It returns "" when the SDK takes
 // the credentials from something else, or the files cannot be read.
-func SSOLoginProfile(ctx context.Context, profile string) string {
+func ssoLoginProfile(ctx context.Context, profile string) string {
 	if profile == "" {
 		profile = "default"
 	}
 	files := func(o *config.LoadSharedConfigOptions) {
-		o.ConfigFiles = []string{ConfigFile()}
-		o.CredentialsFiles = []string{CredentialsFile()}
+		o.ConfigFiles = []string{configFile()}
+		o.CredentialsFiles = []string{credentialsFile()}
 	}
 	sc, err := config.LoadSharedConfigProfile(ctx, profile, files)
 	if err != nil {
@@ -100,13 +100,13 @@ func SSOLoginProfile(ctx context.Context, profile string) string {
 	return ""
 }
 
-// SSOProfiles lists the profiles in the AWS config file (AWS_CONFIG_FILE,
+// ssoProfiles lists the profiles in the AWS config file (AWS_CONFIG_FILE,
 // else ~/.aws/config) that sign in with IAM Identity Center: those with an
 // sso_session or sso_start_url. It reads names only and returns nil when the
 // file cannot be read.
-func SSOProfiles() []string {
+func ssoProfiles() []string {
 	var out []string
-	for _, p := range readProfiles(ConfigFile(), true) {
+	for _, p := range readProfiles(configFile(), true) {
 		if p.SSO {
 			out = append(out, p.Name)
 		}

@@ -100,9 +100,9 @@ func TestClassification(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			got := want{
 				cred:    IsCredentialError(tc.err),
-				region:  IsRegionError(tc.err),
-				network: IsNetworkError(tc.err),
-				perm:    IsPermissionError(tc.err),
+				region:  isRegionError(tc.err),
+				network: isNetworkError(tc.err),
+				perm:    isPermissionError(tc.err),
 			}
 			if got != tc.want {
 				t.Errorf("classification = %+v, want %+v", got, tc.want)
@@ -306,7 +306,7 @@ func TestFormatAWSError_DialTimeoutIsANetworkFailure(t *testing.T) {
 func TestFormatAWSError_DNSFailureKeepsTheRegionPath(t *testing.T) {
 	dns := &url.Error{Op: "Post", URL: "https://eks.us-bogus-1.amazonaws.com", Err: &net.OpError{Op: "dial", Net: "tcp", Err: &net.DNSError{Err: "no such host", Name: "eks.us-bogus-1.amazonaws.com", IsNotFound: true}}}
 	got := FormatAWSError(dns, "listing clusters").Error()
-	if IsRegionError(dns) && strings.HasPrefix(got, "network connectivity issue") {
+	if isRegionError(dns) && strings.HasPrefix(got, "network connectivity issue") {
 		t.Errorf("an invalid region's DNS failure lost its region help:\n%s", got)
 	}
 	want := "Cause: not a region where EKS answers: eks.us-bogus-1.amazonaws.com does not resolve; check the region name"
@@ -321,7 +321,7 @@ func TestFormatAWSErrorNoCredentials(t *testing.T) {
 	for _, cause := range []error{context.DeadlineExceeded, &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connect: host is down")}} {
 		err := fmt.Errorf("failed to refresh cached credentials, no EC2 IMDS role found, %w",
 			&smithy.OperationError{ServiceID: "ec2imds", OperationName: "GetMetadata", Err: cause})
-		if !IsNoCredentials(err) {
+		if !isNoCredentials(err) {
 			t.Fatalf("%v: not classified as no credentials", cause)
 		}
 		msg := FormatAWSError(err, "loading AWS credentials").Error()
@@ -336,14 +336,14 @@ func TestFormatAWSErrorNoCredentials(t *testing.T) {
 	// Ec2InstanceMetadata) is the same.
 	nested := &smithy.OperationError{ServiceID: "STS", OperationName: "AssumeRole",
 		Err: fmt.Errorf("failed to retrieve credentials: %w", &smithy.OperationError{ServiceID: "ec2imds", OperationName: "GetMetadata", Err: context.DeadlineExceeded})}
-	if !IsNoCredentials(nested) || strings.Contains(FormatAWSError(nested, "x").Error(), "--timeout") {
+	if !isNoCredentials(nested) || strings.Contains(FormatAWSError(nested, "x").Error(), "--timeout") {
 		t.Fatal("a nested IMDS failure is not classified as no credentials")
 	}
 	other := &smithy.OperationError{ServiceID: "STS", OperationName: "GetCallerIdentity", Err: context.DeadlineExceeded}
-	if IsNoCredentials(other) {
+	if isNoCredentials(other) {
 		t.Fatal("an STS timeout classified as no credentials")
 	}
-	msg := FormatNoCredentials(errors.New("x"), []string{"prod-admin", "dev"}).Error()
+	msg := formatNoCredentials(errors.New("x"), []string{"prod-admin", "dev"}).Error()
 	if !strings.Contains(msg, "SSO profiles in your AWS config:\n  prod-admin\n  dev") {
 		t.Fatalf("profiles not listed: %q", msg)
 	}
@@ -385,19 +385,19 @@ func TestFormatAWSErrorSSOCases(t *testing.T) {
 	legacy := fmt.Errorf("failed to refresh cached credentials, %w", &ssocreds.InvalidTokenError{Err: errors.New("expired")})
 	expired := errors.New("failed to refresh cached credentials, refresh cached SSO token failed, cached SSO token is expired, or not present, and cannot be refreshed")
 	for name, err := range map[string]error{"missing": missing, "legacy": legacy, "expired": expired} {
-		if !IsSSONotLoggedIn(err) {
+		if !isSSONotLoggedIn(err) {
 			t.Errorf("%s: not classified as not logged in", name)
 		}
-		msg := FormatSSONotLoggedIn(err, "work").Error()
+		msg := formatSSONotLoggedIn(err, "work").Error()
 		if !strings.Contains(msg, "aws sso login --profile work") {
 			t.Errorf("%s: %q", name, msg)
 		}
 	}
-	if !strings.Contains(FormatSSONotLoggedIn(missing, "").Error(), "no SSO login is saved") {
+	if !strings.Contains(formatSSONotLoggedIn(missing, "").Error(), "no SSO login is saved") {
 		t.Error("a missing login reads as expired")
 	}
 	other := &fs.PathError{Op: "open", Path: "/etc/x", Err: fs.ErrNotExist}
-	if IsSSONotLoggedIn(other) {
+	if isSSONotLoggedIn(other) {
 		t.Error("an unrelated missing file reads as an SSO login")
 	}
 
@@ -415,7 +415,7 @@ func TestFormatAWSErrorNestedLoginCases(t *testing.T) {
 	grant := fmt.Errorf("refresh cached SSO token failed, unable to refresh SSO token, %w", &smithy.OperationError{
 		ServiceID: "SSO OIDC", OperationName: "CreateToken", Err: &smithy.GenericAPIError{Code: "InvalidGrantException", Message: "Invalid grant provided"}})
 	formatted := FormatAWSError(grant, "loading AWS credentials")
-	if !IsSSONotLoggedIn(formatted) || !strings.Contains(formatted.Error(), "aws sso login --profile") {
+	if !isSSONotLoggedIn(formatted) || !strings.Contains(formatted.Error(), "aws sso login --profile") {
 		t.Errorf("expired session: %q", formatted)
 	}
 	revoked := &smithy.OperationError{ServiceID: "SSO", OperationName: "GetRoleCredentials", Err: &smithy.GenericAPIError{Code: "UnauthorizedException", Message: "Session token not found or invalid"}}
@@ -451,14 +451,14 @@ func TestSSORefreshFailuresAreNotExpiredLogins(t *testing.T) {
 		"timeout":        refresh(context.DeadlineExceeded),
 		"server error":   refresh(&smithy.GenericAPIError{Code: "InternalServerException", Message: "boom"}),
 	} {
-		if IsSSONotLoggedIn(err) {
+		if isSSONotLoggedIn(err) {
 			t.Errorf("%s: classified as an expired login", name)
 		}
 	}
 	if msg := FormatAWSError(refresh(dns), "x").Error(); !strings.Contains(msg, "sso_region") {
 		t.Errorf("bad sso_region: %q", msg)
 	}
-	if !IsSSONotLoggedIn(refresh(&smithy.GenericAPIError{Code: "InvalidGrantException", Message: "Invalid grant provided"})) {
+	if !isSSONotLoggedIn(refresh(&smithy.GenericAPIError{Code: "InvalidGrantException", Message: "Invalid grant provided"})) {
 		t.Error("a rejected refresh is not an expired login")
 	}
 }

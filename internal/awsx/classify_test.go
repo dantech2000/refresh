@@ -75,9 +75,9 @@ func TestTypedClassifiers(t *testing.T) {
 				got := want{
 					throttle:       IsThrottling(err),
 					notFound:       IsNotFound(err),
-					validation:     IsValidation(err),
-					server:         IsServerError(err),
-					regionDisabled: IsRegionDisabled(err),
+					validation:     isValidation(err),
+					server:         isServerError(err),
+					regionDisabled: isRegionDisabled(err),
 				}
 				if got != tc.want {
 					t.Errorf("%v: classification = %+v, want %+v", err, got, tc.want)

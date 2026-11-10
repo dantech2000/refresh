@@ -70,10 +70,10 @@ func newRetryer(policy Policy, backoff retry.BackoffDelayer) aws.Retryer {
 	// A failure to get credentials is not retried here, although it can be
 	// transient: the credential client has made its own attempts. A wait
 	// loop stops on it too (IsIdentityFailure).
-	retryable := func(err error) bool { return !IsIdentityFailure(err) && IsRetryable(err) }
+	retryable := func(err error) bool { return !IsIdentityFailure(err) && isRetryable(err) }
 	if policy == Sweep {
 		retryable = func(err error) bool {
-			return !IsIdentityFailure(err) && !IsDialFailure(err) && IsRetryable(err)
+			return !IsIdentityFailure(err) && !IsDialFailure(err) && isRetryable(err)
 		}
 	}
 	if backoff == nil {
@@ -118,11 +118,11 @@ func backoffCeiling(attempt int) time.Duration {
 	return min(ceiling, maxBackoff)
 }
 
-// IsRetryable reports whether err is a transient condition that is worth
+// isRetryable reports whether err is a transient condition that is worth
 // another attempt, or another poll: throttling, a failure on the AWS side,
 // or a network failure. A permanent error such as an access denial or a
 // validation failure is not, and neither is a cancelled or expired context.
-func IsRetryable(err error) bool {
+func isRetryable(err error) bool {
 	if err == nil {
 		return false
 	}
@@ -223,5 +223,5 @@ func nameNotFound(err error) bool {
 // API error are not permanent: a long wait keeps polling through them.
 func IsPermanentAPIError(err error) bool {
 	var ae smithy.APIError
-	return errors.As(err, &ae) && !IsRetryable(err)
+	return errors.As(err, &ae) && !isRetryable(err)
 }
