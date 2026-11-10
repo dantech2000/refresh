@@ -1,0 +1,10 @@
+FLEET  3
+
+CLUSTER           REGION     VERSION  SUPPORT          COMPUTE      STALE AMI       ADDONS  HEALTH
+[!] degraded-ng   us-east-1  1.34     standard (243d)  1 nodegroup  1 not compared  0       1 issue
+[!] failed-addon  us-east-1  1.34     standard (243d)  1 nodegroup  1 not compared  0       1 issue
+[OK] ok           us-east-1  1.34     standard (243d)  1 nodegroup  1 not compared  0       ok
+
+[OK] 1 current   [!] 2 need attention
+
+[!] degraded-ng has 1 health issue: refresh cluster upgrade-check degraded-ng -r us-east-1

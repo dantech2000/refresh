@@ -80,6 +80,48 @@ func TestFindings(t *testing.T) {
 			want: func(f *Findings) { f.HealthIssues = 2 }, standing: StandingNeedsAttention,
 		},
 		{
+			name: "an add-on whose update failed, with no issue, counts as one",
+			edit: func(s *Snapshot) { s.Addons[0].Status = "UPDATE_FAILED" },
+			want: func(f *Findings) { f.HealthIssues = 1 }, standing: StandingNeedsAttention,
+		},
+		{
+			name: "a failed control plane with no issue counts as one",
+			edit: func(s *Snapshot) { s.Cluster.Status = "FAILED" },
+			want: func(f *Findings) { f.HealthIssues = 1 }, standing: StandingNeedsAttention,
+		},
+		{
+			name: "a failed control plane with issues counts its issues once",
+			edit: func(s *Snapshot) { s.Cluster.Status, s.Cluster.HealthIssues = "FAILED", []Issue{issue, issue} },
+			want: func(f *Findings) { f.HealthIssues = 2 }, standing: StandingNeedsAttention,
+		},
+		{
+			name: "a DEGRADED nodegroup with no issue counts as one",
+			edit: func(s *Snapshot) { s.Nodegroups[0].Status = "DEGRADED" },
+			want: func(f *Findings) { f.HealthIssues = 1 }, standing: StandingNeedsAttention,
+		},
+		{
+			name: "a DEGRADED nodegroup with issues counts its issues once",
+			edit: func(s *Snapshot) {
+				s.Nodegroups[0].Status, s.Nodegroups[0].HealthIssues = "DEGRADED", []Issue{issue, issue}
+			},
+			want: func(f *Findings) { f.HealthIssues = 2 }, standing: StandingNeedsAttention,
+		},
+		{
+			name: "a nodegroup that failed to be created counts as one",
+			edit: func(s *Snapshot) { s.Nodegroups[0].Status = "CREATE_FAILED" },
+			want: func(f *Findings) { f.HealthIssues = 1 }, standing: StandingNeedsAttention,
+		},
+		{
+			name: "a nodegroup that failed to be deleted counts as one",
+			edit: func(s *Snapshot) { s.Nodegroups[0].Status = "DELETE_FAILED" },
+			want: func(f *Findings) { f.HealthIssues = 1 }, standing: StandingNeedsAttention,
+		},
+		{
+			name: "an updating nodegroup has no issue",
+			edit: func(s *Snapshot) { s.Nodegroups[0].Status = "UPDATING" },
+			want: func(*Findings) {}, standing: StandingCurrent,
+		},
+		{
 			name: "stale AMIs, with the oldest creation time",
 			edit: func(s *Snapshot) {
 				second := s.Nodegroups[0]

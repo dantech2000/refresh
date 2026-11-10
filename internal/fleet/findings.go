@@ -64,8 +64,9 @@ type Findings struct {
 	// because a read failed.
 	UnreadAddons int
 	// HealthIssues counts the health issues that EKS reports for the
-	// control plane, the nodegroups, and the add-ons that were read. An
-	// add-on that is DEGRADED with no issue listed counts as one.
+	// control plane, the nodegroups, and the add-ons that were read. A
+	// resource in a failed status with no issue listed counts as one: see
+	// issuesOf.
 	HealthIssues int
 	// Incomplete reports that a read of the cluster failed.
 	Incomplete bool
@@ -79,7 +80,7 @@ func (s *Snapshot) Findings() Findings {
 		f.Support = s.Cluster.Support.Tier
 	}
 	if s.Have.Cluster == Collected {
-		f.HealthIssues = len(s.Cluster.HealthIssues)
+		f.HealthIssues = issuesOf(len(s.Cluster.HealthIssues), s.Cluster.Status == "FAILED")
 	}
 	if s.Have.Nodegroups.Listed() {
 		for _, n := range s.Nodegroups {
@@ -100,7 +101,8 @@ func (f *Findings) nodegroup(s *Snapshot, n Nodegroup) {
 		f.UnreadAMIs++
 		return
 	}
-	f.HealthIssues += len(n.HealthIssues)
+	broken := n.Status == "DEGRADED" || n.Status == "CREATE_FAILED" || n.Status == "DELETE_FAILED"
+	f.HealthIssues += issuesOf(len(n.HealthIssues), broken)
 	if behind, known := s.VersionBehind(n); known && behind {
 		f.BehindNodegroups++
 	}
@@ -130,12 +132,7 @@ func (f *Findings) addon(a Addon) {
 		f.UnreadAddons++
 		return
 	}
-	switch {
-	case len(a.Issues) > 0:
-		f.HealthIssues += len(a.Issues)
-	case a.Status == "DEGRADED":
-		f.HealthIssues++
-	}
+	f.HealthIssues += issuesOf(len(a.Issues), a.Health() == apidoc.AddonFailed)
 	if a.LatestState != Collected {
 		if failed(a.LatestState) {
 			f.UnreadAddons++
@@ -145,6 +142,20 @@ func (f *Findings) addon(a Addon) {
 	if behind, known := a.Behind(); known && behind {
 		f.BehindAddons = append(f.BehindAddons, a.Name)
 	}
+}
+
+// issuesOf counts the health issues of one resource: the issues that EKS
+// lists, or one when it lists none and the resource is in a failed status.
+// A failed status is an issue whether EKS explains it or not, and a
+// resource with issues and a failed status counts its issues once. The
+// failed statuses are FAILED of a cluster; DEGRADED, CREATE_FAILED, and
+// DELETE_FAILED of a nodegroup; and of an add-on those that make its
+// health Failed.
+func issuesOf(listed int, failed bool) int {
+	if listed == 0 && failed {
+		return 1
+	}
+	return listed
 }
 
 // Stale counts what there is to bring up to date: the stale AMIs, the

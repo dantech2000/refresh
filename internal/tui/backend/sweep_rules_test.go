@@ -59,8 +59,8 @@ func TestFirstSweepOfABigFleetSummarizes(t *testing.T) {
 	behind := cluster("behind", east, "1.34")
 	behind.Nodegroups[0].Version = "1.33"
 	broken := cluster("broken", east, "1.34")
+	// DEGRADED with no issue listed: the status is the health issue.
 	broken.Nodegroups[0].Status = fleettest.StatusDegraded
-	broken.Nodegroups[0].HealthIssues = []fleettest.Issue{{Code: "AsgInstanceLaunchFailures", Message: "no capacity"}}
 	st := firstSweep(t, append(clusters, behind, broken)...)
 
 	if got, want := statusOf(t, st, "behind"), view.Warn; got != want {
@@ -73,8 +73,7 @@ func TestFirstSweepOfABigFleetSummarizes(t *testing.T) {
 	if !strings.Contains(feed, "14 clusters: 2 need attention, 0 changing") {
 		t.Errorf("feed lacks the summary:\n%s", feed)
 	}
-	if lines := clusterLines(st, view.Warn); len(lines) != 1 || !strings.HasPrefix(lines[0], "broken ") ||
-		!strings.Contains(lines[0], "1 health issue") || !strings.Contains(lines[0], "nodegroup ng DEGRADED") {
+	if lines := clusterLines(st, view.Warn); len(lines) != 1 || lines[0] != "broken 1 health issue" {
 		t.Errorf("the warning lines about clusters = %q, want one, for broken, that says why", lines)
 	}
 	if lines := clusterLines(st, view.Fail); len(lines) != 0 {
