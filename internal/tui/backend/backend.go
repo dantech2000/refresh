@@ -14,7 +14,6 @@ import (
 
 	"github.com/dantech2000/refresh/internal/awsx"
 	"github.com/dantech2000/refresh/internal/change"
-	"github.com/dantech2000/refresh/internal/cmdutil"
 	"github.com/dantech2000/refresh/internal/fleet"
 	"github.com/dantech2000/refresh/internal/tui/state"
 	"github.com/dantech2000/refresh/internal/view"
@@ -255,9 +254,12 @@ func (b *Live) withTimeout() (context.Context, context.CancelFunc) {
 	return b.withTimeoutOf(b.ctx)
 }
 
-// withTimeoutOf bounds a read under ctx by ReadTimeout.
+// withTimeoutOf bounds a read under ctx by ReadTimeout. Zero is no limit.
 func (b *Live) withTimeoutOf(ctx context.Context) (context.Context, context.CancelFunc) {
-	return cmdutil.WithTimeout(ctx, b.opts.ReadTimeout)
+	if b.opts.ReadTimeout <= 0 {
+		return context.WithCancel(ctx)
+	}
+	return context.WithTimeout(ctx, b.opts.ReadTimeout)
 }
 
 // bumpLocked is bump for a caller that holds b.mu.
