@@ -218,9 +218,12 @@ func cleanStep(res StepResult) bool {
 }
 
 // phaseRead reads the whole cluster for a phase or a step of an engine.
+// Its snapshot goes to rederive, the busy rule, and the gate of the
+// control plane, and none of them counts instances, so it reads no
+// instance IDs.
 func (r *runner) phaseRead(cp *ClusterPlan) (*fleet.Snapshot, error) {
 	fetch := r.d.fetcher()
-	return fetch.Fresh().Fetch(r.readCtx, r.d.AWS.Clients(cp.Region), cp.Cluster, engineNeed(false))
+	return fetch.Fresh().Fetch(r.readCtx, r.d.AWS.Clients(cp.Region), cp.Cluster, engineNeed(false, false))
 }
 
 // phaseBusy applies the busy rule to the read of a phase, with the steps

@@ -79,3 +79,31 @@ func TestUpgrade_CatalogueReads(t *testing.T) {
 		})
 	}
 }
+
+// Only a read whose snapshot goes to the health checks of a nodegroup
+// reads the instances of the nodegroups: the plan, twice in a real run,
+// and the read before each roll that runs the checks. The reads of a
+// phase, of a control-plane or add-on step, and the second read before a
+// roll, after its checks, do not.
+func TestEngine_InstanceReads(t *testing.T) {
+	tests := []struct {
+		name  string
+		world *fleettest.World
+		req   Request
+		want  int
+	}{
+		{name: "upgrade", world: engineWorld(nil), req: upgradeTo("1.33"), want: 4},
+		{name: "rollback", world: upgradedWorld(nil), req: rollbackOf(), want: 3},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newEnv(t, tt.world)
+			if res := mustRun(t, e, tt.req, Hooks{}); res.Status != Succeeded {
+				t.Fatalf("status = %s, err %v; want Succeeded", res.Status, res.Err)
+			}
+			if got := e.count(fleettest.AutoScalingDescribeAutoScalingGroups); got != tt.want {
+				t.Errorf("%d DescribeAutoScalingGroups requests, want %d", got, tt.want)
+			}
+		})
+	}
+}

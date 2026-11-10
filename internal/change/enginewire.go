@@ -23,11 +23,12 @@ import (
 const categoryRollbackReadiness = string(ekstypes.CategoryRollbackReadiness)
 
 // engineNeed is what the plan and each phase of an upgrade or a rollback
-// read of the cluster: the nodegroups with their instances, for the
-// health gate, and the add-ons. A rollback plan also reads the update
-// history.
-func engineNeed(history bool) fleet.Need {
-	return fleet.Need{Nodegroups: true, Addons: true, InstanceIDs: true, Updates: history}
+// read of the cluster: the nodegroups and the add-ons. A rollback also
+// reads the update history. instances reads the instance IDs of the
+// nodegroups too, for a read whose snapshot goes to the health checks of
+// a nodegroup: the Capacity and Quotas checks count the instances.
+func engineNeed(history, instances bool) fleet.Need {
+	return fleet.Need{Nodegroups: true, Addons: true, InstanceIDs: instances, Updates: history}
 }
 
 // planUpgrade builds the plan of a cluster upgrade. It reads the cluster
@@ -54,7 +55,7 @@ func planUpgrade(ctx context.Context, d Deps, req UpgradeRequest, refresh *insig
 	cat := newCatalogue(d.Fetch, clients)
 	var p *Plan
 	for again := false; ; again = true {
-		snap, err := d.Fetch.Fetch(ctx, clients, req.Cluster, engineNeed(false))
+		snap, err := d.Fetch.Fetch(ctx, clients, req.Cluster, engineNeed(false, true))
 		if err != nil {
 			return nil, &ClusterReadError{Target: Target{Region: clients.Region, Cluster: req.Cluster}, Err: err}
 		}
@@ -269,7 +270,7 @@ func planRollback(ctx context.Context, d Deps, req RollbackRequest) (*Plan, erro
 		return nil, err
 	}
 	clients := d.AWS.Clients(req.Region)
-	snap, err := d.Fetch.Fetch(ctx, clients, req.Cluster, engineNeed(true))
+	snap, err := d.Fetch.Fetch(ctx, clients, req.Cluster, engineNeed(true, true))
 	if err != nil {
 		return nil, &ClusterReadError{Target: Target{Region: clients.Region, Cluster: req.Cluster}, Err: err}
 	}
