@@ -9,7 +9,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/dantech2000/refresh/internal/apidoc"
 	"github.com/dantech2000/refresh/internal/fleet"
 	"github.com/dantech2000/refresh/internal/tui/state"
 	"github.com/dantech2000/refresh/internal/view"
@@ -158,8 +157,9 @@ func (b *Live) refetchCluster(key state.Key) {
 }
 
 // sayFirstSweep writes one summary of the fleet, then one line per
-// cluster that has failed. A line per warning would flood the feed of a
-// large fleet.
+// cluster with an alarm: out of standard support, or a health issue,
+// which a resource in a failed status is. A line for each cluster that
+// is only stale would flood the feed of a large fleet.
 func (b *Live) sayFirstSweep() {
 	attention, changing, incomplete := 0, 0, 0
 	for _, c := range b.clusters {
@@ -181,38 +181,28 @@ func (b *Live) sayFirstSweep() {
 	}
 	b.say(state.Key{}, view.Neutral, text)
 	for _, c := range b.clusters {
-		if c.Status == view.Fail {
-			b.say(c.Key, view.Fail, failText(c))
+		if text := alarmText(c); text != "" {
+			status := view.Warn
+			if c.Status == view.Fail {
+				status = view.Fail
+			}
+			b.say(c.Key, status, text)
 		}
 	}
 }
 
-// failText says why a row has failed.
-func failText(c state.Cluster) string {
+// alarmText says what alarms in a row, from its findings, or "" when
+// nothing does.
+func alarmText(c state.Cluster) string {
 	var parts []string
-	if c.Support == apidoc.SupportExtended || c.Support == apidoc.SupportUnsupported {
-		parts = append(parts, strings.ToLower(string(c.Support))+" support")
+	if c.Findings.OutOfStandardSupport() {
+		parts = append(parts, strings.ToLower(string(c.Findings.Support))+" support")
 	}
-	if c.Snapshot != nil {
-		switch n := c.Snapshot.HealthIssues(); {
-		case n == 1:
-			parts = append(parts, "1 health issue")
-		case n > 1:
-			parts = append(parts, strconv.Itoa(n)+" health issues")
-		}
-		for _, n := range c.Snapshot.Nodegroups {
-			if view.StatusOf(n.Status) == view.Fail {
-				parts = append(parts, "nodegroup "+n.Name+" "+n.Status)
-			}
-		}
-		for _, a := range c.Snapshot.Addons {
-			if view.StatusOf(a.Status) == view.Fail {
-				parts = append(parts, "add-on "+a.Name+" "+a.Status)
-			}
-		}
-	}
-	if len(parts) == 0 {
-		return "needs attention"
+	switch n := c.Findings.HealthIssues; {
+	case n == 1:
+		parts = append(parts, "1 health issue")
+	case n > 1:
+		parts = append(parts, strconv.Itoa(n)+" health issues")
 	}
 	return strings.Join(parts, ", ")
 }

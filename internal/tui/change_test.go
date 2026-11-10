@@ -202,16 +202,16 @@ func TestChangeScreensFillTheTerminalExactly(t *testing.T) {
 			checkFrame(t, name("change tick"), h.m)
 			// The dry-run dialogs: a picker and a proposal, scrolled.
 			h.keys("1")
-			h.b.proposal = proposalOf(1, state.Action{Kind: state.ActionUpgrade, Cluster: h.m.cluster().Key, To: v("1.34")}, upgradePlan())
+			h.b.proposal = proposalOf(1, state.Action{Kind: change.ClusterUpgrade, Cluster: h.m.cluster().Key, To: v("1.34")}, upgradePlan())
 			for _, k := range []string{"U", "down", "G", "enter", "down", "pgdown", "G", "esc"} {
 				h.keys(k)
 				checkFrame(t, name("dialog after "+k), h.m)
 			}
-			h.b.proposal = proposalOf(2, state.Action{Kind: state.ActionRoll, Cluster: h.m.cluster().Key, Nodegroup: "web"}, rollPlan())
+			h.b.proposal = proposalOf(2, state.Action{Kind: change.NodegroupUpdate, Cluster: h.m.cluster().Key, Nodegroup: "web"}, rollPlan())
 			st.Clusters[0].Change = 0
 			st.Clusters[0] = stale(st.Clusters[0])
 			st.Clusters[0].Snapshot.Nodegroups[1].AMI.Current = "ami-0"
-			st.Clusters[0].Stale.AMIs = 2
+			st.Clusters[0].Findings = st.Clusters[0].Snapshot.Findings()
 			h.state(st)
 			for _, k := range []string{"p", "down", "enter", "y"} {
 				h.keys(k)
@@ -230,9 +230,9 @@ func TestChangeScreensFillTheTerminalExactly(t *testing.T) {
 func TestStartIsSentOncePerConfirmation(t *testing.T) {
 	h := newHarness(t, 160, 42, colorTheme)
 	h.state(writable(fleetState(3)))
-	h.b.proposal = proposalOf(5, state.Action{Kind: state.ActionAddons, Cluster: h.m.cluster().Key}, finishedChange(0).Plan)
+	h.b.proposal = proposalOf(5, state.Action{Kind: change.AddonUpdate, Cluster: h.m.cluster().Key}, finishedChange(0).Plan)
 	h.keys("a")
-	if len(h.b.plans) != 1 || h.b.plans[0].Kind != state.ActionAddons || h.m.confirm == nil {
+	if len(h.b.plans) != 1 || h.b.plans[0].Kind != change.AddonUpdate || h.m.confirm == nil {
 		t.Fatalf("plans %v, dialog %v", h.b.plans, h.m.confirm != nil)
 	}
 	h.contains("Add-on update c-000", "dry run · nothing changed yet", "coredns", "refresh --profile prod-admin", "start the change")
@@ -277,7 +277,7 @@ func TestRefusedStartStaysInTheDialog(t *testing.T) {
 	st := fleetState(3)
 	st.ReadOnly = true
 	h.state(st)
-	h.b.proposal = proposalOf(1, state.Action{Kind: state.ActionAddons, Cluster: h.m.cluster().Key}, finishedChange(0).Plan)
+	h.b.proposal = proposalOf(1, state.Action{Kind: change.AddonUpdate, Cluster: h.m.cluster().Key}, finishedChange(0).Plan)
 	h.b.startErr = errors.New("the UI is read-only; start it with --allow-changes")
 	h.keys("a")
 	h.contains("read-only: run the command above")
@@ -301,7 +301,7 @@ func TestBlockedProposalCannotStart(t *testing.T) {
 	h.state(writable(fleetState(3)))
 	p := upgradePlan()
 	p.Clusters[0].Blockers = []change.Blocker{{Kind: apidoc.BlockerBusy, Message: "nodegroup web is UPDATING"}}
-	prop := proposalOf(1, state.Action{Kind: state.ActionUpgrade, Cluster: h.m.cluster().Key, To: v("1.34")}, p)
+	prop := proposalOf(1, state.Action{Kind: change.ClusterUpgrade, Cluster: h.m.cluster().Key, To: v("1.34")}, p)
 	prop.Blocked = true
 	h.b.proposal = prop
 	h.keys("U", "enter")
@@ -342,7 +342,7 @@ func TestActionKeysNeedAFreeCluster(t *testing.T) {
 	st.Clusters[0].Rollback = &fleet.Rollback{PreviousVersion: v("1.32"), UpgradedAt: now.Add(-time.Hour), AvailableUntil: now.Add(71 * time.Hour)}
 	h.state(st)
 	h.keys("g", "B")
-	if len(h.b.plans) != 1 || h.b.plans[0].Kind != state.ActionRollback {
+	if len(h.b.plans) != 1 || h.b.plans[0].Kind != change.ClusterRollback {
 		t.Fatalf("plans = %v", h.b.plans)
 	}
 }
@@ -353,12 +353,12 @@ func TestPatchPicksTheNodegroup(t *testing.T) {
 	st := fleetState(3)
 	h.state(st)
 	h.keys("down", "p") // c-001 is stale: api on an old AMI
-	if len(h.b.plans) != 1 || h.b.plans[0].Nodegroup != "api" || h.b.plans[0].Kind != state.ActionRoll {
+	if len(h.b.plans) != 1 || h.b.plans[0].Nodegroup != "api" || h.b.plans[0].Kind != change.NodegroupUpdate {
 		t.Fatalf("plans = %v", h.b.plans)
 	}
 	h.keys("esc")
 	st.Clusters[1].Snapshot.Nodegroups[1].Version = v("1.32")
-	st.Clusters[1].Stale.Behind = 1
+	st.Clusters[1].Findings = st.Clusters[1].Snapshot.Findings()
 	h.state(st)
 	h.keys("p")
 	if h.m.pick == nil {
@@ -366,7 +366,7 @@ func TestPatchPicksTheNodegroup(t *testing.T) {
 	}
 	h.contains("Roll which nodegroup?", "api", "web", "1.32 → 1.33")
 	h.keys("down", "enter")
-	if len(h.b.plans) != 2 || h.b.plans[1].Nodegroup != "web" || h.b.plans[1].Kind != state.ActionUpgrade || h.b.plans[1].To != v("1.33") {
+	if len(h.b.plans) != 2 || h.b.plans[1].Nodegroup != "web" || h.b.plans[1].Kind != change.ClusterUpgrade || h.b.plans[1].To != v("1.33") {
 		t.Fatalf("plans = %v", h.b.plans)
 	}
 	if h.m.pick != nil {
@@ -377,7 +377,7 @@ func TestPatchPicksTheNodegroup(t *testing.T) {
 	h.contains("Control plane only", "Control plane and add-ons", "Everything", "Catch up the nodegroups", "Catch up the add-ons")
 	h.keys("G", "enter")
 	last := h.b.plans[len(h.b.plans)-1]
-	if last.Kind != state.ActionUpgrade || last.To != v("1.33") || len(last.Only) != 1 || last.Only[0] != change.PartAddons {
+	if last.Kind != change.ClusterUpgrade || last.To != v("1.33") || len(last.Only) != 1 || last.Only[0] != change.PartAddons {
 		t.Fatalf("catch-up action = %+v", last)
 	}
 }
@@ -444,7 +444,7 @@ func TestChangeKeysFollowTheControls(t *testing.T) {
 func TestTheStartKeyDoesNotAcceptTheGate(t *testing.T) {
 	h := newHarness(t, 160, 42, colorTheme)
 	h.state(writable(fleetState(3)))
-	h.b.proposal = proposalOf(5, state.Action{Kind: state.ActionRoll, Cluster: h.m.cluster().Key, Nodegroup: "web"}, rollPlan())
+	h.b.proposal = proposalOf(5, state.Action{Kind: change.NodegroupUpdate, Cluster: h.m.cluster().Key, Nodegroup: "web"}, rollPlan())
 	h.b.started = 9
 	st := writable(fleetState(3))
 	st.Clusters[0] = stale(st.Clusters[0])
@@ -575,7 +575,7 @@ func TestHelpListsTheChangeKeys(t *testing.T) {
 func TestCopyCommand(t *testing.T) {
 	h := newHarness(t, 120, 40, colorTheme)
 	h.state(fleetState(3))
-	h.b.proposal = proposalOf(1, state.Action{Kind: state.ActionAddons, Cluster: h.m.cluster().Key}, finishedChange(0).Plan)
+	h.b.proposal = proposalOf(1, state.Action{Kind: change.AddonUpdate, Cluster: h.m.cluster().Key}, finishedChange(0).Plan)
 	h.keys("a")
 	m, cmd := h.m.key("c")
 	if cmd == nil || !strings.Contains(m.notice, "clipboard") {
@@ -613,7 +613,7 @@ func TestOnlyTheNewestDryRunOpens(t *testing.T) {
 		t.Fatal("a after esc did not start a newer dry run")
 	}
 	h.m = m
-	h.b.proposal = proposalOf(7, state.Action{Kind: state.ActionAddons, Cluster: h.m.cluster().Key}, finishedChange(0).Plan)
+	h.b.proposal = proposalOf(7, state.Action{Kind: change.AddonUpdate, Cluster: h.m.cluster().Key}, finishedChange(0).Plan)
 	h.update(proposalMsg{seq: older.seq, p: h.b.proposal})
 	if h.m.confirm != nil {
 		t.Fatal("the reply of a cancelled dry run opened the dialog")

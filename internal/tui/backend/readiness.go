@@ -5,7 +5,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/dantech2000/refresh/internal/apidoc"
 	"github.com/dantech2000/refresh/internal/fleet"
 	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/tui/state"
@@ -52,22 +51,9 @@ func (b *Live) runReadiness(key state.Key) {
 		b.say(key, view.Fail, "readiness: "+err.Error())
 	} else {
 		done.Report = &report
-		b.say(key, readinessStatus(report.Readiness), "readiness: "+strings.ToLower(string(report.Readiness)))
+		b.say(key, view.ReadinessStatus(report.Readiness), "readiness: "+strings.ToLower(string(report.Readiness)))
 	}
 	b.readiness[key] = &done
 	b.mu.Unlock()
 	b.bump()
-}
-
-// readinessStatus maps a verdict to the status that paints it.
-func readinessStatus(r apidoc.Readiness) view.Status {
-	switch r {
-	case apidoc.ReadinessReady:
-		return view.Healthy
-	case apidoc.ReadinessReview:
-		return view.Warn
-	case apidoc.ReadinessBlocked:
-		return view.Fail
-	}
-	return view.Unknown
 }

@@ -135,7 +135,7 @@ func (p *rollbackPlanner) eligibility(h versionHistory, rollingBack bool) {
 func RollbackStillEligible(snap *fleet.Snapshot, req RollbackRequest, in RollbackInputs, target fleet.Version) ([]Blocker, []apidoc.Failure, error) {
 	t := Target{Region: snap.Cluster.Region, Cluster: snap.Cluster.Name}
 	live := snap.Cluster.Version
-	p := &rollbackPlanner{snap: snap, req: req, in: in, live: live, cp: &ClusterPlan{Target: t, From: live, To: target}}
+	p := &rollbackPlanner{snap: snap, req: req, in: in, live: live, planWriter: planWriter{cp: &ClusterPlan{Target: t, From: live, To: target}}}
 	if snap.Have.Cluster != fleet.Collected || live.IsZero() {
 		p.block(BlockerUnread, nil, "the Kubernetes version of cluster %s is not known", t.Cluster)
 		return p.cp.Blockers, p.cp.Failures, nil

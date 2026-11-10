@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/spf13/cobra"
 
@@ -16,9 +15,6 @@ import (
 	"github.com/dantech2000/refresh/internal/fleet"
 	"github.com/dantech2000/refresh/internal/fleet/aminotes"
 )
-
-// updateWaitTimeout is the default of --wait-timeout.
-const updateWaitTimeout = 40 * time.Minute
 
 type updateOptions struct {
 	f   *cmdutil.Factory
@@ -127,7 +123,7 @@ ignores all three.
 	cmd.Flags().BoolVar(&o.skipVerify, "skip-verify", false, "Skip the verification after each nodegroup roll")
 	cmd.Flags().BoolVar(&o.changelog, "changelog", false, "With --dry-run, show the AMI release notes of each roll")
 	cmd.Flags().BoolVar(&o.live, "live", false, "Show the nodes of the roll as they drain and join, also without a terminal")
-	cmdutil.AddChangeFlags(cmd, &o.change, cmdutil.ChangeFlagOptions{Wait: updateWaitTimeout, WaitFor: "the rolls of a cluster", NoWait: true, Force: true})
+	cmdutil.AddChangeFlags(cmd, &o.change, cmdutil.ChangeFlagOptions{Wait: change.DefaultWait(change.NodegroupUpdate), WaitFor: "the rolls of a cluster", NoWait: true, Force: true})
 	cmdutil.AddOutputFlag(cmd, &o.output, cmdutil.FormatTable, cmdutil.FormatJSON, cmdutil.FormatYAML, cmdutil.FormatPlain)
 	return cmd
 }

@@ -51,6 +51,9 @@ type Request interface {
 	// reviewed, the request of a plan that a person reviewed, or returns
 	// "" when both ask for the same change. See sameRequest.
 	differs(reviewed Request) string
+	// withExpect returns the request with the reviewed plan as its
+	// consent. See WithExpect.
+	withExpect(reviewed *Plan) Request
 }
 
 // Target names one cluster. An empty Region means the home region of the
@@ -137,7 +140,8 @@ func (RollRequest) kind() Kind { return NodegroupUpdate }
 // Selector picks nodegroups by pattern: the -f flag of the command. The
 // command parses the patterns; this package knows only the result.
 type Selector struct {
-	// Text is the selection as the user wrote it, such as "name=web-*".
+	// Text is the selection as the user wrote it, as -f flags, such as
+	// "-f name=web-*".
 	// A message names it, and two requests with the same Text ask for the
 	// same selection.
 	Text string

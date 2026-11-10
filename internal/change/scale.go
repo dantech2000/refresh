@@ -190,20 +190,11 @@ func planScale(ctx context.Context, d Deps, req ScaleRequest) (*Plan, error) {
 		return nil, err
 	}
 	phase.Steps = []Step{step}
-	cp.markBusy(ctx, clients, phase.Steps)
-	cp.Phases = []Phase{phase}
-
-	refuse, notices := Busy(snap, NodegroupScale, phase.Steps)
-	cp.Blockers = append(cp.Blockers, refuse...)
-	cp.Notices = append(cp.Notices, notices...)
-	if len(refuse) > 0 {
+	if cp.busyRule(ctx, clients, NodegroupScale, phase) {
 		if hint := scaleOutsideHint(snap, req, phase.Steps[0], d.FollowUp.Profile); hint != "" {
 			cp.Notices = append(cp.Notices, hint)
 		}
-	}
-	// A plan that the busy rule refuses runs no gate: nothing would be
-	// submitted, so its reads would be for nothing.
-	if len(refuse) == 0 {
+	} else {
 		cp.gateScale(ctx, d, req.Policy, phase.Steps[0])
 	}
 	return &Plan{Kind: NodegroupScale, Request: req, Clusters: []ClusterPlan{cp}, At: d.now()}, nil
@@ -219,7 +210,7 @@ func (cp *ClusterPlan) scaleStep(phase PhaseRef, req ScaleRequest) (Step, error)
 	i := slices.IndexFunc(snap.Nodegroups, func(n fleet.Nodegroup) bool { return n.Name == req.Nodegroup })
 	// Without the list, nothing shows which names exist. The busy rule
 	// blocks the plan for the list that was not read.
-	listed := snap.Have.Nodegroups == fleet.Collected || snap.Have.Nodegroups == fleet.Partial
+	listed := snap.Have.Nodegroups.Listed()
 	if i < 0 && listed {
 		names := make([]string, len(snap.Nodegroups))
 		for j, n := range snap.Nodegroups {
@@ -280,9 +271,7 @@ func (cp *ClusterPlan) gateScale(ctx context.Context, d Deps, policy health.Poli
 		wg.Wait()
 		cp.Notices = append(cp.Notices, offered...)
 	}()
-	if policy.Skip {
-		cp.Gate = health.Gate(nil, policy)
-		cp.Notices = append(cp.Notices, "the health checks were skipped (--skip-health-check)")
+	if cp.skipGate(policy) {
 		return
 	}
 	in := &health.Input{Snapshot: cp.snapshot, Targets: []string{s.Ref.Name}, Clients: clients, Now: cp.snapshot.FetchedAt}

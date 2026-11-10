@@ -2,7 +2,6 @@ package nodegroup
 
 import (
 	"context"
-	"time"
 
 	"github.com/spf13/cobra"
 
@@ -12,9 +11,6 @@ import (
 	"github.com/dantech2000/refresh/internal/cmd/fleetcmd"
 	"github.com/dantech2000/refresh/internal/cmdutil"
 )
-
-// scaleWaitTimeout is the default of --wait-timeout.
-const scaleWaitTimeout = 5 * time.Minute
 
 type scaleOptions struct {
 	f   *cmdutil.Factory
@@ -107,7 +103,7 @@ refresh context. It never comes from the kubeconfig.
 	cmd.Flags().Int32Var(&o.desired, "desired", 0, "Desired number of nodes")
 	cmd.Flags().Int32Var(&o.min, "min", 0, "Minimum number of nodes")
 	cmd.Flags().Int32Var(&o.max, "max", 0, "Maximum number of nodes")
-	cmdutil.AddChangeFlags(cmd, &o.change, cmdutil.ChangeFlagOptions{Wait: scaleWaitTimeout, WaitFor: "the scale", NoWait: true, Force: true})
+	cmdutil.AddChangeFlags(cmd, &o.change, cmdutil.ChangeFlagOptions{Wait: change.DefaultWait(change.NodegroupScale), WaitFor: "the scale", NoWait: true, Force: true})
 	cmdutil.AddOutputFlag(cmd, &o.output, cmdutil.FormatTable, cmdutil.FormatJSON, cmdutil.FormatYAML, cmdutil.FormatPlain)
 	return cmd
 }

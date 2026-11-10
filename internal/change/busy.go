@@ -325,3 +325,17 @@ func inFlightUpdate(ctx context.Context, c *awsx.Clients, r Resource) (InFlightU
 	}
 	return InFlightUpdate{}, nil
 }
+
+// busyRule makes phase the one phase of the plan of an independent kind
+// of change, marks its steps whose resource is changing, and applies the
+// busy rule. It reports whether the rule refuses the plan. A refused plan
+// runs no gate: nothing would be submitted, so its reads would be for
+// nothing.
+func (cp *ClusterPlan) busyRule(ctx context.Context, clients *awsx.Clients, kind Kind, phase Phase) (refused bool) {
+	cp.markBusy(ctx, clients, phase.Steps)
+	cp.Phases = []Phase{phase}
+	refuse, notices := Busy(cp.snapshot, kind, phase.Steps)
+	cp.Blockers = append(cp.Blockers, refuse...)
+	cp.Notices = append(cp.Notices, notices...)
+	return len(refuse) > 0
+}

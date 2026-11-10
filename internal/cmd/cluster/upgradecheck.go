@@ -391,15 +391,16 @@ func insightDescription(cluster, region string, in *ekstypes.Insight) apidoc.Ins
 
 // readinessLabel returns the word of the header for a readiness.
 func readinessLabel(r apidoc.Readiness) (string, view.Status) {
+	label := "INCOMPLETE"
 	switch r {
 	case apidoc.ReadinessReady:
-		return "READY", view.Healthy
+		label = "READY"
 	case apidoc.ReadinessReview:
-		return "REVIEW", view.Warn
+		label = "REVIEW"
 	case apidoc.ReadinessBlocked:
-		return "NOT READY", view.Fail
+		label = "NOT READY"
 	}
-	return "INCOMPLETE", view.Unknown
+	return label, view.ReadinessStatus(r)
 }
 
 // upgradeCheckView returns the table and plain form of doc. reasons are
@@ -426,7 +427,7 @@ func upgradeCheckView(doc apidoc.UpgradeCheck, reasons []health.Reason) view.Des
 	for _, in := range doc.Insights {
 		insights.Items = append(insights.Items, view.Item{Name: shortID(in.ID), Fields: []view.Field{
 			{Name: "insight", Value: in.Name},
-			{Name: "status", Value: in.Status, Status: insightStatus(in.Status)},
+			{Name: "status", Value: in.Status, Status: view.InsightStatus(in.Status)},
 			{Name: "version", Value: in.KubernetesVersion},
 		}})
 	}
@@ -486,18 +487,6 @@ func upgradeCheckView(doc apidoc.UpgradeCheck, reasons []health.Reason) view.Des
 	return d
 }
 
-func insightStatus(status string) view.Status {
-	switch status {
-	case "PASSING":
-		return view.Healthy
-	case "WARNING":
-		return view.Warn
-	case "ERROR":
-		return view.Fail
-	}
-	return view.Unknown
-}
-
 // shortID returns the first characters of an insight ID, enough to name
 // it to --insight.
 func shortID(id string) string {
@@ -510,7 +499,7 @@ func shortID(id string) string {
 // insightView returns the table and plain form of one insight.
 func insightView(doc apidoc.InsightDescription) view.Description {
 	in := doc.Insight
-	d := view.Description{Title: in.Name, Status: insightStatus(in.Status), Label: in.Status, Subtitle: doc.Cluster + " in " + doc.Region, Failures: doc.Failures}
+	d := view.Description{Title: in.Name, Status: view.InsightStatus(in.Status), Label: in.Status, Subtitle: doc.Cluster + " in " + doc.Region, Failures: doc.Failures}
 	d.Sections = append(d.Sections, view.Section{Title: "INSIGHT", Fields: []view.Field{
 		{Name: "id", Value: in.ID},
 		{Name: "category", Value: in.Category},

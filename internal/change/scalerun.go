@@ -51,15 +51,10 @@ func (r *runner) runScaleStep(cp *ClusterPlan, s Step) StepResult {
 	}
 	res.StartedAt = r.d.now()
 	id, err := submitScale(r.readCtx, clients, resource, req)
-	switch {
-	case err != nil:
-		return r.unanswered(cp, res, err)
-	case id == "":
-		res.Status = StepInProgress
-		res.Failure = r.stepFailure(cp, res, apidoc.ReasonNotMonitored, "EKS accepted the scale of nodegroup "+s.Ref.Name+" and returned no update ID; it cannot be followed, and it may still be running")
+	res, ok := r.submitted(cp, res, id, err)
+	if !ok {
 		return res
 	}
-	res.Status, res.UpdateID = StepStarted, id
 	// The read budget stops here: the wait has its own.
 	r.read.pause()
 	// Without a wait, this is the result of the step, and the phase

@@ -19,6 +19,23 @@ type Limits struct {
 	Poll time.Duration
 }
 
+// DefaultWait is the default Wait of a change of kind k: the default of
+// the --wait-timeout flag of its command, and of the same changes that
+// "refresh ui" runs. A roll waits for the rolls of a cluster, a scale for
+// the scale, an add-on update for each add-on, and an upgrade or a
+// rollback for the whole run. CONTRACT.md lists the same values.
+func DefaultWait(k Kind) time.Duration {
+	switch k {
+	case NodegroupUpdate:
+		return 40 * time.Minute
+	case NodegroupScale, AddonUpdate:
+		return 5 * time.Minute
+	case ClusterUpgrade, ClusterRollback:
+		return 4 * time.Hour
+	}
+	return 0
+}
+
 // The causes of a context that a budget ended. context.Cause returns one
 // of them, so a caller can tell a deadline from an interrupt.
 var (

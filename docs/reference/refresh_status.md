@@ -25,8 +25,10 @@ Columns:
              the control plane
   ADDONS     the add-ons with a newer compatible version
   HEALTH     the health issues that EKS reports for the control plane,
-             the nodegroups, and the add-ons; an add-on that is DEGRADED
-             with no issue listed counts as one
+             the nodegroups, and the add-ons; a resource in a failed
+             status with no issue listed counts as one: a FAILED control
+             plane, a DEGRADED, CREATE_FAILED, or DELETE_FAILED
+             nodegroup, or a failed add-on
 
 Under the table, the totals line gives the extended support premium for the
 whole fleet per month, at 730 hours a month. The price is the one on the
