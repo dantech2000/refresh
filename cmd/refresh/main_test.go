@@ -79,6 +79,8 @@ func TestRun(t *testing.T) {
 				t.Setenv(name, "")
 			}
 			streams, _, out, errOut := cmdutiltest.NewIOStreams()
+			// run routes klog, and execute leaves it routed.
+			t.Cleanup(klog.ClearLogger)
 
 			code := run(context.Background(), tt.args, streams)
 
@@ -99,6 +101,8 @@ func TestRunHelp(t *testing.T) {
 	for _, args := range [][]string{{"--help"}, {"version", "--help"}} {
 		t.Run(fmt.Sprint(args), func(t *testing.T) {
 			streams, _, out, errOut := cmdutiltest.NewIOStreams()
+			// run routes klog, and execute leaves it routed.
+			t.Cleanup(klog.ClearLogger)
 
 			code := run(context.Background(), args, streams)
 
