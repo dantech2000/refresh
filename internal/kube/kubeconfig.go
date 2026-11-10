@@ -11,6 +11,8 @@ import (
 
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
+
+	"github.com/dantech2000/refresh/internal/awsx"
 )
 
 // clusterARN matches an EKS cluster ARN in any partition, and captures the
@@ -18,14 +20,16 @@ import (
 var clusterARN = regexp.MustCompile(`^arn:aws[a-z-]*:eks:([a-z0-9-]+):\d{12}:cluster/([A-Za-z0-9][A-Za-z0-9_-]*)$`)
 
 // eksctlCluster matches the cluster entry that eksctl writes,
-// <name>.<region>.eksctl.io.
-var eksctlCluster = regexp.MustCompile(`^([A-Za-z0-9][A-Za-z0-9_-]*)\.([a-z]{2}(?:-[a-z]+)+-\d)\.eksctl\.io$`)
+// <name>.<region>.eksctl.io. A region has the shape that awsx.CheckRegion
+// accepts.
+var eksctlCluster = regexp.MustCompile(`^([A-Za-z0-9][A-Za-z0-9_-]*)\.(` + awsx.RegionShape + `)\.eksctl\.io$`)
 
 // eksServer matches the host of an EKS API server and captures its region:
-// <id>.<suffix>.<region>.eks.amazonaws.com, with .cn in China, and the
-// dual-stack host of an IPv6 cluster, which ends in <region>.api.aws or in
+// <id>.<suffix>.<region>.eks.amazonaws.com, with .cn in China and .eu in
+// the European Sovereign Cloud, and the dual-stack host of an IPv6
+// cluster, which ends in <region>.api.aws or in
 // <region>.api.amazonwebservices.com.cn.
-var eksServer = regexp.MustCompile(`\.([a-z]{2}(?:-[a-z]+)+-\d)\.(?:eks\.amazonaws\.com(?:\.cn)?|api\.aws|api\.amazonwebservices\.com\.cn)$`)
+var eksServer = regexp.MustCompile(`\.(` + awsx.RegionShape + `)\.(?:eks\.amazonaws\.(?:com|com\.cn|eu)|api\.aws|api\.amazonwebservices\.com\.cn)$`)
 
 // clusterName matches the names that EKS accepts for a cluster.
 var clusterName = regexp.MustCompile(`^[0-9A-Za-z][A-Za-z0-9_-]*$`)
