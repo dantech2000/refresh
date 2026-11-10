@@ -202,9 +202,32 @@ A drain evicts pods. The eviction API refuses an eviction that would take a
 PodDisruptionBudget (PDB) below what it allows. The roll then stalls. This
 check finds those cases before the roll starts.
 
-A PDB is a blocker when it allows zero disruptions and it covers a pod on a
-node that the change would drain. A pod that more than one PDB selects is also
-a blocker, because the eviction API refuses it.
+A PDB is a blocker when the eviction API would refuse a pod that it covers on
+a node that the change would drain. The check uses the rules of the eviction
+API. The API refuses every eviction under a PDB in these cases:
+
+- The PDB changed, and the disruption controller has not processed the change
+  yet. The status then has an older generation than the spec
+  (`status.observedGeneration` is lower than `metadata.generation`). The count
+  of allowed disruptions in that status does not matter.
+- The PDB allows zero disruptions, or a negative number.
+- The PDB has more than 2000 evictions that the disruption controller has not
+  confirmed (`status.disruptedPods`).
+
+A PDB whose `DisruptionAllowed` condition has the reason `SyncFailed` is also
+a blocker. The disruption controller could not compute its status, so the
+check does not trust the counts.
+
+The eviction API does not look at a PDB for a pod that is `Pending`,
+`Succeeded`, or `Failed`, or that is already being deleted. For a pod that is
+not ready, the API looks at the PDB only when the PDB does not have the
+`AlwaysAllow` unhealthy pod eviction policy and has fewer healthy pods than it
+needs. A pod that more than one PDB selects is also a blocker, because the
+eviction API refuses it.
+
+Without target nodegroups, the check reads no pods. A PDB then counts as a
+blocker when the eviction API would refuse its pods and its status counts at
+least one pod.
 
 | Case | Outcome |
 |---|---|
