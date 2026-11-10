@@ -126,6 +126,10 @@ func pods(c *fleettest.Cluster) []item {
 				ContainerStatuses: []corev1.ContainerStatus{{Name: "main", Ready: ready, Started: &running}},
 			},
 		}
+		if p.Node == "" {
+			// A pod with no node is one the scheduler could not place.
+			pod.Status.Conditions[0].Reason = corev1.PodReasonUnschedulable
+		}
 		if p.DisruptionTarget {
 			pod.Status.Conditions = append(pod.Status.Conditions, corev1.PodCondition{
 				Type: corev1.DisruptionTarget, Status: corev1.ConditionTrue, Reason: corev1.PodReasonTerminationByKubelet,

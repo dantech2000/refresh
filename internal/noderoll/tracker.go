@@ -14,6 +14,9 @@ const (
 	EvtJoining EventKind = "joining"
 	// EvtOnline: a node became Ready.
 	EvtOnline EventKind = "online"
+	// EvtNotReady: a node that was there stopped being Ready, and is not
+	// cordoned. Its kubelet stopped reporting, or it reports an issue.
+	EvtNotReady EventKind = "notReady"
 	// EvtDraining: a node was cordoned, or tainted for removal.
 	EvtDraining EventKind = "draining"
 	// EvtTerminated: a node is gone.
@@ -81,17 +84,9 @@ func (t *Tracker) ObserveAt(s Snapshot, at time.Time) {
 		t.seeded = true
 		return
 	}
-	// A node that appeared or changed its phase, in the order of s.Nodes.
-	for _, n := range s.Nodes {
-		old, existed := t.prev[trackKey(n)]
-		if existed && old.phase == n.Phase {
-			continue
-		}
-		if k := eventForPhase(n.Phase); k != "" {
-			t.add(Event{Node: n.Name, Kind: k, At: at})
-		}
-	}
-	// A node that is gone, by name: the order of a map is random.
+	// A node that is gone, by name: the order of a map is random. They
+	// come first, so that a new node that took the name of one that is
+	// gone reads "terminated X", then "joining X".
 	var gone []string
 	for key, n := range t.prev {
 		if _, ok := cur[key]; !ok {
@@ -101,6 +96,16 @@ func (t *Tracker) ObserveAt(s Snapshot, at time.Time) {
 	slices.Sort(gone)
 	for _, name := range gone {
 		t.add(Event{Node: name, Kind: EvtTerminated, At: at})
+	}
+	// A node that appeared or changed its phase, in the order of s.Nodes.
+	for _, n := range s.Nodes {
+		old, existed := t.prev[trackKey(n)]
+		if existed && old.phase == n.Phase {
+			continue
+		}
+		if k := eventForPhase(n.Phase, existed); k != "" {
+			t.add(Event{Node: n.Name, Kind: k, At: at})
+		}
 	}
 	t.prev = cur
 }
@@ -115,9 +120,15 @@ func (t *Tracker) add(e Event) {
 	}
 }
 
-func eventForPhase(p Phase) EventKind {
+// eventForPhase returns the event of a node that is now in phase p. existed
+// says whether the snapshot before had the node: one that had been there
+// and is not Ready any more is not joining.
+func eventForPhase(p Phase, existed bool) EventKind {
 	switch p {
 	case PhaseJoining:
+		if existed {
+			return EvtNotReady
+		}
 		return EvtJoining
 	case PhaseReady:
 		return EvtOnline

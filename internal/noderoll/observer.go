@@ -139,9 +139,11 @@ func (o *Observer) Close() {
 }
 
 // listNodes returns the nodes of the nodegroup: from the cache of the
-// watch, which holds only them, or with a list by the nodegroup label.
+// watch, which holds only them, or with a list by the nodegroup label. It
+// lists while the watch is broken: then a list that fails is an error of
+// the snapshot, as when the observer does not watch.
 func (o *Observer) listNodes(ctx context.Context) ([]*corev1.Node, error) {
-	if o.inf != nil {
+	if o.inf != nil && o.inf.nodesWatch.ok() {
 		return o.inf.nodes.List(labels.Everything())
 	}
 	list, err := o.client.CoreV1().Nodes().List(ctx, metav1.ListOptions{LabelSelector: LabelNodegroup + "=" + o.nodegroup})

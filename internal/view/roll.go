@@ -179,6 +179,8 @@ func rollEventText(k noderoll.EventKind) (Status, string) {
 		return Progress, "scaling up, joining"
 	case noderoll.EvtOnline:
 		return Healthy, "came online (Ready)"
+	case noderoll.EvtNotReady:
+		return Warn, "not Ready"
 	case noderoll.EvtDraining:
 		return Warn, "cordoned, draining"
 	case noderoll.EvtTerminated:

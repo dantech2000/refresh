@@ -23,7 +23,7 @@ CHECKS  3
   NAME          OUTCOME    MESSAGE
   Insights      [X] Fail   1 ERROR insight (Deprecated APIs removed in 1.33)
   VersionSkew   [X] Fail   1 nodegroup at the kubelet skew limit (ng-legacy (1.29, 3 behind)); upgrade the nodes before the control plane; 1 add-on behind latest (coredns (v1.11.3-eksbuild.1, latest v1.11.4-eksbuild.2))
-  ControlPlane  [OK] Pass  etcd 12% of 8 GiB
+  ControlPlane  [OK] Pass  etcd 13% of 8 GB
 
 ROLLBACK
   to        1.31

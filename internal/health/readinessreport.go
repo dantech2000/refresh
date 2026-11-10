@@ -47,17 +47,18 @@ func CheckReadiness(ctx context.Context, c *awsx.Clients, f *fleet.Fetcher, clus
 		fetchErr error
 		insights []apidoc.Insight
 		listErr  error
-		cp       []Result
+		metrics  controlPlaneMetrics
+		cpErr    error
 	)
-	// The control-plane metrics need only the name of the cluster.
-	stub := &fleet.Snapshot{Cluster: fleet.Cluster{Name: cluster, Region: c.Region}}
+	// The control-plane metrics need only the name of the cluster. The
+	// check judges them after the fetch: the etcd limit depends on the
+	// tier of the control plane.
+	stub := &Input{Snapshot: &fleet.Snapshot{Cluster: fleet.Cluster{Name: cluster, Region: c.Region}}, Clients: c, Now: f.Time()}
 	wg.Go(func() {
 		snap, fetchErr = f.Fetch(ctx, c, cluster, fleet.Need{Nodegroups: true, Addons: true, LatestAddons: true, Support: true, Updates: true})
 	})
 	wg.Go(func() { insights, listErr = ListInsights(ctx, c, cluster, category) })
-	wg.Go(func() {
-		cp = Run(ctx, []Check{ControlPlane()}, &Input{Snapshot: stub, Clients: c, Now: f.Time()})
-	})
+	wg.Go(func() { metrics, cpErr = fetchControlPlaneMetrics(ctx, stub, cluster) })
 	wg.Wait()
 	if fetchErr != nil {
 		return ReadinessReport{}, fetchErr
@@ -69,8 +70,10 @@ func CheckReadiness(ctx context.Context, c *awsx.Clients, f *fleet.Fetcher, clus
 			report.RollbackInsights = list
 		}
 	}
-	checks := []Check{Insights(InsightsInput{Insights: insights, Err: listErr, Category: category}), VersionSkew()}
-	report.Checks = append(Run(ctx, checks, &Input{Snapshot: snap, Clients: c, Now: snap.FetchedAt}), cp...)
+	cp := ControlPlane()
+	cp.Run = func(context.Context, *Input) Result { return controlPlaneResult(snap, metrics, cpErr) }
+	checks := []Check{Insights(InsightsInput{Insights: insights, Err: listErr, Category: category}), VersionSkew(), cp}
+	report.Checks = Run(ctx, checks, &Input{Snapshot: snap, Clients: c, Now: snap.FetchedAt})
 	report.Readiness, report.Reasons = readinessOf(report.Checks, snap.ClusterDoc().Support)
 	return report, nil
 }

@@ -142,6 +142,10 @@ func TestUpgradeCheck_Verdicts(t *testing.T) {
 		{name: "show-passing", edit: ready, args: []string{"--show-passing"}, code: 0, want: "7d3e5a10"},
 		{name: "exit-zero", args: []string{"--exit-zero"}, code: 0, want: "[X] NOT READY"},
 		{name: "another category", edit: ready, args: []string{"--category", "misconfiguration"}, code: 0, want: "[OK] READY"},
+		{name: "the etcd limit of a provisioned control plane", edit: func(s *fleettest.State, c *fleettest.Cluster) {
+			ready(s, c)
+			c.ControlPlaneTier = "tier-xl"
+		}, code: 0, want: "etcd 7% of 16 GB"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

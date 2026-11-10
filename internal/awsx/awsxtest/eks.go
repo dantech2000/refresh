@@ -179,6 +179,9 @@ func clusterJSON(s *fleettest.State, region string, cl *fleettest.Cluster) objec
 	if cl.AutoMode {
 		out["computeConfig"] = object{"enabled": true}
 	}
+	if cl.ControlPlaneTier != "" {
+		out["controlPlaneScalingConfig"] = object{"tier": cl.ControlPlaneTier}
+	}
 	if len(cl.LogTypes) > 0 {
 		out["logging"] = object{"clusterLogging": []object{{"types": cl.LogTypes, "enabled": true}}}
 	}

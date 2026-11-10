@@ -38,7 +38,7 @@ health.Nodes.message	6/6 nodes ready (estimated)
 health.Capacity.outcome	Skipped
 health.Capacity.message	no managed nodegroup instances
 health.ControlPlane.outcome	Pass
-health.ControlPlane.message	etcd 12% of 8 GiB
+health.ControlPlane.message	etcd 13% of 8 GB
 health.Workloads.outcome	Skipped
 health.Workloads.message	pass --check-readiness to run the Kubernetes checks
 health.DrainBlockers.outcome	Skipped

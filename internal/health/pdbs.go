@@ -203,8 +203,10 @@ func targetsDesired(snap *fleet.Snapshot, targets []string) (int32, bool) {
 // budget gates a pod on a target node; unscoped, an at-risk budget counts
 // without a pod read, as the old check counted it. With withMulti it also
 // names the pods that more than one budget selects, which needs the pods
-// of each namespace with more than one budget; a scale-down evicts
-// nothing and leaves that rule out.
+// of each namespace with more than one budget. A scale-down leaves that
+// rule out: EKS ends its evictions after 15 minutes and terminates the
+// node anyway (see ScaleDownBlockers), so an eviction that fails does not
+// stop it.
 func findDrainBlockers(in *Input, budgets []pdb, targets map[string]bool, scoped, withMulti bool) Result {
 	byNamespace := groupByNamespace(budgets)
 	var (
@@ -325,10 +327,14 @@ func drainBlockersResult(blockers, multi, unread []string, failures []apidoc.Fai
 }
 
 // ScaleDownBlockers is the drain-blocker check for a scale-down of
-// nodegroup by remove nodes. A scale-down terminates nodes without an
-// eviction, and the Auto Scaling group picks which: a budget counts when
-// the removed nodes that hold the most of its covered pods hold more than
-// it allows to be disrupted.
+// nodegroup by remove nodes. EKS tries to evict the pods of a node that a
+// scale-down removes, and terminates the node after 15 minutes whether the
+// pods left or not: "Pod disruption budgets aren't respected when
+// terminating a node with AZRebalance or reducing the desired node count"
+// (EKS User Guide, "Simplify node lifecycle with managed node groups").
+// So a budget does not hold, and the Auto Scaling group picks the nodes: a
+// budget counts when the removed nodes that hold the most of its covered
+// pods hold more than it allows to be disrupted.
 func ScaleDownBlockers(nodegroup string, remove int32) Check {
 	return Check{Name: "DrainBlockers", Blocking: true, FailClosed: true, Forceable: true, Needs: Needs{Kube: true},
 		Run: func(_ context.Context, in *Input) Result { return runScaleDown(in, nodegroup, remove) }}
@@ -356,8 +362,9 @@ func runScaleDown(in *Input, nodegroup string, remove int32) Result {
 	}
 	if !isScoped {
 		// Without the nodes of the nodegroup the rule of a roll applies:
-		// every budget that allows nothing counts. A scale-down evicts no
-		// pod, so a pod with several budgets is not a blocker.
+		// every budget that allows nothing counts. A scale-down terminates
+		// the node after 15 minutes when an eviction fails, so a pod with
+		// several budgets is not a blocker.
 		return findDrainBlockers(&scoped, budgets, nil, false, false)
 	}
 	// The pods of every namespace with a budget, in one round trip.

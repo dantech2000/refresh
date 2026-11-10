@@ -122,10 +122,11 @@ type Result struct {
 	// Blocking: the quota check blocks on a surge, and only asks about the
 	// current use. The runner then clears Blocking.
 	advisory bool
-	// unreachable is the result of a check that needs no client, for when
-	// its Kubernetes read failed and the run finds the API unreachable:
-	// the Nodes check then estimates, as it does without a client.
-	unreachable *Result
+	// whenUnreachable is the result of a check that needs no client, for
+	// when its Kubernetes read failed and the run finds the API
+	// unreachable: the Nodes check then estimates, as it does without a
+	// client.
+	whenUnreachable *Result
 }
 
 // AccessCheck is the name of the result that the runner adds about the
@@ -178,8 +179,8 @@ func Run(ctx context.Context, checks []Check, in *Input) []Result {
 		for i, c := range checks {
 			switch r := results[i]; {
 			case r.Outcome != Unreadable:
-			case r.unreachable != nil:
-				results[i] = *r.unreachable
+			case r.whenUnreachable != nil:
+				results[i] = *r.whenUnreachable
 				results[i].Name, results[i].Blocking, results[i].FailClosed, results[i].Forceable = c.Name, c.Blocking, c.FailClosed, c.Forceable
 			case c.Needs.Kube:
 				results[i] = Result{

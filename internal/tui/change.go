@@ -464,6 +464,8 @@ func nodeEventText(k noderoll.EventKind) (view.Status, string) {
 		return view.Progress, "joining"
 	case noderoll.EvtOnline:
 		return view.Healthy, "came online (Ready)"
+	case noderoll.EvtNotReady:
+		return view.Warn, "not Ready"
 	case noderoll.EvtDraining:
 		return view.Warn, "cordoned, draining"
 	case noderoll.EvtTerminated:

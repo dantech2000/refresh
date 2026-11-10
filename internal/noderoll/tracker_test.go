@@ -53,11 +53,33 @@ func TestTracker_DerivesLifecycleEvents(t *testing.T) {
 	// The new node is Ready, and the drained node is gone.
 	tr.Observe(snapOf(oldReady("b"), oldReady("c"), newReady("d")))
 
+	// The node that is gone comes before the changes of the others.
 	want := []Event{
 		{Node: "a", Kind: EvtDraining},
 		{Node: "d", Kind: EvtJoining},
-		{Node: "d", Kind: EvtOnline},
 		{Node: "a", Kind: EvtTerminated},
+		{Node: "d", Kind: EvtOnline},
+	}
+	if diff := cmp.Diff(want, tr.Recent(0)); diff != "" {
+		t.Fatalf("events (-want +got):\n%s", diff)
+	}
+}
+
+// Joining is for a node that appeared. A node that was there and stops
+// being Ready, as when its kubelet stops mid-roll, is not Ready, and
+// online again when it comes back.
+func TestTracker_KnownNodeNotReady(t *testing.T) {
+	notReady := func(name string) NodeView {
+		return NodeView{Name: name, Phase: PhaseJoining}
+	}
+	tr := NewTracker()
+	tr.Observe(snapOf(oldReady("a")))
+	tr.Observe(snapOf(notReady("a"), newJoining("b")))
+	tr.Observe(snapOf(oldReady("a"), newJoining("b")))
+	want := []Event{
+		{Node: "a", Kind: EvtNotReady},
+		{Node: "b", Kind: EvtJoining},
+		{Node: "a", Kind: EvtOnline},
 	}
 	if diff := cmp.Diff(want, tr.Recent(0)); diff != "" {
 		t.Fatalf("events (-want +got):\n%s", diff)

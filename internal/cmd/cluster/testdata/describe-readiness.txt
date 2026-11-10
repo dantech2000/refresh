@@ -42,7 +42,7 @@ HEALTH  9
   NAME           OUTCOME    MESSAGE
   Nodes          [!] Warn   3/4 nodes ready; issues: web-3
   Capacity       Skipped    no managed nodegroup instances
-  ControlPlane   [OK] Pass  etcd 12% of 8 GiB
+  ControlPlane   [OK] Pass  etcd 13% of 8 GB
   Workloads      [OK] Pass  1/1 pods running in the system namespaces
   DrainBlockers  [X] Fail   PDB default/app allows 0 disruptions; a drain would stall on eviction
   PDBCoverage    [OK] Pass  every deployment has a PodDisruptionBudget (1)
