@@ -67,7 +67,7 @@ func (r *gateRecorder) all() string {
 }
 
 // wave runs one Wave and reports whether it failed the test.
-func gateWave(g *awsxtest.Gate, ops ...fleettest.Operation) (failed bool) {
+func gateWave(g *fleettest.Gate, ops ...fleettest.Operation) (failed bool) {
 	defer func() {
 		if recover() != nil {
 			failed = true

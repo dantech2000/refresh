@@ -400,7 +400,7 @@ func (cp *ClusterPlan) foreignRolls(ctx context.Context, c *awsx.Clients, kind K
 			}
 			if msg := foreignRoll(kind, s.Ref.Name, s.To, l.u, l.err); msg != "" {
 				ref := s.Ref
-				out = append(out, Blocker{Kind: BlockerBusy, Step: &ref, Message: cp.Cluster + " is busy: " + msg + "; nothing was started. Run it again once that finishes"})
+				out = append(out, busyBlocker(cp.Cluster+" is busy: "+msg, &ref))
 			}
 		}
 	}

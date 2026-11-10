@@ -219,7 +219,9 @@ func TestFollowClock(t *testing.T) {
 		t.Fatal(err)
 	}
 	w.Edit(func(s *fleettest.State) { s.DefaultUpdate = fleettest.UpdateScript{After: time.Minute} })
-	update, err := w.UpdateClusterVersion("us-east-1", clusterName(w), fleettest.ClusterVersionRequest{Version: new("1.99")})
+	var next string // EKS takes one minor at a time
+	w.View(func(s *fleettest.State) { next = s.Clusters[0].NextMinor() })
+	update, err := w.UpdateClusterVersion("us-east-1", clusterName(w), fleettest.ClusterVersionRequest{Version: &next})
 	if err != nil {
 		t.Fatal(err)
 	}

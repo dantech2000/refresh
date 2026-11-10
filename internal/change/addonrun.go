@@ -340,7 +340,11 @@ func (r *runner) confirmAddon(cp *ClusterPlan, res StepResult, s Step, got Settl
 	case got.Status != string(ekstypes.AddonStatusActive):
 		res.VerifyIssue = fmt.Sprintf("add-on %s ended in status %s (expected ACTIVE)", name, got.Status)
 	case len(got.Issues) > 0:
-		res.VerifyIssue = fmt.Sprintf("add-on %s is ACTIVE but has %d health issue(s): %s", name, len(got.Issues), strings.Join(got.Issues, "; "))
+		issues := make([]string, len(got.Issues))
+		for i, issue := range got.Issues {
+			issues[i] = issue.Code + ": " + issue.Message
+		}
+		res.VerifyIssue = fmt.Sprintf("add-on %s is ACTIVE but has %d health issue(s): %s", name, len(got.Issues), strings.Join(issues, "; "))
 	}
 	if res.VerifyIssue != "" {
 		check.Outcome, check.Message, check.Findings = health.Fail, res.VerifyIssue, []string{name}

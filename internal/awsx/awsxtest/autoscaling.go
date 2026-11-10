@@ -1,20 +1,36 @@
 package awsxtest
 
 import (
+	"fmt"
 	"slices"
 
 	"github.com/dantech2000/refresh/internal/fleet/fleettest"
 )
 
+// The page rules are from the API reference: MaxRecords of
+// DescribeAutoScalingGroups "The default value is 50 and the maximum value
+// is 100", and of DescribeScalingActivities "The default value is 100 and
+// the maximum value is 100"
+// (https://docs.aws.amazon.com/autoscaling/ec2/APIReference/API_DescribeAutoScalingGroups.html,
+// https://docs.aws.amazon.com/autoscaling/ec2/APIReference/API_DescribeScalingActivities.html).
 var autoScalingOperations = map[string]operation{
-	"DescribeAutoScalingGroups": {handle: autoScalingDescribeGroups},
-	"DescribeScalingActivities": {handle: autoScalingDescribeActivities},
+	"DescribeAutoScalingGroups": {handle: autoScalingDescribeGroups, pages: pageRule{Default: 50, Min: 1, Max: 100}},
+	"DescribeScalingActivities": {handle: autoScalingDescribeActivities, pages: pageRule{Default: 100, Min: 1, Max: 100}},
 }
 
 // autoScalingDescribeGroups leaves out a name that has no group, as Auto
-// Scaling does.
+// Scaling does. It takes at most 50 names, or MaxRecords names when the
+// request sets more: "By default, you can only specify up to 50 names.
+// You can optionally increase this limit using the MaxRecords property."
 func autoScalingDescribeGroups(c *call) (any, error) {
 	asked := c.in.list("AutoScalingGroupNames.member")
+	limit, ok := c.in.num("MaxRecords")
+	if !ok || limit < 50 {
+		limit = 50
+	}
+	if len(asked) > limit {
+		return nil, newError(c.svc.invalid, fmt.Sprintf("The number of AutoScalingGroupNames (%d) exceeds the limit of %d.", len(asked), limit))
+	}
 	var groups []fleettest.AutoScalingGroup
 	c.world.View(func(s *fleettest.State) {
 		for _, g := range s.AutoScalingGroups {

@@ -46,6 +46,24 @@ type Call struct {
 	Namespace string
 }
 
+// String names the fields of the scope that are set, such as
+// "eks:ListClusters cluster=prod", or "every request" for the zero Scope.
+func (s Scope) String() string {
+	var parts []string
+	for _, f := range []struct{ name, value string }{
+		{"", string(s.Operation)}, {"service=", s.Service}, {"region=", s.Region}, {"cluster=", s.Cluster},
+		{"nodegroup=", s.Nodegroup}, {"addon=", s.Addon}, {"namespace=", s.Namespace},
+	} {
+		if f.value != "" {
+			parts = append(parts, f.name+f.value)
+		}
+	}
+	if len(parts) == 0 {
+		return "every request"
+	}
+	return strings.Join(parts, " ")
+}
+
 func (s Scope) matches(c Call) bool {
 	return (s.Operation == "" || s.Operation == c.Operation) &&
 		(s.Service == "" || s.Service == c.Operation.Service()) &&

@@ -2,6 +2,7 @@ package backend
 
 import (
 	"slices"
+	"strings"
 
 	"github.com/dantech2000/refresh/internal/apidoc"
 	"github.com/dantech2000/refresh/internal/fleet"
@@ -33,7 +34,7 @@ func row(snap *fleet.Snapshot) state.Cluster {
 		c.Support = snap.Cluster.Support.Tier
 	}
 	if view.StatusOf(snap.Cluster.Status) == view.Progress {
-		c.InFlight = append(c.InFlight, "control plane "+snap.Cluster.Status)
+		c.InFlight = append(c.InFlight, state.InFlight{Kind: apidoc.StepControlPlane, Status: snap.Cluster.Status})
 	}
 	// A health issue of any part fails the row: the issues that the
 	// HEALTH column of "refresh status" counts.
@@ -45,7 +46,7 @@ func row(snap *fleet.Snapshot) state.Cluster {
 		}
 		switch view.StatusOf(n.Status) {
 		case view.Progress:
-			c.InFlight = append(c.InFlight, "nodegroup "+n.Name+" "+n.Status)
+			c.InFlight = append(c.InFlight, state.InFlight{Kind: apidoc.StepNodegroup, Name: n.Name, Status: n.Status})
 		case view.Fail:
 			failed = true
 		}
@@ -66,7 +67,7 @@ func row(snap *fleet.Snapshot) state.Cluster {
 		}
 		switch view.StatusOf(a.Status) {
 		case view.Progress:
-			c.InFlight = append(c.InFlight, "add-on "+a.Name+" "+a.Status)
+			c.InFlight = append(c.InFlight, state.InFlight{Kind: apidoc.StepAddon, Name: a.Name, Status: a.Status})
 		case view.Fail:
 			failed = true
 		}
@@ -77,7 +78,7 @@ func row(snap *fleet.Snapshot) state.Cluster {
 			c.Stale.Addons++
 		}
 	}
-	slices.Sort(c.InFlight)
+	slices.SortFunc(c.InFlight, func(a, b state.InFlight) int { return strings.Compare(a.String(), b.String()) })
 	c.Status = overall(c, failed)
 	return c
 }

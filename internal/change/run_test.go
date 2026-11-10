@@ -357,7 +357,7 @@ func TestRun_WorldChangesWhileAsking(t *testing.T) {
 		{
 			name: "another update starts elsewhere: the target is busy", answers: []bool{true}, asked: []QuestionKind{ConfirmStart},
 			changes: []func(e *env){func(e *env) {
-				startElsewhere(e.t, e.world, "vpc-cni", "v1.19.5-eksbuild.1", fleettest.UpdateScript{Never: true})
+				startElsewhere(e.t, e.world, "vpc-cni", cniOther, fleettest.UpdateScript{Never: true})
 			}},
 			status: RunBlocked, exit: 3, notice: "Notice add-on vpc-cni is now changing elsewhere",
 		},
@@ -582,7 +582,7 @@ func TestRun_FreshReadBeforeSubmit(t *testing.T) {
 			name: "another update started elsewhere: busy", status: StepBusy, exit: 3,
 			change: func(t *testing.T, e *env) {
 				t.Helper()
-				startElsewhere(t, e.world, "vpc-cni", "v1.19.5-eksbuild.1", fleettest.UpdateScript{Never: true})
+				startElsewhere(t, e.world, "vpc-cni", cniOther, fleettest.UpdateScript{Never: true})
 			},
 			check: func(t *testing.T, res Result) {
 				t.Helper()
@@ -613,7 +613,7 @@ func TestRun_FreshReadBeforeSubmit(t *testing.T) {
 		{
 			name: "moved to another version below the target: failed, and nothing is sent", status: StepFailed, exit: 1,
 			change: func(_ *testing.T, e *env) {
-				e.world.Edit(func(s *fleettest.State) { s.Cluster(east, "prod").Addon("vpc-cni").Version = "v1.19.5-eksbuild.1" })
+				e.world.Edit(func(s *fleettest.State) { s.Cluster(east, "prod").Addon("vpc-cni").Version = cniOther })
 			},
 		},
 		{
@@ -669,7 +669,7 @@ func TestRun_BusyLookupOnlyWhenBusy(t *testing.T) {
 	}
 
 	busy := newEnv(t, newWorld(nil))
-	startElsewhere(t, busy.world, "vpc-cni", "v1.19.5-eksbuild.1", fleettest.UpdateScript{Never: true})
+	startElsewhere(t, busy.world, "vpc-cni", cniOther, fleettest.UpdateScript{Never: true})
 	req := yes(request())
 	req.Addons, req.All = nil, true
 	res, err := Run(testContext(t), busy.deps, req, Hooks{})
@@ -853,7 +853,7 @@ func TestRun_StopsDependents(t *testing.T) {
 			name: "--all: the dependency is busy",
 			prepare: func(t *testing.T, e *env) {
 				t.Helper()
-				startElsewhere(t, e.world, "vpc-cni", "v1.19.5-eksbuild.1", fleettest.UpdateScript{Never: true})
+				startElsewhere(t, e.world, "vpc-cni", cniOther, fleettest.UpdateScript{Never: true})
 			},
 			want:    map[string]StepStatus{"vpc-cni": StepBusy, "coredns": StepNotAttempted, "kube-proxy": StepSkipped, agent: StepSucceeded},
 			updates: []any{agent}, exit: 4, coredns: didNotFinish("Busy"),

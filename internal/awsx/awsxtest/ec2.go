@@ -2,6 +2,8 @@ package awsxtest
 
 import (
 	"cmp"
+	"fmt"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -9,15 +11,26 @@ import (
 	"github.com/dantech2000/refresh/internal/fleet/fleettest"
 )
 
+// The page rules are the MaxResults ranges of the API reference. EC2
+// documents no default page size, so a request with no MaxResults gets
+// every item.
 var ec2Operations = map[string]operation{
-	"DescribeImages":                 {handle: ec2DescribeImages},
-	"DescribeInstances":              {handle: ec2DescribeInstances},
-	"DescribeLaunchTemplateVersions": {handle: ec2DescribeLaunchTemplateVersions},
-	"DescribeSubnets":                {handle: ec2DescribeSubnets},
-	"DescribeInstanceTypeOfferings":  {handle: ec2DescribeInstanceTypeOfferings},
-	"DescribeInstanceTypes":          {handle: ec2DescribeInstanceTypes},
-	"DescribeVpcs":                   {handle: ec2DescribeVpcs},
+	"DescribeImages":                 {handle: ec2DescribeImages, pages: pageRule{Min: 6, Max: 1000}},
+	"DescribeInstances":              {handle: ec2DescribeInstances, pages: pageRule{Min: 5, Max: 1000}},
+	"DescribeLaunchTemplateVersions": {handle: ec2DescribeLaunchTemplateVersions, pages: pageRule{Min: 1, Max: 200}},
+	"DescribeSubnets":                {handle: ec2DescribeSubnets, pages: pageRule{Min: 5, Max: 1000}},
+	"DescribeInstanceTypeOfferings":  {handle: ec2DescribeInstanceTypeOfferings, pages: pageRule{Min: 5, Max: 1000}},
+	"DescribeInstanceTypes":          {handle: ec2DescribeInstanceTypes, pages: pageRule{Min: 5, Max: 100}},
+	"DescribeVpcs":                   {handle: ec2DescribeVpcs, pages: pageRule{Min: 5, Max: 1000}},
 }
+
+// maxFilterValues is the most values one EC2 request takes in its filters.
+// EC2 answers FilterLimitExceeded, "The request uses too many filters or
+// too many filter values"
+// (https://docs.aws.amazon.com/AWSEC2/latest/APIReference/errors-overview.html).
+// The number, 200 values for one filter, is the one in the message EC2
+// gives; the reference does not state it.
+const maxFilterValues = 200
 
 // ec2Filter is one Filter.N of a request.
 type ec2Filter struct {
@@ -47,12 +60,24 @@ func ec2Select[T any](c *call, items []T, idKey, notFound string, id func(T) str
 	if idKey != "" {
 		asked = c.in.list(idKey)
 	}
+	// "If you call a describe API action with both a list of IDs and
+	// MaxResults, the request fails with the error
+	// InvalidParameterCombination"
+	// (https://docs.aws.amazon.com/AWSEC2/latest/APIReference/Query-Requests.html#api-pagination).
+	if _, limited := c.in.num("MaxResults"); limited && len(asked) > 0 {
+		return nil, newError("InvalidParameterCombination", "The parameter "+idKey+" cannot be used with the parameter maxResults")
+	}
 	for _, want := range asked {
 		if !slices.ContainsFunc(items, func(it T) bool { return id(it) == want }) {
 			return nil, newError(notFound, "The ID '"+want+"' does not exist")
 		}
 	}
 	filters := c.ec2Filters()
+	for _, f := range filters {
+		if len(f.values) > maxFilterValues {
+			return nil, newError("FilterLimitExceeded", fmt.Sprintf("The maximum number of filter values specified on a single call is %d", maxFilterValues))
+		}
+	}
 	var out []T
 	for _, it := range items {
 		if len(asked) > 0 && !slices.Contains(asked, id(it)) {
@@ -121,7 +146,7 @@ func ec2DescribeInstances(c *call) (any, error) {
 			if !c.sees(i.Region) {
 				continue
 			}
-			i.Tags = cloneMap(i.Tags)
+			i.Tags = maps.Clone(i.Tags)
 			instances = append(instances, i)
 		}
 	})
@@ -172,14 +197,6 @@ func matchInstance(i fleettest.Instance, f ec2Filter) (keep, ok bool) {
 		return slices.Contains(f.values, instanceState(i)), true
 	}
 	return false, false
-}
-
-func cloneMap(m map[string]string) map[string]string {
-	out := make(map[string]string, len(m))
-	for k, v := range m {
-		out[k] = v
-	}
-	return out
 }
 
 func ec2DescribeLaunchTemplateVersions(c *call) (any, error) {
@@ -255,10 +272,18 @@ func ec2DescribeInstanceTypeOfferings(c *call) (any, error) {
 	})
 }
 
+// maxInstanceTypes is the most InstanceType.N one DescribeInstanceTypes
+// request names: "Maximum number of 100 items"
+// (https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_DescribeInstanceTypes.html).
+const maxInstanceTypes = 100
+
 // ec2DescribeInstanceTypes answers the vCPU count of each type, from the
 // world's catalog. An asked type that the catalog does not hold fails the
 // request, as in EC2.
 func ec2DescribeInstanceTypes(c *call) (any, error) {
+	if n := len(c.in.list("InstanceType")); n > maxInstanceTypes {
+		return nil, newError("InvalidParameterValue", fmt.Sprintf("The parameter InstanceType has %d items; the maximum is %d.", n, maxInstanceTypes))
+	}
 	var types []fleettest.InstanceType
 	c.world.View(func(s *fleettest.State) {
 		types = inRegion(c, s.InstanceTypes, func(t fleettest.InstanceType) string { return t.Region })
