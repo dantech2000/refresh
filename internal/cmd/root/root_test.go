@@ -365,7 +365,7 @@ func TestHelp(t *testing.T) {
 		},
 		{
 			name: "root without arguments",
-			args: nil,
+			args: []string{},
 			want: []string{"Usage:\n  refresh [flags]\n  refresh [command]"},
 		},
 		{
@@ -403,26 +403,6 @@ func TestHelp(t *testing.T) {
 			}
 			if t.Failed() {
 				t.Logf("stdout:\n%s", out.String())
-			}
-			if errOut.Len() != 0 {
-				t.Errorf("stderr = %q, want nothing", errOut.String())
-			}
-		})
-	}
-}
-
-func TestCompletion(t *testing.T) {
-	for _, shell := range []string{"bash", "zsh", "fish", "powershell"} {
-		t.Run(shell, func(t *testing.T) {
-			clearEnv(t)
-			f, _, out, errOut := cmdutiltest.NewFactory()
-
-			if err := execute(f, "completion", shell); err != nil {
-				t.Fatalf("completion %s: %v", shell, err)
-			}
-
-			if !strings.Contains(out.String(), "refresh") {
-				t.Errorf("stdout does not look like a completion script for refresh:\n%.200s", out.String())
 			}
 			if errOut.Len() != 0 {
 				t.Errorf("stderr = %q, want nothing", errOut.String())

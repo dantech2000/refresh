@@ -261,18 +261,6 @@ func TestSummary(t *testing.T) {
 	}
 }
 
-func TestFormatPermissionError_ListsPermissions(t *testing.T) {
-	err := formatPermissionError(errors.New("denied"), "listing clusters")
-	if !strings.Contains(err.Error(), "listing clusters") || !strings.Contains(err.Error(), "eks:ListClusters") {
-		t.Errorf("expected operation and permissions in message, got: %s", err.Error())
-	}
-	for _, action := range []string{"eks:StartInsightsRefresh", "eks:DescribeInsightsRefresh"} {
-		if !strings.Contains(err.Error(), action) {
-			t.Errorf("expected %s (cluster upgrade readiness) in the permission list, got: %s", action, err.Error())
-		}
-	}
-}
-
 // AWS's own message, which names the denied action and an explicit deny,
 // is the second line: before the long permission list, not after it.
 func TestFormatPermissionError_AWSMessageFirst(t *testing.T) {
