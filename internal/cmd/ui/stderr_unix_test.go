@@ -34,7 +34,12 @@ func TestDetachStderr_SilencesDescriptorTwo(t *testing.T) {
 	if err := unix.Dup2(int(file.Fd()), 2); err != nil {
 		t.Fatal(err)
 	}
+	// os.Stderr of a test binary is not always descriptor 2: under go test
+	// -json the testing package sets it to os.Stdout. Point it at the file,
+	// so that a write through it lands where the descriptor writes land.
 	stderr := os.Stderr
+	t.Cleanup(func() { os.Stderr = stderr })
+	os.Stderr = file
 
 	restore, err := detachStderr()
 	if err != nil {
@@ -43,7 +48,7 @@ func TestDetachStderr_SilencesDescriptorTwo(t *testing.T) {
 	_, _ = unix.Write(2, []byte("descriptor while detached\n"))
 	_, _ = os.Stderr.WriteString("os.Stderr while detached\n")
 	restore()
-	if os.Stderr != stderr {
+	if os.Stderr != file {
 		t.Error("os.Stderr is not the one of before the detach")
 	}
 	_, _ = unix.Write(2, []byte("descriptor after restore\n"))
