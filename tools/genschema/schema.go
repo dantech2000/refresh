@@ -11,10 +11,6 @@ import (
 	"github.com/dantech2000/refresh/internal/apidoc"
 )
 
-// schemaBaseURL is where the schemas are published. The $id of a schema is
-// this URL and the file name.
-const schemaBaseURL = "https://drod.dev/refresh/schema/v2/"
-
 // failuresDescription describes the failures list at the top of a document.
 const failuresDescription = "Every failure of the run: the items that refresh could not read and the actions that did not complete. " +
 	"The list is sorted by kind, region, cluster, name, and operation. It is [] when there are no failures."
@@ -66,7 +62,7 @@ func generate(doc apidoc.Document, docs *comments) ([]byte, error) {
 	}
 
 	kind := doc.Kind()
-	s.ID = jsonschema.ID(schemaBaseURL + string(kind) + ".json")
+	s.ID = jsonschema.ID(apidoc.SchemaBaseURL + string(kind) + ".json")
 	s.Title = string(kind)
 	s.Description = fmt.Sprintf("The document that `refresh %s -o json` prints. -o yaml prints the same structure.", kind.Command())
 	props := jsonschema.NewProperties()

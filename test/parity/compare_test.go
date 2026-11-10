@@ -6,8 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -17,8 +15,6 @@ import (
 	"github.com/dantech2000/refresh/internal/awsx/awsxtest"
 	"github.com/dantech2000/refresh/internal/fleet/fleettest"
 )
-
-const allowlistPath = "testdata/allowlist.json"
 
 // step adds one thing to a trace under construction.
 type step func(t *Trace)
@@ -206,110 +202,107 @@ func TestDerive(t *testing.T) {
 }
 
 // TestCompareFindsDifferences alters one thing in a copy of a trace, as a
-// wrong v2 binary would, and checks that Compare reports that field and no
+// wrong tested binary would, and checks that Compare reports that field and no
 // other, and says in words which obligation is not met.
 func TestCompareFindsDifferences(t *testing.T) {
 	t.Parallel()
 	steps := sampleSteps
-	edit := func(f func(v2 *Trace)) func() Trace {
+	edit := func(f func(tested *Trace)) func() Trace {
 		return func() Trace {
-			v2 := sampleTrace()
-			f(&v2)
-			return v2
+			tested := sampleTrace()
+			f(&tested)
+			return tested
 		}
 	}
 	rebuilt := func(s []step) func() Trace {
 		return func() Trace {
-			v2 := build(s...)
-			v2.World = sampleTrace().World
-			return v2
+			tested := build(s...)
+			tested.World = sampleTrace().World
+			return tested
 		}
 	}
 	// held makes the read at index i arrive where it is and get its answer
 	// only after everything else: the binary did not wait for it.
 	held := func(i int) func() Trace {
 		return func() Trace {
-			v2 := sampleTrace()
+			tested := sampleTrace()
 			reads := 0
-			for j := range v2.Requests {
+			for j := range tested.Requests {
 				if reads == i {
-					v2.Requests[j].Completed = seq(&v2)
+					tested.Requests[j].Completed = seq(&tested)
 					break
 				}
 				reads++
 			}
-			v2.derive()
-			return v2
+			tested.derive()
+			return tested
 		}
 	}
 	tests := []struct {
-		name string
-		v2   func() Trace
-		want []Field
-		says string
+		name   string
+		tested func() Trace
+		want   []Field
+		says   string
 	}{
-		{name: "nothing", v2: sampleTrace},
-		{name: "other words on stdout and stderr", v2: edit(func(v2 *Trace) { v2.Stdout, v2.Stderr = "new words", "new words" })},
+		{name: "nothing", tested: sampleTrace},
+		{name: "other words on stdout and stderr", tested: edit(func(tested *Trace) { tested.Stdout, tested.Stderr = "new words", "new words" })},
 
-		// Harmless: the new binary reads more, or otherwise, and knows the same.
-		{name: "a read more of something else", v2: rebuilt(slices.Insert(steps(), 8, read("eks:DescribeAddon", "prod/coredns", fact("addon prod/coredns", "status", "ACTIVE"))))},
-		{name: "the same read twice", v2: rebuilt(slices.Insert(steps(), 8, nodegroup, nodegroup))}, //nolint:gocritic // the same read twice, on purpose
-		{name: "two reads in one answer", v2: rebuilt(slices.Insert(without(steps(), 6, 7), 6, read("eks:ListNodegroups", "prod",
+		// Harmless: the run reads more, or otherwise, and knows the same.
+		{name: "a read more of something else", tested: rebuilt(slices.Insert(steps(), 8, read("eks:DescribeAddon", "prod/coredns", fact("addon prod/coredns", "status", "ACTIVE"))))},
+		{name: "the same read twice", tested: rebuilt(slices.Insert(steps(), 8, nodegroup, nodegroup))}, //nolint:gocritic // the same read twice, on purpose
+		{name: "two reads in one answer", tested: rebuilt(slices.Insert(without(steps(), 6, 7), 6, read("eks:ListNodegroups", "prod",
 			fact("nodegroup prod/ng-a", "status", "ACTIVE"), fact("nodegroup prod/ng-a", "version", "1.32"), fact("nodegroup prod/ng-b", "status", "ACTIVE"))))},
-		{name: "a gate read earlier in the same window", v2: rebuilt(moved(steps(), 8, 5))},
-		{name: "the verification in another order", v2: rebuilt(moved(steps(), 14, 12))},
-		{name: "an error that a later read replaced", v2: rebuilt(slices.Insert(steps(), 6, read("eks:DescribeNodegroup", "prod/ng-a", fact("nodegroup prod/ng-a", "read", "error=ThrottlingException"))))},
+		{name: "a gate read earlier in the same window", tested: rebuilt(moved(steps(), 8, 5))},
+		{name: "the verification in another order", tested: rebuilt(moved(steps(), 14, 12))},
+		{name: "an error that a later read replaced", tested: rebuilt(slices.Insert(steps(), 6, read("eks:DescribeNodegroup", "prod/ng-a", fact("nodegroup prod/ng-a", "read", "error=ThrottlingException"))))},
 
 		// One per kind of obligation.
-		{name: "the nodegroup was not read before its roll", v2: rebuilt(without(steps(), 6)), want: []Field{FieldEvidence},
-			says: "target obligation not met: before eks:UpdateNodegroupVersion prod/ng-a (change 2), the old binary had seen nodegroup prod/ng-a status=ACTIVE, and the new binary did not read it there"},
-		{name: "the roll was sent while the read of the nodegroup was unanswered", v2: held(6), want: []Field{FieldEvidence},
+		{name: "the nodegroup was not read before its roll", tested: rebuilt(without(steps(), 6)), want: []Field{FieldEvidence},
+			says: "target obligation not met: before eks:UpdateNodegroupVersion prod/ng-a (change 2), the recorded run had seen nodegroup prod/ng-a status=ACTIVE, and this run did not read it there"},
+		{name: "the roll was sent while the read of the nodegroup was unanswered", tested: held(6), want: []Field{FieldEvidence},
 			says: "target obligation not met"},
-		{name: "the roll started before the control plane was seen to finish", v2: rebuilt(without(steps(), 4)), want: []Field{FieldEvidence},
-			says: "prerequisite obligation not met: before eks:UpdateNodegroupVersion prod/ng-a (change 2), the old binary had seen update prod 1 status=Successful, and the new binary last saw InProgress"},
-		{name: "the budgets were read before the control plane changed, and not again", v2: rebuilt(moved(steps(), 8, 2)), want: []Field{FieldEvidence},
-			says: "gate obligation not met: before eks:UpdateNodegroupVersion prod/ng-a (change 2), the old binary had seen pdb prod/default/web allowed=1"},
-		{name: "the gate saw another value", v2: rebuilt(slices.Insert(without(steps(), 8), 8, read("kube:ListPodDisruptionBudgets", "prod", fact("pdb prod/default/web", "allowed", "0")))),
-			want: []Field{FieldEvidence}, says: "and the new binary last saw 0"},
-		{name: "the gate could not read", v2: rebuilt(slices.Insert(steps(), 9, read("eks:DescribeNodegroup", "prod/ng-b", fact("nodegroup prod/ng-b", "read", "error=AccessDeniedException")))),
-			want: nil}, // the old binary has no such obligation; the checks of a scenario catch a binary that goes on
-		{name: "the last update was not seen to finish", v2: rebuilt(without(steps(), 11, 13, 14)), want: []Field{FieldSettlement, FieldVerification},
-			says: "settlement obligation not met: after its last change, the old binary had seen update prod/ng-a 2 status=Successful, and the new binary last saw InProgress"},
-		{name: "no verification after the last change", v2: rebuilt(without(steps(), 13, 14)), want: []Field{FieldVerification},
-			says: "verification obligation not met: after its last update ended, the old binary had seen node prod/a-1 condition=Ready, and the new binary did not read it there"},
-		{name: "the pods were checked before the roll had ended", v2: rebuilt(moved(steps(), 13, 11)), want: []Field{FieldVerification},
-			says: "the old binary had seen pods prod pending=none"},
+		{name: "the roll started before the control plane was seen to finish", tested: rebuilt(without(steps(), 4)), want: []Field{FieldEvidence},
+			says: "prerequisite obligation not met: before eks:UpdateNodegroupVersion prod/ng-a (change 2), the recorded run had seen update prod 1 status=Successful, and this run last saw InProgress"},
+		{name: "the budgets were read before the control plane changed, and not again", tested: rebuilt(moved(steps(), 8, 2)), want: []Field{FieldEvidence},
+			says: "gate obligation not met: before eks:UpdateNodegroupVersion prod/ng-a (change 2), the recorded run had seen pdb prod/default/web allowed=1"},
+		{name: "the gate saw another value", tested: rebuilt(slices.Insert(without(steps(), 8), 8, read("kube:ListPodDisruptionBudgets", "prod", fact("pdb prod/default/web", "allowed", "0")))),
+			want: []Field{FieldEvidence}, says: "and this run last saw 0"},
+		{name: "the gate could not read", tested: rebuilt(slices.Insert(steps(), 9, read("eks:DescribeNodegroup", "prod/ng-b", fact("nodegroup prod/ng-b", "read", "error=AccessDeniedException")))),
+			want: nil}, // the recorded run has no such obligation; the checks of a scenario catch a binary that goes on
+		{name: "the last update was not seen to finish", tested: rebuilt(without(steps(), 11, 13, 14)), want: []Field{FieldSettlement, FieldVerification},
+			says: "settlement obligation not met: after its last change, the recorded run had seen update prod/ng-a 2 status=Successful, and this run last saw InProgress"},
+		{name: "no verification after the last change", tested: rebuilt(without(steps(), 13, 14)), want: []Field{FieldVerification},
+			says: "verification obligation not met: after its last update ended, the recorded run had seen node prod/a-1 condition=Ready, and this run did not read it there"},
+		{name: "the pods were checked before the roll had ended", tested: rebuilt(moved(steps(), 13, 11)), want: []Field{FieldVerification},
+			says: "the recorded run had seen pods prod pending=none"},
 
 		// Compared for equality.
-		{name: "another target version", v2: edit(func(v2 *Trace) { v2.Changes[1].Mutation.Payload["version"] = "1.34" }), want: []Field{FieldMutations}},
-		{name: "a field more in the payload", v2: edit(func(v2 *Trace) { v2.Changes[1].Mutation.Payload["force"] = true }), want: []Field{FieldMutations}},
-		{name: "one token for two requests", v2: edit(func(v2 *Trace) { v2.Changes[1].Mutation.Payload["clientRequestToken"] = "token-1" }), want: []Field{FieldMutations}},
-		{name: "a mutation that was refused", v2: edit(func(v2 *Trace) { v2.Changes[1].Mutation.Outcome = "error=ResourceInUseException" }), want: []Field{FieldMutations}},
-		{name: "the target of the second change was read before the first change only", v2: rebuilt(moved(steps(), 6, 2)), want: []Field{FieldEvidence},
-			says: "the old binary had seen nodegroup prod/ng-a status=ACTIVE, and the new binary did not read it there"},
-		{name: "a mutation more", v2: rebuilt(append(steps(), change("eks:UpdateAddon", "prod/coredns", "token-3", "accepted"))), want: []Field{FieldMutations, FieldSettlement, FieldVerification}},
-		{name: "the nodegroup rolled before the control plane", v2: rebuilt(moved(steps(), 9, 2)), want: []Field{FieldMutations}},
-		{name: "another final state", v2: edit(func(v2 *Trace) {
-			v2.World[Region+"/prod"].Nodegroups["ng-a"] = "1.33 r2 DEGRADED 2/1/3 issues=NodeCreationFailure"
+		{name: "another target version", tested: edit(func(tested *Trace) { tested.Changes[1].Mutation.Payload["version"] = "1.34" }), want: []Field{FieldMutations}},
+		{name: "a field more in the payload", tested: edit(func(tested *Trace) { tested.Changes[1].Mutation.Payload["force"] = true }), want: []Field{FieldMutations}},
+		{name: "one token for two requests", tested: edit(func(tested *Trace) { tested.Changes[1].Mutation.Payload["clientRequestToken"] = "token-1" }), want: []Field{FieldMutations}},
+		{name: "a mutation that was refused", tested: edit(func(tested *Trace) { tested.Changes[1].Mutation.Outcome = "error=ResourceInUseException" }), want: []Field{FieldMutations}},
+		{name: "the target of the second change was read before the first change only", tested: rebuilt(moved(steps(), 6, 2)), want: []Field{FieldEvidence},
+			says: "the recorded run had seen nodegroup prod/ng-a status=ACTIVE, and this run did not read it there"},
+		{name: "a mutation more", tested: rebuilt(append(steps(), change("eks:UpdateAddon", "prod/coredns", "token-3", "accepted"))), want: []Field{FieldMutations, FieldSettlement, FieldVerification}},
+		{name: "the nodegroup rolled before the control plane", tested: rebuilt(moved(steps(), 9, 2)), want: []Field{FieldMutations}},
+		{name: "another final state", tested: edit(func(tested *Trace) {
+			tested.World[Region+"/prod"].Nodegroups["ng-a"] = "1.33 r2 DEGRADED 2/1/3 issues=NodeCreationFailure"
 		}), want: []Field{FieldWorld}},
-		{name: "another cluster touched", v2: edit(func(v2 *Trace) { v2.World[Region+"/staging"] = ClusterState{Cluster: "1.32 ACTIVE"} }), want: []Field{FieldWorld}},
-		{name: "a refusal", v2: func() Trace {
-			v2 := build(clusterOld, nodegroup)
-			v2.RefusedBeforeMutation, v2.ExitCode = true, 3
-			v2.World = map[string]ClusterState{Region + "/prod": {Cluster: "1.32 ACTIVE"}}
-			return v2
+		{name: "another cluster touched", tested: edit(func(tested *Trace) { tested.World[Region+"/staging"] = ClusterState{Cluster: "1.32 ACTIVE"} }), want: []Field{FieldWorld}},
+		{name: "a refusal", tested: func() Trace {
+			tested := build(clusterOld, nodegroup)
+			tested.RefusedBeforeMutation, tested.ExitCode = true, 3
+			tested.World = map[string]ClusterState{Region + "/prod": {Cluster: "1.32 ACTIVE"}}
+			return tested
 		}, want: []Field{FieldMutations, FieldWorld, FieldRefused, FieldExitCode}},
-		{name: "another exit code", v2: edit(func(v2 *Trace) { v2.ExitCode = 5 }), want: []Field{FieldExitCode}},
+		{name: "another exit code", tested: edit(func(tested *Trace) { tested.ExitCode = 5 }), want: []Field{FieldExitCode}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			var got []Field
 			var text []string
-			for _, d := range Compare("sample", sampleTrace(), tt.v2(), nil) {
-				if d.Allowed {
-					t.Errorf("%s is allowed with an empty allowlist", d.Field)
-				}
+			for _, d := range Compare("sample", sampleTrace(), tt.tested()) {
 				got = append(got, d.Field)
 				text = append(text, d.String())
 			}
@@ -330,17 +323,17 @@ func TestCompareDecision(t *testing.T) {
 	done := updateIs("prod", "1", "Successful")
 	old := build(clusterOld, updateIs("prod", "1", "InProgress"), done)
 	tests := []struct {
-		name string
-		v2   Trace
-		says string
+		name   string
+		tested Trace
+		says   string
 	}{
 		{"the same, in another order", build(done, clusterOld), ""},
 		{"it did not wait for the update it attached to", build(clusterOld, updateIs("prod", "1", "InProgress")),
-			"decision obligation not met: in the run, the old binary had seen update prod 1 status=Successful, and the new binary last saw InProgress"},
-		{"it did not look at the update", build(clusterOld), "the new binary did not read it there"},
+			"decision obligation not met: in the run, the recorded run had seen update prod 1 status=Successful, and this run last saw InProgress"},
+		{"it did not look at the update", build(clusterOld), "this run did not read it there"},
 	}
 	for _, tt := range tests {
-		diffs := Compare("sample", old, tt.v2, nil)
+		diffs := Compare("sample", old, tt.tested)
 		switch {
 		case tt.says == "" && len(diffs) != 0:
 			t.Errorf("%s: differences %v, want none", tt.name, diffs)
@@ -352,7 +345,7 @@ func TestCompareDecision(t *testing.T) {
 
 // TestCompareBatch is a binary that reads two nodegroups, and then rolls
 // one after the other. It owes no second read of the second nodegroup, and
-// a new binary that makes one meets the obligation too. One that never read
+// a run that makes one meets the obligation too. One that never read
 // the second nodegroup, or that read it only before the user said yes, does
 // not.
 func TestCompareBatch(t *testing.T) {
@@ -367,20 +360,20 @@ func TestCompareBatch(t *testing.T) {
 		t.Errorf("the last evidence of the second roll is %q, want the carried status of ng-b", got)
 	}
 	tests := []struct {
-		name string
-		v2   Trace
-		says string
+		name   string
+		tested Trace
+		says   string
 	}{
 		{"the same", build(other, nodegroup, a, done, b), ""},
 		{"it reads the second target again", build(nodegroup, other, a, done, other, b), ""}, //nolint:gocritic // the same read twice, on purpose
 		{"it reads the second target only between the changes", build(nodegroup, a, done, other, b), "gate obligation not met: before eks:UpdateNodegroupVersion prod/ng-a (change 1)"},
-		{"it never read the second target", build(nodegroup, a, done, b), "from before its previous change, the old binary had seen nodegroup prod/ng-b status=ACTIVE, and the new binary did not read it there"},
-		{"it read the second target again and it had degraded", build(nodegroup, other, a, done, degraded, b), "and the new binary last saw DEGRADED"},
+		{"it never read the second target", build(nodegroup, a, done, b), "from before its previous change, the recorded run had seen nodegroup prod/ng-b status=ACTIVE, and this run did not read it there"},
+		{"it read the second target again and it had degraded", build(nodegroup, other, a, done, degraded, b), "and this run last saw DEGRADED"},
 		{"it read the second target only before the prompt", build(nodegroup, other, confirm, nodegroup, a, done, b), "did not read it there"}, //nolint:gocritic // the same read twice, on purpose
 	}
 	for _, tt := range tests {
 		var text []string
-		for _, d := range Compare("sample", old, tt.v2, nil) {
+		for _, d := range Compare("sample", old, tt.tested) {
 			text = append(text, d.String())
 		}
 		switch all := strings.Join(text, "\n"); {
@@ -391,18 +384,18 @@ func TestCompareBatch(t *testing.T) {
 		}
 	}
 
-	// A fresh read is owed fresh: the old binary read the second target
-	// again, so a new binary that holds only the read from the start does
+	// A fresh read is owed fresh: the recorded run read the second target
+	// again, so a run that holds only the read from the start does
 	// not meet it.
 	careful := build(nodegroup, other, a, done, other, b) //nolint:gocritic // the same read twice, on purpose
-	if diffs := Compare("sample", careful, old, nil); len(diffs) != 1 || !strings.Contains(diffs[0].Detail, "the new binary did not read it there") {
+	if diffs := Compare("sample", careful, old); len(diffs) != 1 || !strings.Contains(diffs[0].Detail, "this run did not read it there") {
 		t.Errorf("a batch binary held to one that reads again: %v, want one unmet obligation", diffs)
 	}
 }
 
-// TestCompareBaselineRule holds the baseline rule to its words. The old
-// binary reads the baseline before its drain gate, so a run that the gate
-// refuses has read it. A new binary that is refused too owes no baseline.
+// TestCompareBaselineRule holds the baseline rule to its words. A
+// binary may read the baseline before its drain gate, so a run that the gate
+// refuses has read it. A run that is refused too owes no baseline.
 // It owes every gate read, and it owes the same list where that list is
 // not a baseline: in a run that was not refused, and after an update that
 // the run followed.
@@ -415,28 +408,28 @@ func TestCompareBaselineRule(t *testing.T) {
 		return tr
 	}
 	old := refused(nodegroup, pendingPods, nodesReady, tight)
-	const baseline = "the old binary had seen pods prod pending=none"
+	const baseline = "the recorded run had seen pods prod pending=none"
 	tests := []struct {
-		name    string
-		old, v2 Trace
+		name        string
+		old, tested Trace
 		// says is a text of the one difference, in the decision. Empty
 		// means no difference.
 		says string
 	}{
-		{name: "refused with no baseline", old: old, v2: refused(nodegroup, nodesReady, tight)},
-		{name: "refused with the baseline", old: old, v2: refused(nodegroup, pendingPods, nodesReady, tight)},
-		{name: "refused, and the budgets were not read", old: old, v2: refused(nodegroup, nodesReady),
-			says: "the old binary had seen pdb prod/default/web allowed=0, and the new binary did not read it there"},
-		{name: "refused, and the nodes were not read", old: old, v2: refused(nodegroup, tight),
-			says: "the old binary had seen node prod/a-1 condition=Ready, and the new binary did not read it there"},
-		{name: "a run that was not refused owes the list", old: build(nodegroup, pendingPods), v2: build(nodegroup), says: baseline},
+		{name: "refused with no baseline", old: old, tested: refused(nodegroup, nodesReady, tight)},
+		{name: "refused with the baseline", old: old, tested: refused(nodegroup, pendingPods, nodesReady, tight)},
+		{name: "refused, and the budgets were not read", old: old, tested: refused(nodegroup, nodesReady),
+			says: "the recorded run had seen pdb prod/default/web allowed=0, and this run did not read it there"},
+		{name: "refused, and the nodes were not read", old: old, tested: refused(nodegroup, tight),
+			says: "the recorded run had seen node prod/a-1 condition=Ready, and this run did not read it there"},
+		{name: "a run that was not refused owes the list", old: build(nodegroup, pendingPods), tested: build(nodegroup), says: baseline},
 		{name: "after an update that the run followed, the list is the verification",
-			old: refused(nodegroup, updateIs("prod/ng-a", "1", "Failed"), pendingPods),
-			v2:  refused(nodegroup, updateIs("prod/ng-a", "1", "Failed")), says: baseline},
+			old:    refused(nodegroup, updateIs("prod/ng-a", "1", "Failed"), pendingPods),
+			tested: refused(nodegroup, updateIs("prod/ng-a", "1", "Failed")), says: baseline},
 	}
 	for _, tt := range tests {
 		var text []string
-		for _, d := range Compare("sample", tt.old, tt.v2, nil) {
+		for _, d := range Compare("sample", tt.old, tt.tested) {
 			text = append(text, d.String())
 		}
 		switch all := strings.Join(text, "\n"); {
@@ -449,75 +442,9 @@ func TestCompareBaselineRule(t *testing.T) {
 	// With a mutation in both runs the baseline is evidence of the change,
 	// and the rule does not reach it.
 	roll := change("eks:UpdateNodegroupVersion", "prod/ng-a", "token-1", "accepted")
-	diffs := Compare("sample", build(nodegroup, pendingPods, roll), build(nodegroup, roll), nil)
+	diffs := Compare("sample", build(nodegroup, pendingPods, roll), build(nodegroup, roll))
 	if len(diffs) != 1 || diffs[0].Field != FieldEvidence || !strings.Contains(diffs[0].Detail, baseline) {
 		t.Errorf("a roll with no baseline before it: %v, want one unmet gate obligation for the Pending pods", diffs)
-	}
-}
-
-func TestCompareExitCodeTable(t *testing.T) {
-	t.Parallel()
-	legacyTrace, v2 := sampleTrace(), sampleTrace()
-	legacyTrace.ExitCode, v2.ExitCode = 7, 7
-	diffs := Compare("sample", legacyTrace, v2, nil)
-	if len(diffs) != 1 || diffs[0].Field != FieldExitCode {
-		t.Errorf("a legacy exit code that is not in ExitCodes gave %v, want one exit code difference", diffs)
-	}
-	for code := range 6 {
-		if ExitCodes[code] != code {
-			t.Errorf("ExitCodes[%d] = %d: the contract gives the six codes the same meaning in both binaries", code, ExitCodes[code])
-		}
-	}
-}
-
-func TestCompareAllowlist(t *testing.T) {
-	t.Parallel()
-	v2 := sampleTrace()
-	v2.ExitCode = 4
-	v2.Changes[1].Mutation.Payload["version"] = "1.34"
-	allow := []Allowance{
-		{Scenario: "sample", Field: FieldExitCode, Reason: "the contract picks 4", Expect: json.RawMessage(`4`)},
-		{Scenario: "other", Field: FieldMutations, Reason: "not this scenario", Expect: json.RawMessage(`[]`)},
-	}
-	diffs := Compare("sample", sampleTrace(), v2, allow)
-	if len(diffs) != 2 {
-		t.Fatalf("got %d differences, want 2: %v", len(diffs), diffs)
-	}
-	left := Unallowed(diffs)
-	if len(left) != 1 || left[0].Field != FieldMutations {
-		t.Errorf("differences that are not allowed = %v, want the mutations only", left)
-	}
-	if unused := Unused("sample", diffs, append(allow, Allowance{Scenario: "sample", Field: FieldWorld})); len(unused) != 1 || unused[0].Field != FieldWorld {
-		t.Errorf("unused allowances = %+v, want the one for the world", unused)
-	}
-	if text := diffs[1].String(); !strings.Contains(text, "allowed: the contract picks 4") {
-		t.Errorf("the allowed difference reads %q", text)
-	}
-
-	// An allowance allows the value it expects, and no other. An object
-	// names what it fixes, and a list fixes its length.
-	tests := []struct {
-		field  Field
-		expect string
-		want   bool
-	}{
-		{FieldExitCode, `4`, true},
-		{FieldExitCode, `3`, false},
-		{FieldMutations, `[{"operation":"eks:UpdateClusterVersion","target":"prod"},{"operation":"eks:UpdateNodegroupVersion","payload":{"version":"1.34"}}]`, true},
-		{FieldMutations, `[{"operation":"eks:UpdateClusterVersion"},{"payload":{"version":"1.33"}}]`, false},
-		{FieldMutations, `[{"operation":"eks:UpdateClusterVersion"}]`, false},
-		{FieldMutations, `[{"operation":"eks:UpdateClusterVersion"},{"force":true}]`, false},
-		{FieldMutations, `[]`, false},
-		{FieldMutations, `{"includes":[{"target":"prod/ng-a"}]}`, true},
-		{FieldMutations, `{"includes":[{"target":"prod/ng-b"}]}`, false},
-	}
-	for _, tt := range tests {
-		pinned := []Allowance{{Scenario: "sample", Field: tt.field, Reason: "r", Expect: json.RawMessage(tt.expect)}}
-		for _, d := range Compare("sample", sampleTrace(), v2, pinned) {
-			if d.Field == tt.field && d.Allowed != tt.want {
-				t.Errorf("with expect %s the %s is allowed = %t, want %t:\n%s", tt.expect, tt.field, d.Allowed, tt.want, d)
-			}
-		}
 	}
 }
 
@@ -563,139 +490,40 @@ func TestArrivalIsNotKnowledge(t *testing.T) {
 			read.Arrived, read.Completed, roll.Arrived, roll.Completed)
 	}
 
-	diffs := Compare("careful-then-eager", traces["careful"], traces["eager"], nil)
-	const want = "target obligation not met: before eks:UpdateNodegroupVersion prod/ng-a (change 1), the old binary had seen nodegroup prod/ng-a status=ACTIVE, and the new binary did not read it there"
+	diffs := Compare("careful-then-eager", traces["careful"], traces["eager"])
+	const want = "target obligation not met: before eks:UpdateNodegroupVersion prod/ng-a (change 1), the recorded run had seen nodegroup prod/ng-a status=ACTIVE, and this run did not read it there"
 	if len(diffs) != 1 || diffs[0].Field != FieldEvidence || !strings.Contains(diffs[0].Detail, want) {
 		t.Errorf("differences = %v, want one in the evidence that says %q", diffs, want)
 	}
-	if diffs := Compare("careful-twice", traces["careful"], traces["careful"], nil); len(diffs) != 0 {
+	if diffs := Compare("careful-twice", traces["careful"], traces["careful"]); len(diffs) != 0 {
 		t.Errorf("the careful run differs from itself: %v", diffs)
 	}
 }
 
-// TestAllowlistFile checks the allowlist in testdata: it loads, and every
-// entry names a scenario of the suite.
-func TestAllowlistFile(t *testing.T) {
-	t.Parallel()
-	list, err := LoadAllowlist(allowlistPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(list) == 0 {
-		t.Fatal("the allowlist is empty")
-	}
-	var names []string
-	for _, sc := range scenarios() {
-		names = append(names, sc.Name)
-	}
-	rows, err := ContractRows("../../CONTRACT.md")
-	if err != nil {
-		t.Fatal(err)
-	}
-	expecting := map[string]bool{}
-	for _, sc := range scenarios() {
-		if len(sc.V2Require)+len(sc.V2Checks) > 0 {
-			expecting[sc.Name] = true
-		}
-	}
-	for _, a := range list {
-		expecting[a.Scenario] = true
-	}
-	t.Logf("%d scenarios carry expectations of the v2 binary that differ from the old trace", len(expecting))
-	for _, a := range list {
-		if !slices.Contains(names, a.Scenario) {
-			t.Errorf("the allowlist names the scenario %q, which the suite does not have", a.Scenario)
-		}
-		// The source is the first words of the old-behaviour cell of a row
-		// of the contract's table.
-		if !slices.ContainsFunc(rows, func(row string) bool { return strings.HasPrefix(row, a.Source) }) {
-			t.Errorf("the allowlist entry for %s (%s) cites %q, and no row of the contract's table starts with that", a.Scenario, a.Field, a.Source)
-		}
-	}
-}
-
-func TestContractRows(t *testing.T) {
-	t.Parallel()
-	path := filepath.Join(t.TempDir(), "CONTRACT.md")
-	const doc = "# x\n\n## Behaviour the new CLI does not copy\n\nText.\n\n| Old behaviour | New behaviour |\n|---|---|\n| `a b` does X | Y |\n| Z happens | W |\n\nOne is kept.\n\n## Next\n\n| not | this |\n"
-	if err := os.WriteFile(path, []byte(doc), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	rows, err := ContractRows(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if diff := cmp.Diff([]string{"`a b` does X", "Z happens"}, rows); diff != "" {
-		t.Errorf("rows (-want +got):\n%s", diff)
-	}
-	if err := os.WriteFile(path, []byte("# nothing here\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ContractRows(path); err == nil {
-		t.Error("a contract with no such table gave no error")
-	}
-}
-
-func TestLoadAllowlistRejects(t *testing.T) {
-	t.Parallel()
-	tests := []struct{ name, file, want string }{
-		{"an entry the owner has not approved", `[{"scenario":"s","field":"world","reason":"r","source":"c","ownerApproved":false,"expect":{}}]`, "not approved by the owner"},
-		{"no reason", `[{"scenario":"s","field":"world","source":"c","ownerApproved":true,"expect":{}}]`, "needs a scenario, a reason, and a source"},
-		{"no source", `[{"scenario":"s","field":"world","reason":"r","ownerApproved":true,"expect":{}}]`, "needs a scenario, a reason, and a source"},
-		{"an unknown field", `[{"scenario":"s","field":"stdout","reason":"r","source":"c","ownerApproved":true,"expect":{}}]`, `unknown field "stdout"`},
-		{"nothing expected in its place", `[{"scenario":"s","field":"world","reason":"r","source":"c","ownerApproved":true}]`, "has no expect"},
-		{"not JSON", `[`, "unexpected end"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			path := filepath.Join(t.TempDir(), "allowlist.json")
-			if err := os.WriteFile(path, []byte(tt.file), 0o600); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := LoadAllowlist(path); err == nil || !strings.Contains(err.Error(), tt.want) {
-				t.Errorf("LoadAllowlist = %v, want an error with %q", err, tt.want)
-			}
-		})
-	}
-}
-
-// pair runs a scenario with the legacy binary and with another binary, and
-// returns everything that is wrong with the other one: each difference the
-// allowlist does not allow, each allowance of the scenario that no
-// difference used, and each of the scenario's own checks that the other
-// trace fails. A check about a field whose difference is allowed is
-// skipped: it describes the old binary only. With isV2, the other binary is
-// also held to what the scenario asks of the v2 binary alone.
-func pair(t *testing.T, sc Scenario, other Runner, preview, args []string, allow []Allowance, isV2 bool) []string {
+// check runs a scenario with the binary and returns everything that is
+// wrong with the run: each difference from the recorded trace of the
+// scenario, and each of the scenario's checks that the run fails. With
+// -update, a run that passes its checks becomes the recorded trace.
+func check(t *testing.T, sc Scenario, bin Runner, preview, args []string) []string {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), runLimit)
 	defer cancel()
-	got, err := other.RunAfter(ctx, sc, preview, args, t.TempDir())
+	got, err := bin.RunAfter(ctx, sc, preview, args, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	var problems []string
-	diffs := Compare(sc.Name, run(t, sc), got, allow)
-	allowed := map[Field]bool{}
-	for _, d := range diffs {
-		if d.Allowed {
-			allowed[d.Field] = true
-			t.Log(d)
-			continue
-		}
-		problems = append(problems, d.String())
-	}
-	for _, a := range Unused(sc.Name, diffs, allow) {
-		problems = append(problems, fmt.Sprintf("%s: the allowlist lets %s differ (%s), and it does not differ as allowed: remove the entry, or the binary has not made the change", sc.Name, a.Field, a.Source))
-	}
-	if err := sc.check(got, func(f Field) bool { return allowed[f] }); err != nil {
+	if err := sc.check(got); err != nil {
 		problems = append(problems, fmt.Sprintf("%s: the run does not show what the scenario is for:\n%v\n%s", sc.Name, err, brief(got)))
 	}
-	if isV2 {
-		if err := sc.checkV2(got); err != nil {
-			problems = append(problems, fmt.Sprintf("%s: the run does not show what the contract asks of the new binary:\n%v\n%s", sc.Name, err, brief(got)))
+	if *update {
+		if len(problems) == 0 {
+			record(t, sc, got)
 		}
+		return problems
+	}
+	for _, d := range Compare(sc.Name, recorded(t, sc), got) {
+		problems = append(problems, d.String())
 	}
 	return problems
 }
@@ -711,34 +539,23 @@ func scenarioNamed(t *testing.T, name string) Scenario {
 	return Scenario{}
 }
 
-// TestPairedFindsProblems pairs the binary with a recorded trace in ways
-// that must fail: an allowance that nothing uses, a run that breaks the
-// contract, a skipped preview, a refused run that read nothing, and a dry
-// run in place of the change. Each case proves that the comparison and the
-// checks catch that problem.
-func TestPairedFindsProblems(t *testing.T) {
+// TestCheckFindsProblems runs scenarios in ways that must fail against
+// their recorded traces: a run that breaks the contract, a skipped preview,
+// and a dry run in place of the change. Each case proves that the
+// comparison and the checks catch that problem.
+func TestCheckFindsProblems(t *testing.T) {
 	t.Parallel()
-	bin := Runner{Binary: v2Binary}
-	loaded, err := LoadAllowlist(allowlistPath)
-	if err != nil {
-		t.Fatal(err)
+	if *update {
+		t.Skip("-update records the traces; there is nothing to compare")
 	}
-	t.Run("an allowance that no difference uses", func(t *testing.T) {
-		t.Parallel()
-		sc := scenarioNamed(t, "addon-update-yes")
-		allow := append(slices.Clone(loaded), Allowance{Scenario: sc.Name, Field: FieldExitCode, Reason: "r", Source: "s", OwnerApproved: true, Expect: json.RawMessage(`1`)})
-		problems := strings.Join(pair(t, sc, bin, nil, sc.V2, allow, true), "\n")
-		if !strings.Contains(problems, "does not differ as allowed") {
-			t.Errorf("the problems lack the unused allowance:\n%s", problems)
-		}
-	})
-	t.Run("what the contract asks of the new binary", func(t *testing.T) {
+	bin := Runner{Binary: binary}
+	t.Run("what the contract asks of the binary", func(t *testing.T) {
 		t.Parallel()
 		// With --yes, the run calls AWS and rolls, which the contract of
 		// this scenario (no terminal, no --yes) refuses.
 		sc := scenarioNamed(t, "nodegroup-update-no-yes")
-		problems := strings.Join(pair(t, sc, bin, nil, append(slices.Clone(sc.V2), "--yes"), loaded, true), "\n")
-		for _, want := range []string{"does not show what the contract asks of the new binary", "the binary sent"} {
+		problems := strings.Join(check(t, sc, bin, nil, append(slices.Clone(sc.Args), "--yes")), "\n")
+		for _, want := range []string{"does not show what the scenario is for", "the binary sent", "mutations differs"} {
 			if !strings.Contains(problems, want) {
 				t.Errorf("the problems lack %q:\n%s", want, problems)
 			}
@@ -750,8 +567,8 @@ func TestPairedFindsProblems(t *testing.T) {
 		// passes and the roll starts, which the scenario's checks and the
 		// comparison refuse.
 		sc := scenarioNamed(t, "nodegroup-update-pdb-tightens-after-dry-run")
-		problems := strings.Join(pair(t, sc, bin, nil, sc.V2, loaded, true), "\n")
-		for _, want := range []string{"mutations differs (NOT ALLOWED)", "update requests [UpdateNodegroupVersion prod/ng-a], want none"} {
+		problems := strings.Join(check(t, sc, bin, nil, sc.Args), "\n")
+		for _, want := range []string{"mutations differs", "update requests [UpdateNodegroupVersion prod/ng-a], want none"} {
 			if !strings.Contains(problems, want) {
 				t.Errorf("the problems lack %q:\n%s", want, problems)
 			}
@@ -760,8 +577,8 @@ func TestPairedFindsProblems(t *testing.T) {
 	t.Run("a dry run in place of the change", func(t *testing.T) {
 		t.Parallel()
 		sc := scenarioNamed(t, "nodegroup-update-yes")
-		dryRun := scenarioNamed(t, "nodegroup-update-dry-run").V2
-		problems := strings.Join(pair(t, sc, bin, nil, dryRun, loaded, true), "\n")
+		dryRun := scenarioNamed(t, "nodegroup-update-dry-run").Args
+		problems := strings.Join(check(t, sc, bin, nil, dryRun), "\n")
 		for _, want := range []string{"mutations differs", "world differs", "no update request, want at least one"} {
 			if !strings.Contains(problems, want) {
 				t.Errorf("the problems lack %q:\n%s", want, problems)
@@ -770,24 +587,17 @@ func TestPairedFindsProblems(t *testing.T) {
 	})
 }
 
-// TestPaired compares the v2 binary with the legacy binary on every
-// scenario that has a v2 command line, and runs the scenario's own checks
-// on the v2 trace. TestMain builds the v2 binary, so the comparison runs in
-// every test run. A scenario joins it when it gets a v2 command line.
-func TestPaired(t *testing.T) {
+// TestScenarios runs the binary on every scenario, holds the run to the
+// recorded trace of the scenario, and runs the scenario's checks. TestMain
+// builds the binary, so the suite runs in every test run. With -update it
+// records the trace of each scenario whose checks pass.
+func TestScenarios(t *testing.T) {
 	t.Parallel()
-	v2 := Runner{Binary: v2Binary}
-	allow, err := LoadAllowlist(allowlistPath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	bin := Runner{Binary: binary}
 	for _, sc := range scenarios() {
-		if len(sc.V2) == 0 {
-			continue
-		}
 		t.Run(sc.Name, func(t *testing.T) {
 			t.Parallel()
-			for _, problem := range pair(t, sc, v2, sc.V2Preview, sc.V2, allow, true) {
+			for _, problem := range check(t, sc, bin, sc.Preview, sc.Args) {
 				t.Error(problem)
 			}
 		})

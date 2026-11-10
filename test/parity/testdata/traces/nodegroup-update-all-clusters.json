@@ -1,0 +1,119 @@
+{
+  "exitCode": 0,
+  "refusedBeforeMutation": false,
+  "changes": [
+    {
+      "mutation": {
+        "operation": "eks:UpdateNodegroupVersion",
+        "region": "us-east-1",
+        "target": "prod/ng-a",
+        "payload": {
+          "clientRequestToken": "token-1",
+          "version": "1.32"
+        },
+        "outcome": "accepted update 00000000-0000-4000-8000-000000000001"
+      },
+      "evidence": [
+        "gate: addon prod/coredns: issues=none",
+        "gate: addon prod/coredns: status=ACTIVE",
+        "gate: addon prod/coredns: version=v1.11.4-eksbuild.2",
+        "gate: addon prod/vpc-cni: issues=none",
+        "gate: addon prod/vpc-cni: status=ACTIVE",
+        "gate: addon prod/vpc-cni: version=v1.18.0-eksbuild.1",
+        "target: cluster prod: issues=none",
+        "target: cluster prod: status=ACTIVE",
+        "target: cluster prod: version=1.32",
+        "target: nodegroup prod/ng-a: issues=none",
+        "target: nodegroup prod/ng-a: release=1.32.0-20250101",
+        "target: nodegroup prod/ng-a: size=2/1/3",
+        "target: nodegroup prod/ng-a: status=ACTIVE",
+        "target: nodegroup prod/ng-a: version=1.32",
+        "gate: nodegroup prod/ng-b: issues=none",
+        "gate: nodegroup prod/ng-b: release=1.32.0-20260101",
+        "gate: nodegroup prod/ng-b: size=2/1/3",
+        "gate: nodegroup prod/ng-b: status=ACTIVE",
+        "gate: nodegroup prod/ng-b: version=1.32"
+      ]
+    },
+    {
+      "mutation": {
+        "operation": "eks:UpdateNodegroupVersion",
+        "region": "us-east-1",
+        "target": "staging/ng-s",
+        "payload": {
+          "clientRequestToken": "token-2",
+          "version": "1.32"
+        },
+        "outcome": "accepted update 00000000-0000-4000-8000-000000000002"
+      },
+      "evidence": [
+        "target: cluster staging: issues=none",
+        "target: cluster staging: status=ACTIVE",
+        "target: cluster staging: version=1.32",
+        "target: nodegroup staging/ng-s: issues=none",
+        "target: nodegroup staging/ng-s: release=1.32.0-20250101",
+        "target: nodegroup staging/ng-s: size=2/1/3",
+        "target: nodegroup staging/ng-s: status=ACTIVE",
+        "target: nodegroup staging/ng-s: version=1.32"
+      ]
+    }
+  ],
+  "settlement": [
+    "settlement: nodegroup staging/ng-s: issues=none",
+    "settlement: nodegroup staging/ng-s: release=1.32.0-20260101",
+    "settlement: nodegroup staging/ng-s: size=2/1/3",
+    "settlement: nodegroup staging/ng-s: status=ACTIVE",
+    "settlement: nodegroup staging/ng-s: version=1.32",
+    "settlement: update staging/ng-s 2: status=Successful"
+  ],
+  "verification": [
+    "verification: cluster staging: issues=none",
+    "verification: cluster staging: status=ACTIVE",
+    "verification: cluster staging: version=1.32"
+  ],
+  "operations": [
+    "autoscaling:DescribeAutoScalingGroups",
+    "autoscaling:DescribeScalingActivities",
+    "cloudwatch:GetMetricData",
+    "ec2:DescribeInstanceTypeOfferings",
+    "ec2:DescribeInstanceTypes",
+    "ec2:DescribeInstances",
+    "ec2:DescribeSubnets",
+    "eks:DescribeAddon",
+    "eks:DescribeCluster",
+    "eks:DescribeNodegroup",
+    "eks:DescribeUpdate",
+    "eks:ListAddons",
+    "eks:ListClusters",
+    "eks:ListNodegroups",
+    "eks:UpdateNodegroupVersion",
+    "servicequotas:GetServiceQuota",
+    "ssm:GetParameter"
+  ],
+  "world": {
+    "us-east-1/prod": {
+      "cluster": "1.32 ACTIVE",
+      "nodegroups": {
+        "ng-a": "1.32 1.32.0-20260101 ACTIVE 2/1/3",
+        "ng-b": "1.32 1.32.0-20260101 ACTIVE 2/1/3"
+      },
+      "addons": {
+        "coredns": "v1.11.4-eksbuild.2 ACTIVE",
+        "vpc-cni": "v1.18.0-eksbuild.1 ACTIVE"
+      },
+      "updates": [
+        "ng-a VersionUpdate Successful Version=1.32,ReleaseVersion=1.32.0-20260101"
+      ]
+    },
+    "us-east-1/staging": {
+      "cluster": "1.32 ACTIVE",
+      "nodegroups": {
+        "ng-s": "1.32 1.32.0-20260101 ACTIVE 2/1/3"
+      },
+      "addons": {},
+      "updates": [
+        "ng-s VersionUpdate Successful Version=1.32,ReleaseVersion=1.32.0-20260101"
+      ]
+    }
+  }
+}

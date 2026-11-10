@@ -200,7 +200,7 @@ func TestNewPlan_BusyTarget(t *testing.T) {
 	})
 	t.Run("an add-on that is updating to another version", func(t *testing.T) {
 		e := newEnv(t, newWorld(nil))
-		startElsewhere(t, e.world, "vpc-cni", "v1.19.5-eksbuild.1", fleettest.UpdateScript{Never: true})
+		startElsewhere(t, e.world, "vpc-cni", cniOther, fleettest.UpdateScript{Never: true})
 		step, f := planned(t, e, request("vpc-cni"))
 		if step.InFlight != "AddonUpdate" || f.Error != "add-on vpc-cni is UPDATING to v1.19.5-eksbuild.1 (AddonUpdate)"+again {
 			t.Errorf("in flight %q, failure %+v; want AddonUpdate in both", step.InFlight, f)

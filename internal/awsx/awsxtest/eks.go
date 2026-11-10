@@ -4,8 +4,10 @@ import (
 	"cmp"
 	"encoding/json"
 	"errors"
+	"hash/fnv"
 	"net/http"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/dantech2000/refresh/internal/fleet/fleettest"
@@ -34,24 +36,33 @@ var eksRoutes = []route{
 	{http.MethodGet, "/clusters/{name}/updates/{updateId}", "DescribeUpdate"},
 }
 
+// eksPages is the page rule of every EKS list refresh calls: "This value
+// can be between 1 and 100. If you don't use this parameter, 100 results
+// and a nextToken value, if applicable, are returned"
+// (https://docs.aws.amazon.com/eks/latest/APIReference/API_ListClusters.html,
+// and the same words for ListNodegroups, ListAddons, ListUpdates,
+// ListInsights, and DescribeAddonVersions). DescribeClusterVersions gives
+// the range and no default; 100 is assumed.
+var eksPages = pageRule{Default: 100, Min: 1, Max: 100}
+
 var eksOperations = map[string]operation{
-	"ListClusters":            {handle: eksListClusters},
+	"ListClusters":            {handle: eksListClusters, pages: eksPages},
 	"DescribeCluster":         {handle: eksDescribeCluster},
-	"DescribeClusterVersions": {handle: eksDescribeClusterVersions},
-	"DescribeAddonVersions":   {handle: eksDescribeAddonVersions},
-	"ListNodegroups":          {handle: eksListNodegroups},
+	"DescribeClusterVersions": {handle: eksDescribeClusterVersions, pages: eksPages},
+	"DescribeAddonVersions":   {handle: eksDescribeAddonVersions, pages: eksPages},
+	"ListNodegroups":          {handle: eksListNodegroups, pages: eksPages},
 	"DescribeNodegroup":       {handle: eksDescribeNodegroup},
 	"UpdateNodegroupVersion":  {handle: eksUpdateNodegroupVersion, mutates: true},
 	"UpdateNodegroupConfig":   {handle: eksUpdateNodegroupConfig, mutates: true},
-	"ListAddons":              {handle: eksListAddons},
+	"ListAddons":              {handle: eksListAddons, pages: eksPages},
 	"DescribeAddon":           {handle: eksDescribeAddon},
 	"UpdateAddon":             {handle: eksUpdateAddon, mutates: true},
-	"ListInsights":            {handle: eksListInsights},
+	"ListInsights":            {handle: eksListInsights, pages: eksPages},
 	"DescribeInsight":         {handle: eksDescribeInsight},
 	"StartInsightsRefresh":    {handle: eksStartInsightsRefresh, mutates: true},
 	"DescribeInsightsRefresh": {handle: eksDescribeInsightsRefresh},
 	"UpdateClusterVersion":    {handle: eksUpdateClusterVersion, mutates: true},
-	"ListUpdates":             {handle: eksListUpdates},
+	"ListUpdates":             {handle: eksListUpdates, pages: eksPages},
 	"DescribeUpdate":          {handle: eksDescribeUpdate},
 }
 
@@ -75,6 +86,11 @@ func eksError(err error) error {
 			return eksNotFound("No addon: " + notFound.Name)
 		}
 		return eksNotFound("No cluster found for name: " + notFound.Name + ".")
+	case errors.As(err, &inUse) && inUse.UpdateID == "":
+		// EKS's words for a nodegroup; the cluster and add-on forms are
+		// the same sentence, not verified.
+		kind := map[string]string{"cluster": "Cluster", "nodegroup": "Nodegroup", "addon": "Addon"}[inUse.Kind]
+		return newError("ResourceInUseException", kind+" cannot be updated as it is currently not in Active State")
 	case errors.As(err, &inUse):
 		return newError("ResourceInUseException", "Cannot update "+inUse.Name+" because it has update "+inUse.UpdateID+" in progress")
 	case errors.As(err, &invalid):
@@ -504,6 +520,13 @@ func updateJSON(u *fleettest.Update) object {
 
 // eksListUpdates lists the updates of the nodegroup or the add-on the
 // request names, or those of the cluster itself when it names neither.
+//
+// The API reference gives no order for updateIds
+// (https://docs.aws.amazon.com/eks/latest/APIReference/API_ListUpdates.html).
+// The fake sorts them by a hash of the ID: an order that no caller would
+// pick, and that is neither oldest first nor newest first, so a caller that
+// counts on either is seen to pay for it. It is stable, so a golden file
+// does not change from run to run.
 func eksListUpdates(c *call) (any, error) {
 	return c.inCluster(func(_ *fleettest.State, cl *fleettest.Cluster) (any, error) {
 		var ids []string
@@ -513,8 +536,16 @@ func eksListUpdates(c *call) (any, error) {
 				ids = append(ids, u.ID)
 			}
 		}
+		slices.SortFunc(ids, func(a, b string) int { return cmp.Or(cmp.Compare(idHash(a), idHash(b)), strings.Compare(a, b)) })
 		return paged(c, "updateIds", ids)
 	})
+}
+
+// idHash is the FNV-1a hash of an ID, the sort key of ListUpdates.
+func idHash(id string) uint32 {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(id))
+	return h.Sum32()
 }
 
 // eksDescribeUpdate finds an update only under the resource it belongs to:

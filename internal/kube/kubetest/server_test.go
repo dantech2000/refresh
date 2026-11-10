@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -190,6 +191,45 @@ func boolText(b bool) string {
 	return "false"
 }
 
+// TestListItems checks the state of each item that a list answer reports
+// to OnAnswer, by kind.
+func TestListItems(t *testing.T) {
+	_, srv, client := newServer(t)
+	ctx := testContext(t)
+	got := map[fleettest.Operation][]kubetest.Item{}
+	srv.OnAnswer = func(r kubetest.Request, a kubetest.Answer) { got[r.Operation] = a.Items }
+	if _, err := client.CoreV1().Nodes().List(ctx, metav1.ListOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.CoreV1().Pods("").List(ctx, metav1.ListOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.PolicyV1().PodDisruptionBudgets("").List(ctx, metav1.ListOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.AppsV1().Deployments("").List(ctx, metav1.ListOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.CoreV1().Events("").List(ctx, metav1.ListOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	want := map[fleettest.Operation][]kubetest.Item{
+		fleettest.KubeListNodes: {{Name: "a-1", State: "Ready"}, {Name: "a-2", State: "Ready"}, {Name: "b-1", State: "NotReady"}, {Name: "b-2", State: "Ready,cordoned"}},
+		fleettest.KubeListPods: {
+			{Namespace: "default", Name: "web-1", State: "Running", Node: "a-1"},
+			{Namespace: "default", Name: "web-2", State: "Running", Node: "a-2"},
+			{Namespace: "default", Name: "job-1", State: "Pending"},
+			{Namespace: "kube-system", Name: "coredns-1", State: "Running,notReady", Node: "b-1"},
+		},
+		fleettest.KubeListPDBs:        {{Namespace: "default", Name: "web", State: "0"}},
+		fleettest.KubeListDeployments: {{Namespace: "default", Name: "web", State: "2"}},
+		fleettest.KubeListEvents:      {{Name: "Pod/job-1", State: "Warning:FailedScheduling"}, {Name: "Pod/web-1", State: "Normal:Scheduled"}},
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("list items (-want +got):\n%s", diff)
+	}
+}
+
 // TestErrors checks what the server refuses, and the error client-go makes
 // of it.
 func TestErrors(t *testing.T) {
@@ -197,7 +237,11 @@ func TestErrors(t *testing.T) {
 	ctx := testContext(t)
 	var observed []string
 	srv.OnAnswer = func(r kubetest.Request, a kubetest.Answer) {
-		observed = append(observed, string(r.Operation)+": "+a.Reason+a.Observed)
+		text := a.Reason
+		for _, it := range a.Items {
+			text = strings.TrimSpace(text + " " + it.Name)
+		}
+		observed = append(observed, string(r.Operation)+": "+text)
 	}
 
 	w.SetFault(fleettest.KubeListPDBs, fleettest.Fault{Deny: true})
@@ -294,7 +338,9 @@ func TestInformer(t *testing.T) {
 
 	// Roll ng-a over four minutes of world time.
 	w.Edit(func(s *fleettest.State) { s.DefaultUpdate = fleettest.UpdateScript{After: 4 * time.Minute} })
-	if _, err := w.UpdateNodegroupVersion(region, "prod", "ng-a", fleettest.NodegroupVersionRequest{}); err != nil {
+	// With force: the budget of web allows no disruption, and EKS would
+	// stop the drain of a roll without it.
+	if _, err := w.UpdateNodegroupVersion(region, "prod", "ng-a", fleettest.NodegroupVersionRequest{Force: new(true)}); err != nil {
 		t.Fatal(err)
 	}
 	steps := []struct {

@@ -49,15 +49,12 @@ func Golden(t *testing.T, name, got string, update bool) {
 	}
 }
 
-// schemaBaseURL is the $id prefix of the committed schemas.
-const schemaBaseURL = "https://drod.dev/refresh/schema/v2/"
-
 // ValidateJSON checks a JSON document against the committed schema of its
 // kind in api/schema/v2. The schema is closed first: a key that it does
 // not list fails, so a field that the generator missed cannot hide.
 func ValidateJSON(t *testing.T, kind apidoc.Kind, document []byte) {
 	t.Helper()
-	id := schemaBaseURL + string(kind) + ".json"
+	id := apidoc.SchemaBaseURL + string(kind) + ".json"
 	f, err := os.Open(filepath.Join(moduleRoot(t), "api", "schema", "v2", string(kind)+".json"))
 	if err != nil {
 		t.Fatalf("%v; run: go run ./tools/genschema", err)

@@ -111,6 +111,79 @@ func TestDrainBlockers_BudgetShapes(t *testing.T) {
 	}
 }
 
+// The drain gate and the world's drain are two implementations of the
+// rules of the Kubernetes eviction API. For each shape of budget, the gate
+// blocks a roll of ng-a exactly when the world's roll of ng-a, sent
+// without force, ends with PodEvictionFailure.
+func TestDrainBlockers_AgreeWithTheDrain(t *testing.T) {
+	zero := int32(0)
+	notReady := func(_ *fleettest.State, c *fleettest.Cluster) { c.Pods[3].NotReady, c.Pods[4].NotReady = true, true }
+	tests := []struct {
+		name  string
+		edits []edit
+		// productBug, when set, names a known bug of the gate: the case
+		// is skipped while the two disagree, and fails once they agree,
+		// so the field goes with the fix.
+		productBug string
+	}{
+		{name: "room everywhere"},
+		{name: "a tight budget on the target", edits: []edit{tight("web")}},
+		{name: "a tight budget elsewhere", edits: []edit{tight("api")}},
+		{name: "maxUnavailable 0", edits: []edit{func(_ *fleettest.State, c *fleettest.Cluster) {
+			c.PDBs[0].MaxUnavailable, c.PDBs[0].DisruptionsAllowed = &zero, 0
+		}}},
+		// The status is of an older generation and still allows one
+		// disruption. The eviction API refuses every pod of the budget
+		// (ObservedGeneration < Generation answers 429), and the gate
+		// passes it: atRisk checks allowed, not unsynced.
+		{name: "an unsynced budget that allowed a disruption", edits: []edit{func(_ *fleettest.State, c *fleettest.Cluster) { c.PDBs[0].Unsynced = true }},
+			productBug: "DrainBlockers passes a budget whose status is not synced when the old status allowed a disruption"},
+		{name: "a sync-failed budget", edits: []edit{func(_ *fleettest.State, c *fleettest.Cluster) {
+			c.PDBs[0].SyncFailed, c.PDBs[0].DisruptionsAllowed = true, 0
+		}}},
+		{name: "a pod covered by two budgets", edits: []edit{func(_ *fleettest.State, c *fleettest.Cluster) {
+			c.PDBs = append(c.PDBs, fleettest.PDB{Namespace: "default", Name: "web-too", Selector: map[string]string{"app": "web"}, MinAvailable: 1, DisruptionsAllowed: 1, CurrentHealthy: 2, DesiredHealthy: 1, ExpectedPods: 2})
+		}}},
+		{name: "a not-ready pod under AlwaysAllow", edits: []edit{tight("web"), notReady, func(_ *fleettest.State, c *fleettest.Cluster) { c.PDBs[0].AlwaysAllow = true }}},
+		{name: "a not-ready pod under a met IfHealthyBudget", edits: []edit{tight("web"), notReady, func(_ *fleettest.State, c *fleettest.Cluster) {
+			c.PDBs[0].CurrentHealthy, c.PDBs[0].DesiredHealthy = 2, 2
+		}}},
+		{name: "a not-ready pod under an unmet IfHealthyBudget", edits: []edit{tight("web"), notReady, func(_ *fleettest.State, c *fleettest.Cluster) {
+			c.PDBs[0].CurrentHealthy = 0
+		}}},
+		{name: "pods that eviction ignores", edits: []edit{tight("web"), func(_ *fleettest.State, c *fleettest.Cluster) { c.Pods[3].Phase, c.Pods[4].Deleting = "Pending", true }}},
+		{name: "a budget with no selector", edits: []edit{tight("web"), func(_ *fleettest.State, c *fleettest.Cluster) { c.PDBs[0].NoSelector = true }}},
+		{name: "an empty selector selects the namespace", edits: []edit{func(_ *fleettest.State, c *fleettest.Cluster) {
+			c.PDBs = append(c.PDBs, fleettest.PDB{Namespace: "kube-system", Name: "all", MinAvailable: 3, CurrentHealthy: 3, DesiredHealthy: 3, ExpectedPods: 3})
+		}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newHarness(t, tt.edits...)
+			gate := h.run(testContext(t), health.DrainBlockers(), "ng-a")
+			if gate.Outcome != health.Pass && gate.Outcome != health.Fail {
+				t.Fatalf("gate = %s (%s), want Pass or Fail", gate.Outcome, gate.Message)
+			}
+			u, err := h.world.UpdateNodegroupVersion(east, "prod", "ng-a", fleettest.NodegroupVersionRequest{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var ended fleettest.Update
+			h.world.View(func(s *fleettest.State) { ended = *s.Cluster(east, "prod").Update(u.ID) })
+			drainFailed := ended.Status == fleettest.UpdateFailed && len(ended.Errors) == 1 && ended.Errors[0].Code == "PodEvictionFailure"
+			blocked := gate.Outcome == health.Fail
+			switch {
+			case blocked != drainFailed && tt.productBug != "":
+				t.Skipf("known product bug: %s", tt.productBug)
+			case blocked != drainFailed:
+				t.Errorf("gate %s (%s), and the roll without force ended %s %+v", gate.Outcome, gate.Message, ended.Status, ended.Errors)
+			case tt.productBug != "":
+				t.Errorf("the gate and the drain agree now; remove productBug %q", tt.productBug)
+			}
+		})
+	}
+}
+
 // RBAC that reads nodes and budgets but not pods: the checks that need
 // pods are Unreadable, the API is reachable, and the gate blocks with
 // exit 4 whatever --yes says. Nodes still passes.

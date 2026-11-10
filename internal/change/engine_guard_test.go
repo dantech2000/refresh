@@ -196,8 +196,11 @@ func TestEngineGuard_SubmitAfterAttachment(t *testing.T) {
 	t.Run("an add-on: the control plane starts to change during the wait", func(t *testing.T) {
 		// The control plane is at 1.33 already, and someone updates
 		// vpc-cni to a build that 1.33 cannot run.
-		world := engineWorld(func(_ *fleettest.State, c *fleettest.Cluster) { c.Version = "1.33" })
-		startElsewhere(t, world, "vpc-cni", "v1.19.5-eksbuild.1", fleettest.UpdateScript{After: 30 * time.Second})
+		world := engineWorld(func(s *fleettest.State, c *fleettest.Cluster) {
+			c.Version = "1.33"
+			s.AddonVersions = append(s.AddonVersions, fleettest.AddonVersion{Addon: "vpc-cni", Version: cniOther, ClusterVersions: []string{"1.32"}})
+		})
+		startElsewhere(t, world, "vpc-cni", cniOther, fleettest.UpdateScript{After: 30 * time.Second})
 		e := newEnv(t, world)
 		started := false
 		hooks := Hooks{Event: func(ev Event) {

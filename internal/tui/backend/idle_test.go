@@ -15,7 +15,7 @@ import (
 // watched again.
 func TestAForeignUpdateIsWatchedOnce(t *testing.T) {
 	inFlight := func(id string) *fleettest.Update {
-		return &fleettest.Update{ID: id, Type: fleettest.TypeConfigUpdate, Status: fleettest.UpdateInProgress, CreatedAt: cmdutiltest.Now}
+		return &fleettest.Update{ID: id, Type: fleettest.TypeConfigUpdate, Status: fleettest.UpdateInProgress, CreatedAt: cmdutiltest.Now()}
 	}
 	world := changeWorld(func(_ *fleettest.State, c *fleettest.Cluster) {
 		c.Status = fleettest.StatusUpdating

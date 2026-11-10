@@ -19,8 +19,6 @@ type edit func(s *fleettest.State, c *fleettest.Cluster)
 // fake's SSM parameters recommend.
 func oldImage(version string) string { return "ami-old" + version[2:] + "x" }
 
-func latestImage(version string) string { return "ami-latest1" + version[2:] }
-
 // fleet returns a seed for one healthy cluster, "prod" on Kubernetes 1.32,
 // changed by the edits:
 //
@@ -83,7 +81,7 @@ func addNodegroup(s *fleettest.State, c *fleettest.Cluster, name, version string
 	ng := &fleettest.Nodegroup{
 		Name: name, Version: version, Subnets: []string{"subnet-a", "subnet-b"}, AutoScalingGroups: []string{group},
 	}
-	image := latestImage(version)
+	image := fleettest.LatestImage(version)
 	if !onLatest {
 		ng.ReleaseVersion, image = version+".0-20250101", oldImage(version)
 	}
@@ -135,7 +133,7 @@ func noMetrics(s *fleettest.State, _ *fleettest.Cluster) {
 func bothStale(s *fleettest.State, c *fleettest.Cluster) {
 	c.Nodegroup("ng-b").ReleaseVersion = "1.32.0-20250101"
 	for i := range s.Instances {
-		if s.Instances[i].ImageID == latestImage("1.32") {
+		if s.Instances[i].ImageID == fleettest.LatestImage("1.32") {
 			s.Instances[i].ImageID = oldImage("1.32")
 		}
 	}
@@ -157,7 +155,7 @@ func upgradedAt(ago time.Duration) edit {
 			ng.Version, ng.ReleaseVersion = "1.33", ""
 		}
 		for i := range s.Instances {
-			s.Instances[i].ImageID = latestImage("1.33")
+			s.Instances[i].ImageID = fleettest.LatestImage("1.33")
 		}
 		c.Addon("vpc-cni").Version, c.Addon("coredns").Version = "v1.20.0-eksbuild.1", "v1.12.0-eksbuild.1"
 		c.Updates = []*fleettest.Update{{

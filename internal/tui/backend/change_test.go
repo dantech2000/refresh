@@ -39,7 +39,7 @@ var prod = state.Key{Region: east, Name: "prod"}
 // its own and a budget that lets one go. The clock reads the clock of
 // the test factory, so the sweep and the changes agree on the time.
 func changeWorld(edit func(s *fleettest.State, c *fleettest.Cluster)) *fleettest.World {
-	world := fleettest.NewAt(cmdutiltest.Now)
+	world := fleettest.NewAt(cmdutiltest.Now())
 	world.Edit(func(s *fleettest.State) {
 		seed(s)
 		c := &fleettest.Cluster{
@@ -461,7 +461,7 @@ func TestBlockedProposalCannotStart(t *testing.T) {
 // inside the rollback window.
 func upgradeTo133() *fleettest.Update {
 	return &fleettest.Update{ID: "up-1", Type: fleettest.TypeVersionUpdate, Status: fleettest.UpdateSuccessful,
-		Params: []fleettest.UpdateParam{{Type: "Version", Value: "1.33"}}, CreatedAt: cmdutiltest.Now.Add(-2 * time.Hour)}
+		Params: []fleettest.UpdateParam{{Type: "Version", Value: "1.33"}}, CreatedAt: cmdutiltest.Now().Add(-2 * time.Hour)}
 }
 
 // A plan that changed between the dry run and the start asks before
@@ -495,7 +495,7 @@ func TestPlanChangedAsksAndOneChangePerCluster(t *testing.T) {
 	}
 	// A sweep while it asks adopts nothing on the claimed cluster.
 	r.b.Refresh()
-	r.after <- cmdutiltest.Now
+	r.after <- cmdutiltest.Now()
 	swept2 := r.wait(t, asking.Version, swept(2))
 	if len(swept2.Changes) != 1 {
 		t.Fatalf("%d changes after a sweep, want the one that asks", len(swept2.Changes))
@@ -1057,7 +1057,7 @@ func TestAdoptsAChangeStartedElsewhere(t *testing.T) {
 	}
 	// A second sweep while it runs does not watch it twice.
 	r.b.Refresh()
-	r.after <- cmdutiltest.Now
+	r.after <- cmdutiltest.Now()
 	if st := r.wait(t, adopted.Version, swept(3)); len(st.Changes) != 1 {
 		t.Fatalf("%d changes after a second sweep", len(st.Changes))
 	}

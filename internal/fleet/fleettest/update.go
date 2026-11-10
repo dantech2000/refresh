@@ -44,7 +44,8 @@ type Update struct {
 	Errors    []UpdateError
 	// Force and RollbackTimeoutMinutes record what the request that started
 	// the update asked for. EKS does not report them back; they are here so
-	// a test can check what the product sent.
+	// a test can check what the product sent. Force also lets the drain of
+	// a nodegroup roll pass the PodDisruptionBudgets (see RollScript).
 	Force                  bool
 	RollbackTimeoutMinutes int32
 
@@ -212,6 +213,8 @@ func value[T any](p *T) T {
 
 // target is the resource an update changes.
 type target struct {
+	// kind is "cluster", "nodegroup", or "addon".
+	kind     string
 	name     string
 	status   *ResourceStatus
 	issues   *[]Issue
@@ -228,8 +231,19 @@ type target struct {
 // call that started it sees it: InProgress.
 //
 // The error is a *NotFoundError, an *InUseError when the control plane has
-// an update in progress, or an *InvalidError. An update of a nodegroup or
-// an add-on is also an *InUseError while the control plane updates.
+// an update in progress or is not ACTIVE, or an *InvalidError. An update of
+// a nodegroup or an add-on is also an *InUseError while the control plane
+// updates.
+//
+// The version must be the cluster's minor plus one, or minus one for a
+// rollback: "you can update only one minor version at a time", and "you
+// can only roll back by one minor version (N to N-1)"
+// (https://docs.aws.amazon.com/eks/latest/userguide/update-cluster.html,
+// https://docs.aws.amazon.com/eks/latest/userguide/rollback-cluster.html).
+// Any other version is an *InvalidError with the message EKS gives,
+// "Unsupported Kubernetes minor version update from X to Y". The other
+// conditions of a rollback (the 7-day window, a cluster that was upgraded
+// in place) are not modeled.
 func (w *World) UpdateClusterVersion(region, cluster string, req ClusterVersionRequest) (Update, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -253,12 +267,10 @@ func (w *World) UpdateClusterVersion(region, cluster string, req ClusterVersionR
 	if u, ok, err := replay(c, EKSUpdateClusterVersion, "", "", req.Token, request); ok {
 		return u, err
 	}
-	kind := TypeVersionUpdate
 	version := *req.Version
-	if _, to, ok := parseVersion(version); ok {
-		if _, from, ok := parseVersion(c.Version); ok && to < from {
-			kind = TypeVersionRollback
-		}
+	kind, err := clusterVersionStep(c.Version, version)
+	if err != nil {
+		return Update{}, err
 	}
 	u := &Update{
 		Type: kind, op: EKSUpdateClusterVersion, token: req.Token, request: request, Force: value(req.Force),
@@ -267,12 +279,35 @@ func (w *World) UpdateClusterVersion(region, cluster string, req ClusterVersionR
 	if req.Rollback != nil {
 		u.RollbackTimeoutMinutes = value(req.Rollback.TimeoutMinutes)
 	}
-	t := target{name: c.Name, status: &c.Status, issues: &c.HealthIssues, scripts: &c.UpdateScripts}
+	t := target{kind: "cluster", name: c.Name, status: &c.Status, issues: &c.HealthIssues, scripts: &c.UpdateScripts}
 	return w.start(c, u, t, func() { c.Version = version })
+}
+
+// clusterVersionStep returns the type of an update of a control plane at
+// from to the version to: one minor up or one minor down. See
+// UpdateClusterVersion.
+func clusterVersionStep(from, to string) (UpdateType, error) {
+	fromMajor, fromMinor, okFrom := parseVersion(from)
+	toMajor, toMinor, okTo := parseVersion(to)
+	switch {
+	case okFrom && okTo && fromMajor == toMajor && toMinor == fromMinor+1:
+		return TypeVersionUpdate, nil
+	case okFrom && okTo && fromMajor == toMajor && toMinor == fromMinor-1:
+		return TypeVersionRollback, nil
+	}
+	return "", &InvalidError{Message: fmt.Sprintf("Unsupported Kubernetes minor version update from %s to %s", from, to)}
 }
 
 // UpdateNodegroupVersion starts a nodegroup roll. See UpdateClusterVersion
 // for the result.
+//
+// The version must not be above the cluster's: "worker nodes can't run a
+// version newer than the control plane"
+// (https://docs.aws.amazon.com/eks/latest/userguide/rollback-cluster.html),
+// and the API reference offers only the nodegroup's own version or the
+// cluster's. A higher one is an *InvalidError; its message is not EKS's
+// own, which the documentation does not give. The nodegroup must be ACTIVE
+// or DEGRADED (see accepts).
 func (w *World) UpdateNodegroupVersion(region, cluster, nodegroup string, req NodegroupVersionRequest) (Update, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -285,6 +320,9 @@ func (w *World) UpdateNodegroupVersion(region, cluster, nodegroup string, req No
 		return u, err
 	}
 	version := cmp.Or(value(req.Version), ng.Version)
+	if above(version, c.Version) {
+		return Update{}, &InvalidError{Message: fmt.Sprintf("Requested Kubernetes version %s is newer than the cluster's version %s", version, c.Version)}
+	}
 	release := cmp.Or(value(req.ReleaseVersion), LatestRelease(version))
 	u := &Update{
 		Type: TypeVersionUpdate, Nodegroup: ng.Name, op: EKSUpdateNodegroupVersion, token: req.Token, request: request, Force: value(req.Force),
@@ -362,8 +400,28 @@ func (w *World) UpdateNodegroupConfig(region, cluster, nodegroup string, req Nod
 	})
 }
 
+// above reports whether the Kubernetes version v is a later minor than of.
+// A version that does not parse is above nothing.
+func above(v, of string) bool {
+	major, minor, ok := parseVersion(v)
+	ofMajor, ofMinor, okOf := parseVersion(of)
+	return ok && okOf && (major > ofMajor || major == ofMajor && minor > ofMinor)
+}
+
 // UpdateAddon starts an add-on update. See UpdateClusterVersion for the
 // result.
+//
+// "The version must match one of the versions returned by
+// DescribeAddonVersions"
+// (https://docs.aws.amazon.com/eks/latest/APIReference/API_UpdateAddon.html).
+// When State.AddonVersions lists the add-on in the cluster's region, a
+// version that it does not list is an *InvalidError, "Addon version
+// specified is not supported". A world with no catalog entry for the add-on
+// takes any version. The compatibility with the cluster's Kubernetes version
+// is not checked: the reference does not say it is, and the rollback guide
+// has the user downgrade an add-on to a version for N-1 while the control
+// plane is still at N
+// (https://docs.aws.amazon.com/eks/latest/userguide/rollback-cluster.html).
 func (w *World) UpdateAddon(region, cluster, addon string, req AddonRequest) (Update, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -380,6 +438,9 @@ func (w *World) UpdateAddon(region, cluster, addon string, req AddonRequest) (Up
 		return u, err
 	}
 	version := cmp.Or(value(req.Version), a.Version)
+	if req.Version != nil && !w.state.addonVersionOffered(c, a.Name, version) {
+		return Update{}, &InvalidError{Message: "Addon version specified is not supported"}
+	}
 	u := &Update{
 		Type: TypeAddonUpdate, Addon: a.Name, op: EKSUpdateAddon, token: req.Token, request: request,
 		Params: []UpdateParam{{Type: "AddonVersion", Value: version}},
@@ -397,7 +458,7 @@ func (w *World) UpdateAddon(region, cluster, addon string, req AddonRequest) (Up
 	// update ends. An update that fails puts the old version back.
 	previous := a.Version
 	t := target{
-		name: a.Name, status: &a.Status, issues: &a.HealthIssues, scripts: &a.UpdateScripts, modified: &a.ModifiedAt,
+		kind: "addon", name: a.Name, status: &a.Status, issues: &a.HealthIssues, scripts: &a.UpdateScripts, modified: &a.ModifiedAt,
 		begin: func() { a.Version = version }, revert: func() { a.Version = previous },
 	}
 	return w.start(c, u, t, configure)
@@ -437,8 +498,24 @@ func (w *World) nodegroup(region, cluster, name string) (*Cluster, *Nodegroup, e
 	return c, ng, nil
 }
 
+// addonVersionOffered reports whether the catalog offers version of the
+// add-on in the cluster's region, or has no entry for the add-on at all.
+func (s *State) addonVersionOffered(c *Cluster, addon, version string) bool {
+	listed := false
+	for _, av := range s.AddonVersions {
+		if av.Addon != addon || !Visible(av.Region, c.Region) {
+			continue
+		}
+		listed = true
+		if av.Version == version {
+			return true
+		}
+	}
+	return !listed
+}
+
 func (ng *Nodegroup) target() target {
-	return target{name: ng.Name, status: &ng.Status, issues: &ng.HealthIssues, scripts: &ng.UpdateScripts, modified: &ng.ModifiedAt}
+	return target{kind: "nodegroup", name: ng.Name, status: &ng.Status, issues: &ng.HealthIssues, scripts: &ng.UpdateScripts, modified: &ng.ModifiedAt}
 }
 
 // replay answers a request that repeats an earlier one: the same client
@@ -465,6 +542,24 @@ func replay(c *Cluster, op Operation, nodegroup, addon, token, request string) (
 	return Update{}, false, nil
 }
 
+// accepts holds, for each kind of resource, the statuses in which EKS starts
+// an update of it. A resource in another status answers
+// ResourceInUseException. Sources: "The cluster must be in ACTIVE status"
+// (https://docs.aws.amazon.com/eks/latest/userguide/rollback-cluster.html),
+// and "Nodegroup cannot be updated as it is currently not in Active State",
+// the answer EKS gives for a nodegroup that is updating or CREATE_FAILED
+// (https://repost.aws/questions/QUkO8ku3PVSs2uyjxw9AEBOg). DEGRADED is
+// accepted for a nodegroup, because an update is how one is repaired. An
+// add-on refuses only while EKS changes it (CREATING, UPDATING, DELETING):
+// whether EKS takes an UpdateAddon for an add-on that is CREATE_FAILED or
+// DELETE_FAILED is not documented, and refresh sends one to repair it. Both
+// are listed in COVERAGE.md as not verified against EKS.
+var accepts = map[string][]ResourceStatus{
+	"cluster":   {StatusActive},
+	"nodegroup": {StatusActive, StatusDegraded},
+	"addon":     {StatusActive, StatusDegraded, StatusCreateFailed, StatusUpdateFailed, StatusFailed, "DELETE_FAILED"},
+}
+
 // start records u as an update of t and returns it as InProgress. apply is
 // the change a Successful update makes. The caller holds w.mu and has
 // called replay.
@@ -481,11 +576,19 @@ func (w *World) start(c *Cluster, u *Update, t target, apply func()) (Update, er
 		}
 		controlPlane := old.Nodegroup == "" && old.Addon == ""
 		if old.Nodegroup == u.Nodegroup && old.Addon == u.Addon {
-			return Update{}, &InUseError{Name: t.name, UpdateID: old.ID}
+			return Update{}, &InUseError{Kind: t.kind, Name: t.name, UpdateID: old.ID}
 		}
 		if controlPlane {
-			return Update{}, &InUseError{Name: c.Name, UpdateID: old.ID}
+			return Update{}, &InUseError{Kind: "cluster", Name: c.Name, UpdateID: old.ID}
 		}
+	}
+	// A status that a test seeded with no update behind it refuses too. A
+	// nodegroup or an add-on waits for a control plane that is busy.
+	if busy := []ResourceStatus{StatusCreating, StatusUpdating, StatusDeleting}; t.kind != "cluster" && slices.Contains(busy, c.Status) {
+		return Update{}, &InUseError{Kind: "cluster", Name: c.Name, Status: c.Status}
+	}
+	if !slices.Contains(accepts[t.kind], *t.status) {
+		return Update{}, &InUseError{Kind: t.kind, Name: t.name, Status: *t.status}
 	}
 
 	w.lastUpdate++
@@ -588,9 +691,19 @@ func (w *World) settle() {
 	for _, u := range due {
 		u.scheduled = false
 		u.Status = cmp.Or(u.script.Result, UpdateSuccessful)
+		// A drain that the budgets still block fails the update, whatever
+		// the script says.
+		evictionFailed := u.roll != nil && len(u.roll.blocked) > 0
+		if evictionFailed {
+			u.Status = UpdateFailed
+		}
 		ok := u.Status == UpdateSuccessful
 		u.finish(w.now, ok)
 		if ok {
+			continue
+		}
+		if evictionFailed {
+			u.Errors = []UpdateError{u.roll.evictionFailure()}
 			continue
 		}
 		u.Errors = cloneErrors(u.script.Errors)

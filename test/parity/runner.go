@@ -5,12 +5,13 @@
 // the binary had seen when it sent each of them, and the state of the fleet
 // afterwards.
 //
-// The old and the new CLI have different commands, flags, documents, and
-// messages, so their output is not compared. What the old binary remains the
-// reference for is safety: which changes it makes, in what order, after
-// which evidence, and when it refuses. A Scenario pairs a legacy command line
-// with its v2 equivalent on the same world, and Compare holds the two traces
-// to each other on those points. See "Parity suite" in REWRITE.md.
+// The suite holds the binary to safety, not to output: which changes it
+// makes, in what order, after which evidence, and when it refuses. Each
+// Scenario has a recorded trace in testdata/traces, and Compare holds a run
+// to it on those points. The first traces were those of the old CLI; the
+// suite was re-baselined on this binary's traces once the two agreed on
+// everything but what CONTRACT.md changes. See "Parity suite" in
+// REWRITE.md and test/parity/README.md.
 //
 // # Time
 //

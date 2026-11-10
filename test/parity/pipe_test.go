@@ -18,7 +18,7 @@ import (
 )
 
 // A reader that goes away, as "refresh ... | head -1" does, must not make
-// the v2 binary hang or write garbage: the first write to the closed pipe
+// the binary hang or write garbage: the first write to the closed pipe
 // ends the process, as it ends any Unix filter, and nothing is written to
 // stderr in its place. Each command line runs against a fake AWS with a
 // stdout whose read end is closed before the binary starts, so the first
@@ -61,7 +61,7 @@ func TestClosedStdoutEndsTheRun(t *testing.T) {
 			// The guard of a hang. The run itself takes milliseconds.
 			ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
 			defer cancel()
-			cmd := exec.CommandContext(ctx, v2Binary, args...) //nolint:gosec // the binary this package built
+			cmd := exec.CommandContext(ctx, binary, args...) //nolint:gosec // the binary this package built
 			cmd.Env = env
 			cmd.Stdout = w
 			var stderr strings.Builder
