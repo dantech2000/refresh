@@ -41,6 +41,19 @@ func (o WaitOptions) interval() time.Duration {
 	return DefaultPollInterval
 }
 
+// unseenLimit is how long a wait polls an update that answers not-found
+// and that it never saw. EKS can answer so for a moment after it accepted
+// the update, not for minutes: an update that is still not found after
+// this is not one that the wait can follow. The resource or the update is
+// gone.
+const unseenLimit = time.Minute
+
+// maxUnseen returns how many not-found answers a wait takes for an update
+// that it never saw: the polls of unseenLimit, and at least 3.
+func (o WaitOptions) maxUnseen() int {
+	return max(3, int(unseenLimit/o.interval()))
+}
+
 // pause waits one interval before a poll. It returns false when ctx ended
 // first.
 //
@@ -236,9 +249,11 @@ func ended(ctx context.Context, what, last string) error {
 //
 // It returns nil for a Successful update and an *UpdateError for a Failed
 // or a Cancelled one, also when that answer comes at the deadline of the
-// run: a change that has finished is reported as finished. A poll error that another poll will not fix ends it
-// with an *UnobservedError; a not-found before the update was seen once
-// is not such an error. It polls through every other error, and through
+// run: a change that has finished is reported as finished. A poll error
+// that another poll will not fix ends it with an *UnobservedError; a
+// not-found before the update was seen once is not such an error, until
+// it lasts for unseenLimit (see maxUnseen). It polls through every other
+// error, and through
 // an answer with no update, and reports each through Progress. When ctx
 // ends, it returns the error of ctx, wrapped. It calls no other operation
 // and prints nothing.
@@ -285,6 +300,7 @@ func waitUpdates(ctx context.Context, c awsx.PollClients, polls []*updatePoll, o
 	open := make([]int, len(polls))
 	for i := range polls {
 		open[i] = i
+		polls[i].maxUnseen = o.maxUnseen()
 	}
 	for len(open) > 0 && o.pause(ctx) {
 		answers := fanout.ForEach(ctx, open, len(open), func(ctx context.Context, i int) answer {
@@ -324,8 +340,10 @@ type updatePoll struct {
 	id string
 	in *eks.DescribeUpdateInput
 	// seen says that a poll has returned the update once. Before that a
-	// not-found answer is one that the next poll may fix.
-	seen bool
+	// not-found answer is one that the next poll may fix, maxUnseen times
+	// at most. unseen counts those answers.
+	seen              bool
+	unseen, maxUnseen int
 	// last is the last status that a poll saw.
 	last string
 }
@@ -361,7 +379,10 @@ func (p *updatePoll) poll(ctx context.Context, c awsx.PollClients) (progress Upd
 		if ctx.Err() != nil {
 			return UpdateProgress{}, false, true, p.ended(ctx)
 		}
-		if pollStops(err) && (p.seen || !awsx.IsNotFound(err)) {
+		if !p.seen && awsx.IsNotFound(err) {
+			p.unseen++
+		}
+		if pollStops(err) && (p.seen || !awsx.IsNotFound(err) || p.unseen >= p.maxUnseen) {
 			return UpdateProgress{}, false, true, &UnobservedError{Resource: p.r, UpdateID: p.id, LastStatus: p.last, Err: err}
 		}
 		return UpdateProgress{Resource: p.r, UpdateID: p.id, Status: p.last, PollError: awsx.Summary(err)}, true, false, nil
