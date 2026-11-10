@@ -12,7 +12,7 @@ RUN
 
 RESULTS  1
   NAME  KIND   STATUS      FROM                     TO                       UPDATE                                NOTE  STARTED                  FINISHED                 FAILURE
-  web   Scale  [X] Failed  desired 2, min 1, max 3  desired 3, min 1, max 3  00000000-0000-4000-8000-000000000001  -     2026-01-01 00:00:00 UTC  2026-01-01 00:00:30 UTC  UpdateFailed: nodegroup web is DEGRADED after the scale to 3 nodes
+  web   Scale  [X] Failed  desired 2, min 1, max 3  desired 3, min 1, max 3  00000000-0000-4000-8000-000000000001  -     2026-01-01 00:00:00 UTC  2026-01-01 00:00:15 UTC  UpdateFailed: nodegroup web is DEGRADED after the scale to 3 nodes
 
 HEALTH GATE
   decision  [OK] Go

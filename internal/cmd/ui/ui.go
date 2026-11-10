@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 	"time"
 
@@ -14,49 +13,34 @@ import (
 	"github.com/charmbracelet/colorprofile"
 	"github.com/spf13/cobra"
 
-	"github.com/dantech2000/refresh/internal/awsx"
 	"github.com/dantech2000/refresh/internal/change"
+	"github.com/dantech2000/refresh/internal/cmd/changecmd"
 	"github.com/dantech2000/refresh/internal/cmd/fleetcmd"
 	"github.com/dantech2000/refresh/internal/cmdutil"
-	"github.com/dantech2000/refresh/internal/contexts"
 	"github.com/dantech2000/refresh/internal/fleet"
 	"github.com/dantech2000/refresh/internal/tui"
 	"github.com/dantech2000/refresh/internal/tui/backend"
 	"github.com/dantech2000/refresh/internal/tui/state"
+	"github.com/dantech2000/refresh/internal/view"
 )
 
 // minInterval is the shortest time between two sweeps.
 const minInterval = 10 * time.Second
 
 type options struct {
-	ios      *cmdutil.IOStreams
-	aws      func(ctx context.Context) (*awsx.Provider, error)
-	contexts func() (*contexts.Store, error)
-	global   *cmdutil.GlobalOptions
-	now      func() time.Time
-	after    func(time.Duration) <-chan time.Time
-	// deps builds the dependencies of a change from the provider.
-	deps func(provider *awsx.Provider) change.Deps
+	f   *cmdutil.Factory
+	ios *cmdutil.IOStreams
 
 	allRegions     bool
 	interval       time.Duration
 	allowChanges   bool
 	waitTimeout    time.Duration
 	waitTimeoutSet bool
-
-	// profileInEffect returns the AWS profile of the run, and profile
-	// holds it.
-	profileInEffect func() (string, error)
-	profile         string
 }
 
 // NewCmdUI returns the ui command.
 func NewCmdUI(f *cmdutil.Factory) *cobra.Command {
-	o := &options{ios: f.IOStreams, aws: f.AWS, contexts: f.Contexts, global: &f.Global, now: f.Now, after: f.After,
-		profileInEffect: func() (string, error) { return cmdutil.ProfileInEffect(f) },
-		deps: func(provider *awsx.Provider) change.Deps {
-			return change.Deps{AWS: provider, Fetch: &fleet.Fetcher{Now: f.Now}, Kube: f.Kube, Now: f.Now, After: f.After, AfterFunc: f.AfterFunc, Tick: f.Tick}
-		}}
+	o := &options{f: f, ios: f.IOStreams}
 	cmd := &cobra.Command{
 		Use:   "ui",
 		Short: "Open the terminal UI for the fleet (experimental)",
@@ -108,7 +92,7 @@ Exit codes:
 }
 
 func (o *options) validate() error {
-	if err := fleetcmd.ValidateSweepFlags(o.global, o.allRegions); err != nil {
+	if err := fleetcmd.ValidateSweepFlags(&o.f.Global, o.allRegions); err != nil {
 		return err
 	}
 	if o.interval < minInterval {
@@ -124,36 +108,38 @@ func (o *options) validate() error {
 }
 
 func (o *options) run(ctx context.Context) error {
-	provider, err := o.aws(ctx)
+	provider, err := o.f.AWS(ctx)
 	if err != nil {
 		return err
 	}
 	// The top bar shows the profile in effect also when AWS_PROFILE or
 	// the context names it. Loading the provider read the same settings.
-	if o.profile, err = o.profileInEffect(); err != nil {
+	profile, err := cmdutil.ProfileInEffect(o.f)
+	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithCancel(ctx)
+	global := &o.f.Global
+	bctx, cancel := backendContext(ctx)
 	defer cancel()
 
-	b := backend.New(ctx, provider, backend.Options{
-		Regions:         fleetcmd.SweepRegions(o.global, provider.Region(), o.allRegions),
+	b := backend.New(bctx, provider, backend.Options{
+		Regions:         fleetcmd.SweepRegions(global, provider.Region(), o.allRegions),
 		Interval:        o.interval,
 		AllowChanges:    o.allowChanges,
-		ReadTimeout:     o.global.Timeout,
+		ReadTimeout:     global.Timeout,
 		WaitTimeout:     o.waitTimeout,
 		WaitTimeoutSet:  o.waitTimeoutSet,
-		Deps:            o.deps(provider),
-		Profile:         o.global.Profile,
-		ProfileInEffect: o.profile,
+		Deps:            changecmd.DepsOf(o.f, provider),
+		Profile:         global.Profile,
+		ProfileInEffect: profile,
 		Context:         o.contextName(),
-		Kubeconfig:      o.global.Kubeconfig,
-		KubeContext:     o.global.KubeContext,
+		Kubeconfig:      global.Kubeconfig,
+		KubeContext:     global.KubeContext,
 		SweepError: func(ctx context.Context, res *fleet.SweepResult) error {
 			return fleetcmd.SweepError(ctx, provider, res)
 		},
-		Now:   o.now,
-		After: o.after,
+		Now:   o.f.Now,
+		After: o.f.After,
 	})
 	done := make(chan struct{})
 	go func() {
@@ -171,7 +157,7 @@ func (o *options) run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer restore() // a second call is harmless
+	defer restore() // it runs once; this covers a return before the call below
 
 	m := tui.New(ctx, b, o.ios.Theme())
 	opts := []tea.ProgramOption{tea.WithContext(ctx), tea.WithInput(o.ios.In), tea.WithOutput(o.ios.Out)}
@@ -180,37 +166,132 @@ func (o *options) run(ctx context.Context) error {
 	}
 	_, err = tea.NewProgram(m, opts...).Run()
 	restore()
+	trace := m.Panic()
+	err = panicked(err, trace)
+	sayPanic(o.ios.ErrOut, err, trace)
+	// The backend still runs: what is unfinished is what the session
+	// left, also after an interrupt.
 	sayUnfinished(o.ios.ErrOut, b.Unfinished())
-	if err != nil && ctx.Err() != nil {
+	if err != nil && !errors.Is(err, tea.ErrProgramPanic) && ctx.Err() != nil {
 		// The session was interrupted; main says so.
 		return nil
 	}
 	return err
 }
 
-// sayUnfinished names the changes of the session that had not ended when
-// the UI closed: EKS goes on with them, and the commands can watch them.
-func sayUnfinished(w io.Writer, changes []state.Change) {
-	if len(changes) == 0 {
+// panicked is the error of a session that Run ended with err: a panic in
+// a command of the model, which the model recorded as trace, ends the
+// program as a quit, with no error from Run.
+func panicked(err error, trace string) error {
+	if trace != "" && err == nil {
+		return tea.ErrProgramPanic
+	}
+	return err
+}
+
+// backendContext is the context of the backend: the values of the
+// session, and its own cancel, which run calls after it has said what is
+// unfinished. An interrupt ends the session context; if it ended the
+// backend too, the handles of the changes would finish, cancelled,
+// before Unfinished reads them, and the words on the way out would name
+// nothing.
+func backendContext(session context.Context) (context.Context, context.CancelFunc) {
+	return context.WithCancel(context.WithoutCancel(session))
+}
+
+// sayPanic writes the panic that ended the UI, and its stack, to w. Bubble
+// Tea printed it to os.Stderr, which was the null device then, or never,
+// for a panic in a command. A panic outside the model leaves no trace,
+// and the user is told how to get one.
+func sayPanic(w io.Writer, err error, trace string) {
+	if !errors.Is(err, tea.ErrProgramPanic) {
 		return
 	}
-	_, _ = fmt.Fprintf(w, "%s still running in EKS; the UI no longer follows them:\n", plural(len(changes), "change"))
+	if trace == "" {
+		_, _ = fmt.Fprintln(w, "the UI stopped on a panic outside its own code; with TEA_DEBUG=1 the next run writes the trace to bubbletea-panic-<time>.log in this directory")
+		return
+	}
+	_, _ = fmt.Fprintln(w, "the UI stopped on a panic:")
+	_, _ = fmt.Fprintln(w, strings.TrimRight(trace, "\n"))
+}
+
+// sayUnfinished names the changes of the session that had not ended when
+// the UI closed. EKS goes on with an update in flight, and the commands
+// can watch it. A change of this UI stops with it: what it had not
+// started does not run, and the command of its dry run is named.
+func sayUnfinished(w io.Writer, changes []state.Change) {
+	var inEKS, cut []string
 	for _, c := range changes {
-		var ids []string
+		var ids, notStarted []string
 		for _, s := range c.Steps {
-			if s.UpdateID != "" && s.FinishedAt.IsZero() {
+			switch {
+			case s.UpdateID != "" && s.FinishedAt.IsZero():
 				ids = append(ids, s.UpdateID)
+			case s.Status == change.StepNotAttempted:
+				notStarted = append(notStarted, stepName(s.Ref))
 			}
 		}
-		line := "  " + kindWord(c.Kind) + " " + c.Target.Cluster + " (" + c.Target.Region + ")"
-		if len(ids) > 0 {
-			line += ": update " + strings.Join(ids, ", ")
+		what := "  " + kindWord(c.Kind) + " " + c.Target.Cluster + " (" + c.Target.Region + ")"
+		if c.Elsewhere || len(ids) > 0 {
+			line := what
+			if len(ids) > 0 {
+				line += ": update " + strings.Join(ids, ", ")
+			}
+			if c.Elsewhere {
+				line += " (started elsewhere)"
+			}
+			inEKS = append(inEKS, line)
 		}
-		if c.Elsewhere {
-			line += " (started elsewhere)"
+		var line string
+		switch {
+		case c.Elsewhere:
+			continue
+		case len(notStarted) > 0:
+			line = what + ": did not start " + strings.Join(notStarted, ", ")
+		case len(ids) > 0:
+			continue // the update in flight is the rest of it
+		case len(c.Steps) == 0:
+			line = what + ": nothing was started"
+		default:
+			line = what + ": stopped before its end"
 		}
-		_, _ = fmt.Fprintln(w, line)
+		if c.Command != "" {
+			line += "\n    the same change from the command line: " + c.Command
+		}
+		cut = append(cut, line)
 	}
+	if len(inEKS) > 0 {
+		_, _ = fmt.Fprintf(w, "%s still running in EKS; the UI no longer follows %s:\n", view.Plural(len(inEKS), "change"), them(len(inEKS)))
+		for _, line := range inEKS {
+			_, _ = fmt.Fprintln(w, line)
+		}
+	}
+	if len(cut) > 0 {
+		_, _ = fmt.Fprintf(w, "%s of this UI stopped with it:\n", view.Plural(len(cut), "change"))
+		for _, line := range cut {
+			_, _ = fmt.Fprintln(w, line)
+		}
+	}
+}
+
+// stepName names a step for a person.
+func stepName(ref change.StepRef) string {
+	switch ref.Kind {
+	case change.StepControlPlane:
+		return "the control plane"
+	case change.StepNodegroup:
+		return "nodegroup " + ref.Name
+	case change.StepAddon:
+		return "add-on " + ref.Name
+	}
+	return ref.Name
+}
+
+func them(n int) string {
+	if n == 1 {
+		return "it"
+	}
+	return "them"
 }
 
 func kindWord(k change.Kind) string {
@@ -229,24 +310,9 @@ func kindWord(k change.Kind) string {
 	return string(k) + " of"
 }
 
-func plural(n int, noun string) string {
-	if n == 1 {
-		return "1 " + noun
-	}
-	return fmt.Sprintf("%d %ss", n, noun)
-}
-
 // contextName is the active refresh context, for the top bar, or "".
 func (o *options) contextName() string {
-	store, err := o.contexts()
-	if err != nil {
-		return ""
-	}
-	file, err := store.Load()
-	if err != nil {
-		return ""
-	}
-	name, _, ok, err := file.Active(os.Getenv(contexts.EnvContext))
+	name, _, ok, err := cmdutil.ActiveContext(o.f)
 	if err != nil || !ok {
 		return ""
 	}

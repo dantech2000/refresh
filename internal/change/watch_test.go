@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/dantech2000/refresh/internal/fleet"
 	"github.com/dantech2000/refresh/internal/fleet/fleettest"
 )
 
@@ -264,5 +266,98 @@ func TestWatch_SuccessAwayFromTheTargetFails(t *testing.T) {
 	}
 	if want := "reports version 1.33, not 1.32"; !strings.Contains(v.Steps[0].Failure.Error, want) {
 		t.Errorf("failure = %s, want %q", v.Steps[0].Failure.Error, want)
+	}
+}
+
+// atVerification calls f once, when the watch of the roll started with id
+// sends the read of its verification: the second DescribeNodegroup of web
+// after the update is Successful. The first one is the read that sees the
+// nodegroup settle at its version. f runs before the fake answers the
+// read, so a fault that f sets applies to it.
+func atVerification(e *env, id string, f func()) {
+	seen := 0
+	e.onRequest(fleettest.EKSDescribeNodegroup, func(int) {
+		done := false
+		e.world.View(func(s *fleettest.State) {
+			for _, u := range s.Cluster(east, "prod").Updates {
+				done = done || u.ID == id && u.Status == fleettest.UpdateSuccessful
+			}
+		})
+		if !done {
+			return
+		}
+		if seen++; seen == 2 {
+			f()
+		}
+	})
+}
+
+// watchRoll starts a roll of web elsewhere and watches it to its end.
+func watchRoll(t *testing.T, e *env, at func(id string)) View {
+	t.Helper()
+	id := startRollElsewhere(t, e.world, fleettest.UpdateScript{After: 2 * time.Minute})
+	if at != nil {
+		at(id)
+	}
+	r := Resource{Target: handleTarget, Kind: StepNodegroup, Name: "web"}
+	return waitFinished(t, Watch(testContext(t), e.deps, r, WatchOptions{Limits: Limits{Wait: time.Hour, Poll: 20 * time.Second}}))
+}
+
+// The verification of a watched roll is the verification of a run: a
+// check that could not read leaves the watch incomplete, exit 4, with the
+// failure of the read, and a check that fails is an issue named by its
+// check, exit 5.
+func TestWatch_VerificationAsARun(t *testing.T) {
+	t.Run("a read that fails", func(t *testing.T) {
+		e := newEnv(t, newWorld(nil))
+		v := watchRoll(t, e, func(id string) {
+			atVerification(e, id, func() {
+				e.world.SetScopedFault(fleettest.Scope{Operation: fleettest.EKSDescribeNodegroup, Nodegroup: "web"}, fleettest.Fault{Deny: true})
+			})
+		})
+		if v.Result.Status != Incomplete || v.Result.ExitCode() != 4 || len(v.Result.Failures) == 0 {
+			t.Fatalf("result %s, exit %d, failures %+v; want Incomplete, 4, and the failure of the read",
+				v.Result.Status, v.Result.ExitCode(), v.Result.Failures)
+		}
+		if f := v.Result.Failures[0]; f.Cluster != "prod" || f.Region != east {
+			t.Errorf("the failure is at %s/%s, want prod/%s", f.Region, f.Cluster, east)
+		}
+	})
+	t.Run("a check that fails", func(t *testing.T) {
+		e := newEnv(t, newWorld(nil))
+		v := watchRoll(t, e, func(id string) {
+			atVerification(e, id, func() {
+				e.world.Edit(func(s *fleettest.State) { s.Cluster(east, "prod").Nodegroup("web").Status = fleettest.StatusDegraded })
+			})
+		})
+		if v.Result.Status != VerifyFailed || v.Result.ExitCode() != 5 {
+			t.Fatalf("result %s (%v), exit %d; want VerifyFailed, 5", v.Result.Status, v.Result.Err, v.Result.ExitCode())
+		}
+		if issue := v.Steps[0].VerifyIssue; !strings.HasPrefix(issue, "NodegroupActive: ") {
+			t.Errorf("issue = %q, want it named by its check, NodegroupActive", issue)
+		}
+	})
+}
+
+// The verification of a watched roll reads the watched nodegroup alone,
+// through the fetcher of the dependencies: another nodegroup that cannot
+// be read, and a list that cannot be read, do not touch it.
+func TestWatch_VerificationReadsTheWatchedNodegroup(t *testing.T) {
+	e := newEnv(t, newWorld(func(c *fleettest.Cluster) {
+		c.Nodegroups = append(c.Nodegroups, &fleettest.Nodegroup{Name: "api", Version: "1.33"})
+	}))
+	e.world.SetScopedFault(fleettest.Scope{Operation: fleettest.EKSDescribeNodegroup, Nodegroup: "api"}, fleettest.Fault{Deny: true})
+	e.world.SetFault(fleettest.EKSListNodegroups, fleettest.Fault{Deny: true})
+	var reads atomic.Int32
+	e.deps.Fetch = &fleet.Fetcher{Now: func() time.Time { reads.Add(1); return e.world.Now() }}
+	v := watchRoll(t, e, nil)
+	if v.Result.Status != Succeeded || len(v.Result.Failures) != 0 {
+		t.Fatalf("result %s (%v), failures %+v; want Succeeded with none", v.Result.Status, v.Result.Err, v.Result.Failures)
+	}
+	if len(v.Result.Clusters[0].Verification) == 0 {
+		t.Fatal("no verification")
+	}
+	if reads.Load() == 0 {
+		t.Error("the watch did not read through the fetcher of its dependencies")
 	}
 }

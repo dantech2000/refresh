@@ -4,9 +4,7 @@ package addon
 import (
 	"github.com/spf13/cobra"
 
-	"github.com/dantech2000/refresh/internal/apidoc"
 	"github.com/dantech2000/refresh/internal/cmdutil"
-	"github.com/dantech2000/refresh/internal/view"
 )
 
 // NewCmdAddon returns the addon command with its subcommands.
@@ -34,28 +32,4 @@ current kubeconfig context; "addon update" never does.`,
 	}
 	cmd.AddCommand(newCmdList(f), newCmdDescribe(f), newCmdUpdate(f))
 	return cmd
-}
-
-// healthStatus returns the status that draws an add-on health.
-func healthStatus(h apidoc.AddonHealth) view.Status {
-	switch h {
-	case apidoc.AddonHealthy:
-		return view.Healthy
-	case apidoc.AddonFailed:
-		return view.Fail
-	case apidoc.AddonInProgress:
-		return view.Progress
-	}
-	return view.Unknown
-}
-
-// unknownCell is the text of a cell whose data could not be read.
-const unknownCell = "unknown"
-
-// orUnknown returns value, or "unknown" for an add-on that was not read.
-func orUnknown(a apidoc.Addon, value string) string {
-	if value == "" && a.Incomplete {
-		return unknownCell
-	}
-	return value
 }

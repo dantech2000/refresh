@@ -1,14 +1,21 @@
 # Parity suite
 
-The suite runs the binary on a fake fleet and holds it, on safety, to what the
-last release of the old CLI did in the same scenario. The old CLI's runs are
-recorded in `testdata/legacy/*.json`; its source was removed at cutover, so
-those traces no longer change. The suite does not compare output: the two
-CLIs print different documents and messages by design.
+The suite runs the binary as a subprocess, with signals and a
+pseudo-terminal, on a fake fleet, and holds it, on safety, to the recorded
+trace of each scenario in `testdata/traces/*.json`. The suite does not compare
+output: the command goldens of `internal/cmd` do that.
 
-A recorded trace holds each change with the facts the old binary knew before
-it, the settlement and verification evidence, the exit code, and the final
-world. It does not hold the raw requests, which differ from run to run.
+A recorded trace holds each change with the facts the binary knew before it,
+the settlement and verification evidence, the exit code, and the final world.
+It does not hold the raw requests, which differ from run to run, or what the
+binary printed.
+
+The first reference was the last release of the old CLI. Once this binary
+agreed with it on everything but the changes that `CONTRACT.md` lists, the
+suite was re-baselined on this binary's own traces: the 67 differences from
+the old traces were exactly the 67 that the owner had approved. The old traces
+and their allowlist are in the history of the repository, and `CONTRACT.md`
+records what changed from the old CLI.
 
 `REWRITE.md` ("Parity suite") says why the suite exists. This page says what
 it compares and how.
@@ -75,20 +82,20 @@ update someone else started.
 
 ## The comparison
 
-Each piece of evidence in the old trace is an obligation. The new trace meets
-it when its evidence for the same part of the run has the same fact with the
-same value. A `before the prompt` obligation needs evidence from before the
-prompt. A `carried` obligation is met by carried or fresh evidence. A fresh
-obligation needs fresh evidence.
+Each piece of evidence in the recorded trace is an obligation. A run meets it
+when its evidence for the same part of the run has the same fact with the same
+value. A `before the prompt` obligation needs evidence from before the prompt.
+A `carried` obligation is met by carried or fresh evidence. A fresh obligation
+needs fresh evidence.
 
-The baseline rule drops one fact, and only one: `pods <cluster>: pending`, the answer of the Pending-pod list over the whole cluster that a roll takes as its verification baseline. It is dropped only from the decision evidence of a run that both binaries refused before any mutation, and that followed no update. Every other fact of such a run is still owed, the node list and every gate read included.
+The baseline rule drops one fact, and only one: `pods <cluster>: pending`, the answer of the Pending-pod list over the whole cluster that a roll takes as its verification baseline. It is dropped only from the decision evidence of a run that both the recorded run and this run refused before any mutation, and that followed no update. Every other fact of such a run is still owed, the node list and every gate read included.
 
-What the new binary read in addition is not a difference. An obligation that
-is not met reads like this:
+What a run read in addition is not a difference. An obligation that is not met
+reads like this:
 
 ```
 target obligation not met: before eks:UpdateNodegroupVersion prod/ng-a (change 1),
-the old binary had seen nodegroup prod/ng-a status=ACTIVE, and the new binary did
+the recorded run had seen nodegroup prod/ng-a status=ACTIVE, and this run did
 not read it there
 ```
 
@@ -98,31 +105,35 @@ the rest.
 
 These are compared for equality: the mutating requests (operation, target,
 payload, token identity, outcome, order), whether the run refused before any
-mutation, the final state of the fleet, and the exit code through
-`ExitCodes`.
+mutation, the final state of the fleet, and the exit code.
 
-## Where the new CLI differs on purpose
+Each scenario also has checks: assertions on its run alone, for what the
+scenario is for (`Scenario.Checks`, the checks of its `Behaviour`, and the
+facts in `Scenario.Require`). They run on every run, and a trace is recorded
+only when they pass.
 
-`CONTRACT.md` lists the old behaviour that the new CLI does not copy. For such
-a scenario the old trace is not the reference.
+## Recording a trace
 
-- `testdata/allowlist.json` has one entry for each field that differs. An
-  entry names the row of the contract, and `expect` says what the new trace
-  must show in that field. An entry with no `expect` does not load. An entry
-  that no difference uses is an error.
-- `Scenario.V2Require` lists facts that the new binary must have seen.
-- `Scenario.V2Checks` are assertions on the new trace alone.
+```bash
+go test ./test/parity/ -run TestScenarios -update
+```
+
+It runs every scenario and writes the trace of each one whose checks pass to
+`testdata/traces/<scenario>.json`. A changed trace is a changed behaviour: read
+the diff before you commit it, and say in the commit which change of the
+binary or of the fake it comes from. A new scenario needs a recorded trace
+before the suite passes.
 
 ## Moves and holds
 
-A scenario changes the world at a point that both binaries reach: before or
+A scenario changes the world at a point that every binary reaches: before or
 after a named mutating request, when an update gets a status, or after a
 prompt. It never counts reads. `Scenario.Holds` keeps a request unanswered
 until another request arrived or was answered.
 
 A signal is sent when the Nth request that a rule accepts arrives. A count
 of reads is how one binary happens to be written, so a signal counts
-something that both binaries do the same number of times: the polls of an
+something that every binary does the same number of times: the polls of an
 update (`interruptWait`), or, with `Signal.AfterPrompt`, the requests after
 a prompt was answered (`interruptAfterPrompt`).
 
@@ -131,18 +142,18 @@ a prompt was answered (`interruptAfterPrompt`).
 The clock of the world is virtual and moves with the polls of a binary.
 The clock of a binary is the real one. A wait that a binary measures on
 its own clock takes that long: no request can shorten it. One scenario has
-such a wait, `nodegroup-update-verify-node-not-ready`: the new binary
-waits for a new node to be Ready for 2 minutes, and never past
-`--wait-timeout`. Both command lines of that scenario have the same short
-`--wait-timeout`, so the run takes that long. No command line gets a flag
-that the other does not have.
+such a wait, `nodegroup-update-verify-node-not-ready`: the binary waits
+for a new node to be Ready for 2 minutes, and never past `--wait-timeout`.
+The command line of that scenario has a short `--wait-timeout`, so the run
+takes that long.
 
 ## Commands
 
 ```bash
-go test ./test/parity/                                  # the binary against the recorded traces
-REFRESH_PARITY_V2=/path/to/refresh go test ./test/parity/ -run TestPaired   # test a binary you built
-go test -race ./test/parity/                            # the binary is built with the race detector too
+go test ./test/parity/                                          # the binary against the recorded traces
+go test ./test/parity/ -run TestScenarios -update               # record the traces again, then read the diff
+REFRESH_PARITY_BINARY=/path/to/refresh go test ./test/parity/   # test a binary you built
+go test -race ./test/parity/                                    # the binary is built with the race detector too
 ```
 
 ## Limits

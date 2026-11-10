@@ -14,7 +14,7 @@ results.web.to	desired 1, min 1, max 3
 results.web.update	00000000-0000-4000-8000-000000000001
 results.web.note	-
 results.web.started	2026-01-01 00:00:00 UTC
-results.web.finished	2026-01-01 00:00:30 UTC
+results.web.finished	2026-01-01 00:00:15 UTC
 results.web.failure	-
 health_gate.decision	Go
 health_gate.reasons	Kubernetes: no Kubernetes access: no kubeconfig found, and no in-cluster config: unable to load in-cluster configuration, KUBERNETES_SERVICE_HOST and KUBERNETES_SERVICE_PORT must be defined; the Kubernetes checks did not run

@@ -275,6 +275,63 @@ func TestVerify_ReusedNodeName(t *testing.T) {
 	}
 }
 
+// Phase Pending covers a pod that waits for the scheduler and a pod that is
+// bound and pulls its images. After a roll, every moved pod goes through
+// the second, which is progress. A pod is stuck when the scheduler marked
+// it Unschedulable, or when a container waits with a reason that does not
+// pass without a change, such as an image that cannot be pulled.
+func TestVerify_NewPendingPods(t *testing.T) {
+	ctx := testContext(t)
+	pod := func(node string, conditions ...corev1.PodCondition) *corev1.Pod {
+		return &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "web-abc"},
+			Spec:       corev1.PodSpec{NodeName: node},
+			Status:     corev1.PodStatus{Phase: corev1.PodPending, Conditions: conditions},
+		}
+	}
+	scheduled := corev1.PodCondition{Type: corev1.PodScheduled, Status: corev1.ConditionTrue}
+	unschedulable := corev1.PodCondition{Type: corev1.PodScheduled, Status: corev1.ConditionFalse, Reason: corev1.PodReasonUnschedulable}
+	gated := corev1.PodCondition{Type: corev1.PodScheduled, Status: corev1.ConditionFalse, Reason: corev1.PodReasonSchedulingGated}
+	waiting := func(p *corev1.Pod, init bool, reason string) *corev1.Pod {
+		status := []corev1.ContainerStatus{{Name: "main", State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: reason}}}}
+		if init {
+			p.Status.InitContainerStatuses = status
+		} else {
+			p.Status.ContainerStatuses = status
+		}
+		return p
+	}
+	stuck := func(reason string) want {
+		return want{outcome: health.Fail, message: "1 pod newly Pending after the roll and stuck: default/web-abc (" + reason + ")", findings: []string{"default/web-abc"}}
+	}
+	pass := want{outcome: health.Pass, message: "no new Pending pods"}
+	tests := []struct {
+		name string
+		pod  *corev1.Pod
+		want want
+	}{
+		{name: "bound and pulling its images", pod: pod("new-1", scheduled), want: pass},
+		{name: "bound, its container being created", pod: waiting(pod("new-1", scheduled), false, "ContainerCreating"), want: pass},
+		{name: "not tried by the scheduler yet", pod: pod(""), want: pass},
+		{name: "held by a scheduling gate", pod: pod("", gated), want: pass},
+		{name: "unschedulable", pod: pod("", unschedulable), want: stuck("Unschedulable")},
+		{name: "an image pull in back-off", pod: waiting(pod("new-1", scheduled), false, "ImagePullBackOff"), want: stuck("ImagePullBackOff")},
+		{name: "an image pull that failed", pod: waiting(pod("new-1", scheduled), false, "ErrImagePull"), want: stuck("ErrImagePull")},
+		{name: "a configuration that cannot be read", pod: waiting(pod("new-1", scheduled), false, "CreateContainerConfigError"), want: stuck("CreateContainerConfigError")},
+		{name: "an init container whose image cannot be pulled", pod: waiting(pod("new-1", scheduled), true, "ImagePullBackOff"), want: stuck("ImagePullBackOff")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			base := health.TakeBaseline(ctx, fake.NewClientset(nodeNamed("old-1")), "prod")
+			h := newHarness(t)
+			in := h.input(ctx, "ng-a")
+			in.Kube = fake.NewClientset(nodeNamed("new-1"), tt.pod)
+			results := health.Run(ctx, health.Verify([]string{"ng-a"}, base, health.WaitOptions{}), in)
+			check(t, results[2], tt.want)
+		})
+	}
+}
+
 // A snapshot read through the fetcher after the roll sees the nodegroup
 // ACTIVE at its new release.
 func TestVerify_SnapshotAfterTheRoll(t *testing.T) {

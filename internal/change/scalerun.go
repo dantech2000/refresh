@@ -51,15 +51,10 @@ func (r *runner) runScaleStep(cp *ClusterPlan, s Step) StepResult {
 	}
 	res.StartedAt = r.d.now()
 	id, err := submitScale(r.readCtx, clients, resource, req)
-	switch {
-	case err != nil:
-		return r.unanswered(cp, res, err)
-	case id == "":
-		res.Status = StepInProgress
-		res.Failure = r.stepFailure(cp, res, apidoc.ReasonNotMonitored, "EKS accepted the scale of nodegroup "+s.Ref.Name+" and returned no update ID; it cannot be followed, and it may still be running")
+	res, ok := r.submitted(cp, res, id, err)
+	if !ok {
 		return res
 	}
-	res.Status, res.UpdateID = StepStarted, id
 	// The read budget stops here: the wait has its own.
 	r.read.pause()
 	// Without a wait, this is the result of the step, and the phase
@@ -71,12 +66,27 @@ func (r *runner) runScaleStep(cp *ClusterPlan, s Step) StepResult {
 	ctx, wait := r.waitBudget()
 	defer wait.stop()
 	poll := r.d.AWS.PollClients(cp.Region)
-	if err := WaitUpdate(ctx, poll, resource, id, r.waitOptions(s, wait)); err != nil {
+	opts := r.waitOptions(s, wait)
+	if err := WaitUpdate(ctx, poll, resource, id, opts); err != nil {
 		return r.waitFailed(ctx, cp, res, err)
 	}
-	settled, err := WaitSettled(ctx, poll, resource, scaleSettled(s.Ref.Name, id, req), r.waitOptions(s, wait))
-	if err != nil {
-		return r.waitFailed(ctx, cp, res, err)
+	// After Successful the nodegroup has nearly always settled, so it is
+	// read at once, as WaitSettled reads it, and polled only while it is
+	// still changing. A read that fails is left to the polls.
+	check := scaleSettled(s.Ref.Name, id, req)
+	settled, err := describe(ctx, poll.Clients, resource)
+	done := false
+	if err == nil {
+		done, err = check(settled)
+		opts.progress(UpdateProgress{Resource: resource, Status: settled.Status, Final: done || err != nil})
+		if err != nil {
+			return r.waitFailed(ctx, cp, res, err)
+		}
+	}
+	if !done {
+		if settled, err = WaitSettled(ctx, poll, resource, check, opts); err != nil {
+			return r.waitFailed(ctx, cp, res, err)
+		}
 	}
 	res.Status, res.FinishedAt = StepSucceeded, r.d.now()
 	if req.Desired != nil && settled.Sizes.Desired != *req.Desired {

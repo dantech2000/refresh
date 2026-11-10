@@ -126,15 +126,22 @@ func allSteps(clusters []ClusterResult) []StepResult {
 //
 // The steps run one after another, and a step that fails or is blocked
 // does not stop the next one: the targets are independent. One exception:
-// with --all, an add-on whose dependency did not finish is NotAttempted
-// (see unfinishedDependency). A phase that is one batch runs in runBatch.
+// an add-on whose dependency ran before it and did not end clean is
+// NotAttempted (see unfinishedDependency). A phase that is one batch runs in runBatch.
 // One that stops at its first failure is built with the first change that
 // has one.
 func (r *runner) runPhase(cp *ClusterPlan, ph Phase) []StepResult {
 	if ph.Batch {
+		// The batch is one step of the run: it starts with no state of the
+		// step before it. The roll of an engine nodegroup step is a batch
+		// too, inside its step, and keeps the state of that step.
+		r.step = stepRun{}
 		return r.runBatch(cp, ph)
 	}
 	results := make([]StepResult, 0, len(ph.Steps))
+	// unverified are the steps whose check after the change could not
+	// read: their dependents do not go on.
+	unverified := map[StepRef]bool{}
 	halted := false
 	for i, s := range ph.Steps {
 		if !halted && (s.work() || s.busy()) && r.outOfTime(cp) {
@@ -142,11 +149,12 @@ func (r *runner) runPhase(cp *ClusterPlan, ph Phase) []StepResult {
 		}
 		res := StepResult{Ref: s.Ref, Status: StepNotAttempted}
 		if !halted {
-			r.steps, r.remaining = ph.Steps, ph.Steps[i:]
-			if dep, stop := r.unfinishedDependency(s, results); stop {
-				res = r.dependencyNotDone(cp, s, dep)
+			r.startStep(ph.Steps, i)
+			if dep, stop := r.unfinishedDependency(s, results, unverified); stop {
+				res = r.dependencyNotDone(cp, s, dep, unverified[dep.Ref])
 			} else {
 				res = r.runStep(cp, s)
+				unverified[s.Ref] = r.step.unverified
 			}
 			r.stepEnded(ph.Ref, &res)
 		}
@@ -163,8 +171,8 @@ func (r *runner) runPhase(cp *ClusterPlan, ph Phase) []StepResult {
 // above the verification of that step.
 func (r *runner) stepEnded(ph PhaseRef, res *StepResult) {
 	r.emit(Event{Kind: StepChanged, Phase: ph, Step: res.Ref, Result: res})
-	held := r.afterStep
-	r.afterStep = nil
+	held := r.step.after
+	r.step.after = nil
 	for _, e := range held {
 		r.emit(e)
 	}

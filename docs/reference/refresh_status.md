@@ -18,10 +18,6 @@ Columns:
              report them. A cluster in extended support shows what it
              costs per hour on top of standard support, such as
              +$0.50/hr, unless its upgrade policy is STANDARD.
-
-Under the table, the totals line gives that premium for the whole fleet per
-month, at 730 hours a month. The price is the one on the EKS pricing page
-when refresh was released.
   COMPUTE    the managed nodegroups, Auto Mode, Karpenter, or none
   STALE AMI  the nodegroups that do not run the latest AMI for their own
              Kubernetes version, of all nodegroups, with the age of the
@@ -29,8 +25,14 @@ when refresh was released.
              the control plane
   ADDONS     the add-ons with a newer compatible version
   HEALTH     the health issues that EKS reports for the control plane,
-             the nodegroups, and the add-ons; an add-on that is DEGRADED
-             with no issue listed counts as one
+             the nodegroups, and the add-ons; a resource in a failed
+             status with no issue listed counts as one: a FAILED control
+             plane, a DEGRADED, CREATE_FAILED, or DELETE_FAILED
+             nodegroup, or a failed add-on
+
+Under the table, the totals line gives the extended support premium for the
+whole fleet per month, at 730 hours a month. The price is the one on the
+EKS pricing page when refresh was released.
 
 When several exit codes apply, the highest wins.
 

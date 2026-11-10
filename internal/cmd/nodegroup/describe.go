@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
 
@@ -20,17 +19,8 @@ import (
 )
 
 type describeOptions struct {
-	ios    *cmdutil.IOStreams
-	global *cmdutil.GlobalOptions
-	// now returns the time that a snapshot records.
-	now func() time.Time
-	// resolve returns the cluster of the run, from the flag or the
-	// defaults, and clients the AWS clients of its region.
-	resolve func(cluster string) (cmdutil.Target, error)
-	clients func(ctx context.Context) (*awsx.Clients, error)
-	// kube returns the Kubernetes client of a cluster, for
-	// --show-workloads.
-	kube func(target kube.Target) (*kube.Client, error)
+	f   *cmdutil.Factory
+	ios *cmdutil.IOStreams
 
 	cluster       string
 	nodegroup     string
@@ -43,12 +33,7 @@ type describeOptions struct {
 }
 
 func newCmdDescribe(f *cmdutil.Factory) *cobra.Command {
-	o := &describeOptions{
-		ios: f.IOStreams, global: &f.Global, now: f.Now,
-		resolve: func(cluster string) (cmdutil.Target, error) { return cmdutil.ResolveCluster(f, cluster, true) },
-		clients: func(ctx context.Context) (*awsx.Clients, error) { return cmdutil.ClusterClients(ctx, f) },
-		kube:    f.Kube,
-	}
+	o := &describeOptions{f: f, ios: f.IOStreams}
 	cmd := &cobra.Command{
 		Use:   "describe <nodegroup>",
 		Short: "Describe one nodegroup of a cluster",
@@ -97,7 +82,7 @@ Exit codes:
 
 func (o *describeOptions) complete(args []string) error {
 	o.nodegroup = args[0]
-	target, err := o.resolve(o.cluster)
+	target, err := cmdutil.ResolveCluster(o.f, o.cluster, true)
 	o.target = target
 	return err
 }
@@ -111,37 +96,33 @@ func (o *describeOptions) validate() error {
 	if !o.showWorkloads {
 		return nil
 	}
-	return kube.CheckContext(o.global.Kubeconfig, o.global.KubeContext)
+	return kube.CheckContext(o.f.Global.Kubeconfig, o.f.Global.KubeContext)
 }
 
 func (o *describeOptions) run(ctx context.Context) error {
 	ios := o.ios
-	ctx, cancel := cmdutil.WithTimeout(ctx, o.global.Timeout)
+	ctx, cancel := cmdutil.WithTimeout(ctx, o.f.Global.Timeout)
 	defer cancel()
-	clients, err := o.clients(ctx)
-	if err != nil {
-		return err
-	}
-	fetcher := fleet.Fetcher{Now: o.now}
-	snap, err := fetcher.Fetch(ctx, clients, o.target.Cluster, fleet.Need{
+	read, err := fleetcmd.FetchCluster(ctx, o.f, o.target, fleet.Need{
 		OnlyNodegroups: []string{o.nodegroup},
 		AMI:            true,
 		Instances:      o.showInstances,
 	})
 	if err != nil {
-		return fleetcmd.ClusterError(ctx, &fetcher, clients, o.target.Cluster, err)
+		return err
 	}
+	snap := read.Snapshot
 	if snap.Nodegroups[0].State != fleet.Collected {
-		return o.nodegroupError(ctx, &fetcher, snap)
+		return o.nodegroupError(ctx, read)
 	}
 	if o.showWorkloads {
-		access, err := fleetcmd.ConnectKube(o.kube, snap)
+		access, err := fleetcmd.ConnectKube(o.f.Kube, snap)
 		if err != nil {
 			return err
 		}
 		fleetcmd.ReportKube(ios, access)
 		if access.Client != nil {
-			fetcher.FetchKube(ctx, access.Client, snap, fleet.KubeNeed{Workloads: o.nodegroup})
+			read.Fetcher.FetchKube(ctx, access.Client, snap, fleet.KubeNeed{Workloads: o.nodegroup})
 		}
 	}
 	nodegroup := snap.Nodegroups[0]
@@ -153,40 +134,27 @@ func (o *describeOptions) run(ctx context.Context) error {
 		Failures:  snap.Failures,
 	}
 	apidoc.SortFailures(doc.Failures)
-	if err := cmdutil.Print(ios, o.output, doc, describeView(doc)); err != nil {
-		return err
-	}
-	if o.output != cmdutil.FormatTable {
-		cmdutil.ReportFailures(ios, doc.Failures)
-	}
-	// An interrupt is not a partial result.
-	if errors.Is(ctx.Err(), context.Canceled) {
-		return fmt.Errorf("interrupted: %w", context.Canceled)
-	}
-	return cmdutil.IncompleteError(doc.Failures)
+	return cmdutil.PrintResult(ctx, ios, o.output, doc, describeView(doc), doc.Failures)
 }
 
 // nodegroupError returns the error for a nodegroup that could not be
 // described. One that does not exist gets the names that are close to it,
 // which costs one list call.
-func (o *describeOptions) nodegroupError(ctx context.Context, fetcher *fleet.Fetcher, snap *fleet.Snapshot) error {
+func (o *describeOptions) nodegroupError(ctx context.Context, read *fleetcmd.Read) error {
+	snap := read.Snapshot
 	if len(snap.Failures) == 0 {
 		return fmt.Errorf("could not read nodegroup %s of cluster %s", o.nodegroup, snap.Cluster.Name)
 	}
 	failure := snap.Failures[0]
 	switch failure.Reason {
 	case apidoc.ReasonInterrupted:
-		return fmt.Errorf("interrupted: %w", context.Canceled)
+		return cmdutil.ErrInterrupted
 	case apidoc.ReasonNotFound:
 	default:
 		return errors.New("could not read " + view.FailureLine(failure))
 	}
-	clients, err := o.clients(ctx)
-	if err != nil {
-		return err
-	}
 	// Without the list the error still says what is wrong.
-	names, _ := fetcher.NodegroupNames(ctx, clients, snap.Cluster.Name)
+	names, _ := read.Fetcher.NodegroupNames(ctx, read.Clients, snap.Cluster.Name)
 	return cmdutil.NotFoundError("nodegroup", o.nodegroup, "cluster "+snap.Cluster.Name, names,
 		"refresh nodegroup list -c "+snap.Cluster.Name)
 }
@@ -210,8 +178,8 @@ func describeView(doc apidoc.NodegroupDescription) view.Description {
 		version,
 		{Name: "instance types", Value: strings.Join(n.InstanceTypes, ", ")},
 		{Name: "capacity", Value: n.CapacityType},
-		{Name: "created", Value: formatTime(n.CreatedAt)},
-		{Name: "modified", Value: formatTime(n.ModifiedAt)},
+		{Name: "created", Value: view.Time(n.CreatedAt)},
+		{Name: "modified", Value: view.Time(n.ModifiedAt)},
 	}})
 
 	ami := view.Section{Title: "AMI", Fields: []view.Field{
@@ -225,7 +193,7 @@ func describeView(doc apidoc.NodegroupDescription) view.Description {
 			view.Field{Name: "latest", Value: n.AMI.Latest},
 		)
 	} else {
-		ami.Fields = append(ami.Fields, view.Field{Name: "status", Value: unknownCell, Status: view.Unknown})
+		ami.Fields = append(ami.Fields, view.Field{Name: "status", Value: view.UnknownCell, Status: view.Unknown})
 	}
 	d.Sections = append(d.Sections, ami)
 
@@ -234,6 +202,13 @@ func describeView(doc apidoc.NodegroupDescription) view.Description {
 			{Name: "desired", Value: strconv.Itoa(int(s.Desired))},
 			{Name: "min", Value: strconv.Itoa(int(s.Min))},
 			{Name: "max", Value: strconv.Itoa(int(s.Max))},
+		}})
+	} else {
+		// EKS did not return the sizes: unknown, not 0.
+		d.Sections = append(d.Sections, view.Section{Title: "SCALING", Fields: []view.Field{
+			{Name: "desired", Value: view.UnknownCell, Status: view.Unknown},
+			{Name: "min", Value: view.UnknownCell, Status: view.Unknown},
+			{Name: "max", Value: view.UnknownCell, Status: view.Unknown},
 		}})
 	}
 
@@ -249,7 +224,7 @@ func describeView(doc apidoc.NodegroupDescription) view.Description {
 			{Name: "lifecycle", Value: inst.Lifecycle},
 			{Name: "zone", Value: inst.AvailabilityZone},
 			{Name: "ami", Value: inst.ImageID},
-			{Name: "launched", Value: formatTime(inst.LaunchTime)},
+			{Name: "launched", Value: view.Time(inst.LaunchTime)},
 		}})
 	}
 	workloads := view.Section{Title: "WORKLOADS"}

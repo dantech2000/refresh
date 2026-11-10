@@ -11,8 +11,9 @@ import (
 )
 
 // The HEALTH column counts the issues of the control plane, of the
-// nodegroups, and of the add-ons, and any issue needs attention: a
-// DEGRADED add-on is not "ok".
+// nodegroups, and of the add-ons, and any issue needs attention. A
+// resource in a failed status with no issue listed counts as one: a
+// DEGRADED nodegroup or add-on, or a FAILED control plane, is not "ok".
 func TestStatus_HealthCountsEveryPart(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -39,6 +40,34 @@ func TestStatus_HealthCountsEveryPart(t *testing.T) {
 			edit: func(c *fleettest.Cluster) {
 				c.Nodegroups[0].HealthIssues = []fleettest.Issue{{Code: "AsgInstanceLaunchFailures", Message: "no capacity"}}
 			},
+			health: "1 issue", exit: cmdutil.ExitNeedsAttention,
+		},
+		{
+			name:   "a DEGRADED nodegroup with no issue listed",
+			edit:   func(c *fleettest.Cluster) { c.Nodegroups[0].Status = fleettest.StatusDegraded },
+			health: "1 issue", exit: cmdutil.ExitNeedsAttention,
+		},
+		{
+			name: "a DEGRADED nodegroup with its issue counts it once",
+			edit: func(c *fleettest.Cluster) {
+				c.Nodegroups[0].Status = fleettest.StatusDegraded
+				c.Nodegroups[0].HealthIssues = []fleettest.Issue{{Code: "AsgInstanceLaunchFailures", Message: "no capacity"}}
+			},
+			health: "1 issue", exit: cmdutil.ExitNeedsAttention,
+		},
+		{
+			name:   "a nodegroup that failed to be created",
+			edit:   func(c *fleettest.Cluster) { c.Nodegroups[0].Status = fleettest.StatusCreateFailed },
+			health: "1 issue", exit: cmdutil.ExitNeedsAttention,
+		},
+		{
+			name:   "an add-on whose update failed",
+			edit:   func(c *fleettest.Cluster) { c.Addons[0].Status = fleettest.StatusUpdateFailed },
+			health: "1 issue", exit: cmdutil.ExitNeedsAttention,
+		},
+		{
+			name:   "a FAILED control plane",
+			edit:   func(c *fleettest.Cluster) { c.Status = fleettest.StatusFailed },
 			health: "1 issue", exit: cmdutil.ExitNeedsAttention,
 		},
 		{
@@ -77,4 +106,24 @@ func TestStatus_HealthCountsEveryPart(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A resource in a failed status with no issue listed is a health issue in
+// the table too: the warning glyph, "1 issue", and a hint that names it.
+func TestStatus_FailedStatusIsAHealthIssue(t *testing.T) {
+	world := fleettest.New()
+	degraded := current("degraded-ng", east)
+	degraded.Nodegroups[0].Status = fleettest.StatusDegraded
+	failedAddon := current("failed-addon", east)
+	failedAddon.Addons[0].Status = fleettest.StatusUpdateFailed
+	world.Edit(func(s *fleettest.State) {
+		seed(s)
+		s.Clusters = []*fleettest.Cluster{degraded, failedAddon, current("ok", east)}
+	})
+	e := cmdtest.NewFake(t, world, east)
+	err := e.Run(cmdutiltest.Context(t), "status")
+	if got := cmdutil.ExitCode(err); got != cmdutil.ExitNeedsAttention {
+		t.Errorf("exit code = %d (%v), want %d", got, err, cmdutil.ExitNeedsAttention)
+	}
+	cmdutiltest.Golden(t, "failed-status.txt", e.Out.String(), *update)
 }

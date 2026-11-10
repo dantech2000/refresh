@@ -116,9 +116,26 @@ type Answer struct {
 	Reason string
 	// Dropped is set when the connection was dropped in place of an answer.
 	Dropped bool
-	// Observed summarises the items of a list: one word per item with the
-	// part of it a decision can rest on. It is empty for a watch.
-	Observed string
+	// Items are the items of a list, in the order of the answer, with the
+	// part of each that a decision can rest on. It is nil for a watch.
+	Items []Item
+}
+
+// Item is one item of a list answer: its name, and its state as a
+// decision reads it.
+type Item struct {
+	// Namespace is "" for an item of no namespace. For an event, Name is
+	// the object the event is about, as kind/name.
+	Namespace, Name string
+	// State is, by kind of item: the Ready condition of a node, Ready or
+	// NotReady, with ",cordoned" for an unschedulable one; the phase of a
+	// pod, with ",notReady" for a Running pod that is not ready; the
+	// disruptions a budget allows; the replicas of a deployment; the type
+	// and reason of an event, as type:reason; the CPU in use of a node's
+	// metrics, such as 400m. It is "" for a namespace.
+	State string
+	// Node is the node a pod runs on, or "".
+	Node string
 }
 
 // Handler answers Kubernetes API requests for one cluster of a World.
@@ -214,19 +231,33 @@ func (s *Server) Close() {
 	s.http.Close()
 }
 
-// Config returns a client-go config that reaches the server.
+// Config returns a client-go config that reaches the server. It has no
+// client-side rate limit: the default of client-go (5 requests a second)
+// would make a test wait on the real clock, and the product sets its own
+// limit in kube.
 func (s *Server) Config() *rest.Config {
-	return &rest.Config{Host: s.URL}
+	return &rest.Config{Host: s.URL, QPS: -1}
 }
 
 // WriteKubeconfig writes a kubeconfig file with one context, named after
 // the cluster, whose server is this server.
 func (s *Server) WriteKubeconfig(path string) error {
+	return WriteKubeconfig(path, s)
+}
+
+// WriteKubeconfig writes one kubeconfig with a context per server, named
+// after its cluster, as "aws eks update-kubeconfig" would name it with
+// --alias. The first server's context is the current one.
+func WriteKubeconfig(path string, servers ...*Server) error {
 	cfg := clientcmdapi.NewConfig()
-	cfg.Clusters[s.cluster] = &clientcmdapi.Cluster{Server: s.URL}
-	cfg.AuthInfos[s.cluster] = &clientcmdapi.AuthInfo{Token: "fake-token"}
-	cfg.Contexts[s.cluster] = &clientcmdapi.Context{Cluster: s.cluster, AuthInfo: s.cluster}
-	cfg.CurrentContext = s.cluster
+	for i, s := range servers {
+		cfg.Clusters[s.cluster] = &clientcmdapi.Cluster{Server: s.URL}
+		cfg.AuthInfos[s.cluster] = &clientcmdapi.AuthInfo{Token: "fake-token"}
+		cfg.Contexts[s.cluster] = &clientcmdapi.Context{Cluster: s.cluster, AuthInfo: s.cluster}
+		if i == 0 {
+			cfg.CurrentContext = s.cluster
+		}
+	}
 	data, err := clientcmd.Write(*cfg)
 	if err != nil {
 		return fmt.Errorf("encoding the kubeconfig: %w", err)

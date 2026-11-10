@@ -191,12 +191,15 @@ func isAWSHost(host string) bool {
 // API response: a failed HTTP round trip (*url.Error), a dial/read/write
 // failure (*net.OpError), a DNS failure, a timeout, a refused or reset
 // connection, or a response cut short. Context cancellation and deadlines are
-// not network errors; callers check those first.
+// not network errors; callers check those first. A connect timeout is a
+// network error, also when it reports itself as context.DeadlineExceeded:
+// the request never reached AWS. A DNS lookup that the deadline cut is
+// not, as in Classify.
 func IsNetworkError(err error) bool {
 	if err == nil {
 		return false
 	}
-	if errors.Is(err, context.Canceled) || isContextDeadline(err) {
+	if errors.Is(err, context.Canceled) || (isContextDeadline(err) && (!IsDialFailure(err) || isDNS(err))) {
 		return false
 	}
 	var urlErr *url.Error
@@ -275,31 +278,6 @@ const DefaultTimeoutFlag = "--timeout"
 // deadlineHint is the remediation text of a timed-out operation.
 func deadlineHint(flag string) string {
 	return fmt.Sprintf("(increase %s to allow more time)", flag)
-}
-
-// retargetedError is err with its timeout hint naming another flag.
-type retargetedError struct {
-	msg string
-	err error
-}
-
-func (e *retargetedError) Error() string { return e.msg }
-func (e *retargetedError) Unwrap() error { return e.err }
-
-// RetargetDeadlineHint returns err with FormatAWSError's "increase
-// --timeout" hint naming flag instead, for a command whose run deadline is
-// another flag (such as --wait-timeout). An err without the hint is returned
-// as is. The result wraps err, so errors.Is/As still work.
-func RetargetDeadlineHint(err error, flag string) error {
-	if err == nil || flag == DefaultTimeoutFlag {
-		return err
-	}
-	msg := err.Error()
-	old := deadlineHint(DefaultTimeoutFlag)
-	if !strings.Contains(msg, old) {
-		return err
-	}
-	return &retargetedError{msg: strings.ReplaceAll(msg, old, deadlineHint(flag)), err: err}
 }
 
 // FormatAWSError provides user-friendly error messages for AWS errors. Every

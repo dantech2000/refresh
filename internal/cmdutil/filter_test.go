@@ -1,6 +1,7 @@
 package cmdutil_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -10,7 +11,7 @@ import (
 	"github.com/dantech2000/refresh/internal/cmdutil"
 )
 
-func TestParseFilters(t *testing.T) {
+func TestFilterFlag(t *testing.T) {
 	keys := []string{"name", "instanceType"}
 	tests := []struct {
 		name    string
@@ -18,7 +19,7 @@ func TestParseFilters(t *testing.T) {
 		want    cmdutil.Filters
 		wantErr string
 	}{
-		{name: "none", want: cmdutil.Filters{}},
+		{name: "none"},
 		{name: "one", raw: []string{"name=prod-*"}, want: cmdutil.Filters{{Key: "name", Pattern: "prod-*"}}},
 		{
 			name: "the key in any case, spelled as the command spells it",
@@ -36,10 +37,19 @@ func TestParseFilters(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := cmdutil.ParseFilters(tt.raw, keys...)
+			var got cmdutil.Filters
+			cmd := &cobra.Command{Use: "x", RunE: func(*cobra.Command, []string) error { return nil }, SilenceErrors: true, SilenceUsage: true}
+			cmdutil.AddFilterFlag(cmd, &got, keys...)
+			var args []string
+			for _, r := range tt.raw {
+				args = append(args, "-f", r)
+			}
+			cmd.SetArgs(args)
+			err := cmd.Execute()
 			if tt.wantErr != "" {
-				if err == nil || err.Error() != tt.wantErr {
-					t.Fatalf("error = %v, want %s", err, tt.wantErr)
+				// cobra names the flag and the value before the reason.
+				if err == nil || !strings.HasSuffix(err.Error(), `for "-f, --filter" flag: `+tt.wantErr) {
+					t.Fatalf("error = %v, want one that ends in %s", err, tt.wantErr)
 				}
 				return
 			}
@@ -118,6 +128,9 @@ func TestFilters_EveryFilterMustMatchAndOneValueIsEnough(t *testing.T) {
 	want := cmdutil.Filters{{Key: "name", Pattern: "a"}, {Key: "name", Pattern: "c"}}
 	if diff := cmp.Diff(want, fs.Only("name")); diff != "" {
 		t.Errorf("Only (-want +got):\n%s", diff)
+	}
+	if got, want := fs.String(), "-f name=a -f instanceType=b -f name=c"; got != want {
+		t.Errorf("String = %q, want %q", got, want)
 	}
 }
 

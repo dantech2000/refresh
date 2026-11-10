@@ -2,6 +2,7 @@ package cluster_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -50,7 +51,7 @@ func newCheckFake(t *testing.T, edit func(s *fleettest.State, c *fleettest.Clust
 			},
 			Updates: []*fleettest.Update{
 				{ID: "u-1", Type: fleettest.TypeVersionUpdate, Status: fleettest.UpdateSuccessful, Params: []fleettest.UpdateParam{{Type: "Version", Value: "1.32"}},
-					CreatedAt: cmdutiltest.Now.Add(-2 * 24 * time.Hour)},
+					CreatedAt: cmdutiltest.Now().Add(-2 * 24 * time.Hour)},
 			},
 		}
 		s.Clusters = []*fleettest.Cluster{c}
@@ -127,7 +128,7 @@ func TestUpgradeCheck_Verdicts(t *testing.T) {
 		{name: "review for extended support", edit: func(s *fleettest.State, c *fleettest.Cluster) {
 			ready(s, c)
 			c.SupportType = "EXTENDED"
-			s.ClusterVersions[0].EndOfStandardSupport = cmdutiltest.Now.Add(-24 * time.Hour)
+			s.ClusterVersions[0].EndOfStandardSupport = cmdutiltest.Now().Add(-24 * time.Hour)
 		}, code: 2, want: "Support: the cluster is in extended support"},
 		{name: "blocked by an UNKNOWN insight", edit: func(s *fleettest.State, c *fleettest.Cluster) {
 			ready(s, c)
@@ -142,6 +143,10 @@ func TestUpgradeCheck_Verdicts(t *testing.T) {
 		{name: "show-passing", edit: ready, args: []string{"--show-passing"}, code: 0, want: "7d3e5a10"},
 		{name: "exit-zero", args: []string{"--exit-zero"}, code: 0, want: "[X] NOT READY"},
 		{name: "another category", edit: ready, args: []string{"--category", "misconfiguration"}, code: 0, want: "[OK] READY"},
+		{name: "the etcd limit of a provisioned control plane", edit: func(s *fleettest.State, c *fleettest.Cluster) {
+			ready(s, c)
+			c.ControlPlaneTier = "tier-xl"
+		}, code: 0, want: "etcd 7% of 16 GB"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -271,8 +276,27 @@ func TestUpgradeCheck_Insight(t *testing.T) {
 			t.Errorf("a passing insight: %v", err)
 		}
 	})
+	// A full ID names an insight of any category, not only the one of
+	// --category, and needs no list of the insights.
+	t.Run("a full ID outside the category", func(t *testing.T) {
+		const id = "5c0ffee0-4444-4a4a-8b8b-000000000004"
+		e := newCheckFake(t, func(_ *fleettest.State, c *fleettest.Cluster) {
+			c.Insights = append(c.Insights, fleettest.Insight{ID: id, Name: "Amazon EKS VPC CNI", Category: "MISCONFIGURATION", Status: fleettest.InsightWarning, Reason: "misconfigured"})
+		})
+		err := e.Run(cmdutiltest.Context(t), "cluster", "upgrade-check", "prod", "--insight", id, "-o", "json")
+		if got := cmdutil.ExitCode(err); got != cmdutil.ExitNeedsAttention {
+			t.Errorf("exit code = %d (%v), want 2", got, err)
+		}
+		if !strings.Contains(e.Out.String(), `"category": "MISCONFIGURATION"`) {
+			t.Errorf("the document is not the one of the insight:\n%s", e.Out)
+		}
+		if n := e.Count(fleettest.EKSListInsights); n != 0 {
+			t.Errorf("ListInsights calls = %d, want none for a full ID", n)
+		}
+	})
 	t.Run("errors", func(t *testing.T) {
 		for _, tt := range []struct{ insight, want string }{
+			{"ffffffff-9999-4a4a-8b8b-000000000009", `insight "ffffffff-9999-4a4a-8b8b-000000000009" not found on cluster prod`},
 			{"bc8b", "too short"},
 			{"ffffffff", "no UPGRADE_READINESS insight of cluster prod has the ID"},
 		} {
@@ -320,8 +344,8 @@ func TestUpgradeCheck_Timeout(t *testing.T) {
 			ctx, cancel := context.WithTimeout(cmdutiltest.Context(t), 10*time.Second)
 			defer cancel()
 			err := e.Run(ctx, append([]string{"cluster", "upgrade-check", "prod"}, tt.args...)...)
-			if err == nil {
-				t.Fatal("run: no error, want the timeout")
+			if !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("run: error = %v, want the timeout", err)
 			}
 			if ctx.Err() != nil {
 				t.Errorf("the run ended with the context of the caller (%v), not with the timeout", err)

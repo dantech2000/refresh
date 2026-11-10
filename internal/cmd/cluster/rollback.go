@@ -14,15 +14,8 @@ import (
 )
 
 type rollbackOptions struct {
+	f   *cmdutil.Factory
 	ios *cmdutil.IOStreams
-	// deps builds the dependencies of the change. Calling it is the first
-	// use of the network.
-	deps func(ctx context.Context) (change.Deps, error)
-	// resolve returns the cluster of the run, the way a change does:
-	// never from the kubeconfig.
-	resolve  func(explicit string) (cmdutil.Target, error)
-	timeout  func() time.Duration
-	followUp func() change.FollowUp
 
 	skipNodegroups  []string
 	skipInsights    bool
@@ -36,13 +29,7 @@ type rollbackOptions struct {
 }
 
 func newCmdRollback(f *cmdutil.Factory) *cobra.Command {
-	o := &rollbackOptions{
-		ios:      f.IOStreams,
-		deps:     changecmd.Deps(f),
-		resolve:  func(explicit string) (cmdutil.Target, error) { return cmdutil.ResolveCluster(f, explicit, false) },
-		timeout:  func() time.Duration { return f.Global.Timeout },
-		followUp: followUp(f),
-	}
+	o := &rollbackOptions{f: f, ios: f.IOStreams}
 	cmd := &cobra.Command{
 		Use:   "rollback [cluster]",
 		Short: "Roll a cluster back to the Kubernetes version before its upgrade",
@@ -112,7 +99,7 @@ context. It never comes from the kubeconfig.
 	cmd.Flags().BoolVar(&o.skipInsights, "skip-insights-check", false, "Roll back past blocking insights, and send force to EKS (not recommended)")
 	cmd.Flags().BoolVar(&o.skipVerify, "skip-verify", false, "Skip the verification after each nodegroup roll")
 	cmd.Flags().DurationVar(&o.rollbackTimeout, "rollback-timeout", 0, "Time that EKS gives the control-plane rollback: whole minutes from 2h to 168h; 0 leaves the default of EKS")
-	cmdutil.AddChangeFlags(cmd, &o.change, engineWaitTimeout, "the whole rollback", false, true)
+	cmdutil.AddChangeFlags(cmd, &o.change, cmdutil.ChangeFlagOptions{Wait: change.DefaultWait(change.ClusterRollback), WaitFor: "the whole rollback", Force: true})
 	cmdutil.AddOutputFlag(cmd, &o.output, cmdutil.FormatTable, cmdutil.FormatJSON, cmdutil.FormatYAML, cmdutil.FormatPlain)
 	return cmd
 }
@@ -122,7 +109,8 @@ func (o *rollbackOptions) complete(args []string) error {
 	if len(args) > 0 {
 		explicit = args[0]
 	}
-	target, err := o.resolve(explicit)
+	// A change never takes its cluster from the kubeconfig.
+	target, err := cmdutil.ResolveCluster(o.f, explicit, false)
 	o.target = target
 	return err
 }
@@ -140,7 +128,7 @@ func (o *rollbackOptions) validate() error {
 // request returns the change that the flags describe.
 func (o *rollbackOptions) request() change.RollbackRequest {
 	req := change.RollbackRequest{
-		Common:          changecmd.Common(&o.change, o.timeout()),
+		Common:          changecmd.Common(&o.change, o.f.Global.Timeout),
 		Target:          change.Target{Cluster: o.target.Cluster},
 		SkipNodegroups:  o.skipNodegroups,
 		SkipInsights:    o.skipInsights,
@@ -152,15 +140,14 @@ func (o *rollbackOptions) request() change.RollbackRequest {
 }
 
 func (o *rollbackOptions) run(ctx context.Context) error {
-	d, err := o.deps(ctx)
+	d, err := changecmd.Deps(ctx, o.f)
 	if err != nil {
 		return err
 	}
-	d.FollowUp = o.followUp()
-	d.FollowUp.Resume = resumeFlags(&o.change)
+	d.FollowUp.Resume = resumeFlags(&o.change, change.ClusterRollback)
 	req := o.request()
 	if o.change.DryRun {
-		return changecmd.PrintPlan(ctx, o.ios, o.output, d, req, o.timeout(), nil)
+		return changecmd.PrintPlan(ctx, o.ios, o.output, d, req, o.f.Global.Timeout, nil)
 	}
 	return changecmd.RunChange(ctx, o.ios, o.output, d, req, engineRenderer(o.ios, req.Nodes, o.change.Quiet))
 }

@@ -110,8 +110,14 @@ func cloneValue(v any) any {
 
 // page returns one page of items and the token of the next page, or "" on
 // the last. A fault's page size wins over the request's limit, which is
-// read from limitKey.
+// read from limitKey, and that wins over the operation's default. A limit
+// outside the operation's range fails the request.
 func page[T any](c *call, items []T, limitKey, tokenKey string) ([]T, string, error) {
+	rule := c.op.pages
+	asked, hasLimit := c.in.num(limitKey)
+	if hasLimit && rule.Max > 0 && (asked < rule.Min || asked > rule.Max) {
+		return nil, "", newError(c.svc.invalid, fmt.Sprintf("Value (%d) for parameter %s is invalid. Expecting a value between %d and %d.", asked, limitKey, rule.Min, rule.Max))
+	}
 	start := 0
 	if token := c.in.str(tokenKey); token != "" {
 		n, err := strconv.Atoi(token)
@@ -121,8 +127,12 @@ func page[T any](c *call, items []T, limitKey, tokenKey string) ([]T, string, er
 		start = n
 	}
 	size := c.pageSize
-	if size <= 0 {
-		size, _ = c.in.num(limitKey)
+	switch {
+	case size > 0:
+	case hasLimit:
+		size = asked
+	default:
+		size = rule.Default
 	}
 	end := len(items)
 	if size > 0 && start+size < end {

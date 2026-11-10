@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/dantech2000/refresh/internal/apidoc"
+	"github.com/dantech2000/refresh/internal/fleet/fleetdata"
 )
 
 // State says how much of a field group the fetcher read. A field group is
@@ -40,6 +41,12 @@ func (s State) String() string {
 		return "NotAttempted"
 	}
 	return "State(?)"
+}
+
+// Listed reports whether a list group was read, in full or in part: the
+// names of the list are then known.
+func (s State) Listed() bool {
+	return s == Collected || s == Partial
 }
 
 // Snapshot is one cluster as one Fetch read it.
@@ -93,29 +100,6 @@ func (s *Snapshot) Incomplete() bool {
 	return len(s.Failures) > 0
 }
 
-// HealthIssues counts the health issues that EKS reports for the control
-// plane, the nodegroups, and the add-ons that were read. An add-on that is
-// DEGRADED with no issue listed counts as one. It is the count of the
-// HEALTH column of "refresh status".
-func (s *Snapshot) HealthIssues() int {
-	n := len(s.Cluster.HealthIssues)
-	for _, ng := range s.Nodegroups {
-		if ng.State == Collected {
-			n += len(ng.HealthIssues)
-		}
-	}
-	for _, a := range s.Addons {
-		switch {
-		case a.State != Collected:
-		case len(a.Issues) > 0:
-			n += len(a.Issues)
-		case a.Status == "DEGRADED":
-			n++
-		}
-	}
-	return n
-}
-
 // Cluster is an EKS cluster.
 type Cluster struct {
 	// Name and Region are always set.
@@ -135,10 +119,14 @@ type Cluster struct {
 	// UpgradePolicy is the EKS support type: STANDARD, EXTENDED, or "".
 	UpgradePolicy string
 	// AutoMode reports EKS Auto Mode compute.
-	AutoMode     bool
-	HealthIssues []Issue
-	Network      Network
-	Security     Security
+	AutoMode bool
+	// ControlPlaneTier is the scaling tier of the control plane, as EKS
+	// reports it: standard, tier-xl, tier-2xl, tier-4xl, or tier-8xl. ""
+	// means DescribeCluster returned no scaling config.
+	ControlPlaneTier string
+	HealthIssues     []Issue
+	Network          Network
+	Security         Security
 
 	// Support is valid when Have.Support is Collected.
 	Support Support
@@ -314,6 +302,13 @@ type Instance struct {
 	State, Lifecycle string
 	AvailabilityZone string
 	LaunchTime       time.Time
+}
+
+// KnownAMIType reports whether refresh knows where the recommended AMI of
+// an AMI type is published. CUSTOM has none. A type that EKS added after
+// this version of refresh has none either, so its AMI status is Unknown.
+func KnownAMIType(amiType string) bool {
+	return fleetdata.KnownAMIType(amiType)
 }
 
 // AMIStatus compares the AMI that the nodes run with the latest

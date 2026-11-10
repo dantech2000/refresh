@@ -2,6 +2,7 @@ package contextcmd
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -42,7 +43,7 @@ Exit codes:
 }
 
 func (o *removeOptions) complete(args []string) {
-	o.name = contextName(args[0])
+	o.name = strings.TrimSpace(args[0])
 }
 
 func (o *removeOptions) validate() error {

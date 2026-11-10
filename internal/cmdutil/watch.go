@@ -50,10 +50,12 @@ func ValidateWatch(ios *IOStreams, format Format, watch bool, interval time.Dura
 const clearScreen = "\x1b[H\x1b[2J"
 
 // Watch calls draw, and again after each interval, until ctx ends. draw
-// runs one read of the command and prints it to ios.Out; the --timeout
-// budget applies to each read, because draw sets it. Watch keeps what draw
-// prints and, when the read is done, clears the screen and writes it. The
-// read before it stays on the screen until then.
+// runs one read of the command and prints it to the streams it is given;
+// the --timeout budget applies to each read, because draw sets it. Watch
+// keeps what draw prints and, when the read is done, clears the screen and
+// writes it: the table, then the notes that the read wrote to stderr, so
+// the clear does not erase them. The read before it stays on the screen
+// until then. The streams of ios are not changed.
 //
 // A read with a partial result (exit 4) printed what it has and named what
 // it could not read, and the watch goes on: the next read may be whole.
@@ -62,24 +64,26 @@ const clearScreen = "\x1b[H\x1b[2J"
 //
 // after returns a channel that delivers after a duration; nil means
 // time.After. A test passes its own.
-func Watch(ctx context.Context, ios *IOStreams, interval time.Duration, after func(time.Duration) <-chan time.Time, draw func(context.Context) error) error {
+func Watch(ctx context.Context, ios *IOStreams, interval time.Duration, after func(time.Duration) <-chan time.Time, draw func(context.Context, *IOStreams) error) error {
 	if after == nil {
 		after = time.After
 	}
-	out := ios.Out
-	defer func() { ios.Out = out }()
 	for {
-		var frame bytes.Buffer
-		ios.Out = &frame
-		err := draw(ctx)
-		ios.Out = out
+		var frame, notes bytes.Buffer
+		read := *ios
+		read.Out, read.ErrOut = &frame, &notes
+		err := draw(ctx, &read)
 		if ctx.Err() != nil {
 			return ErrStopped
 		}
 		if frame.Len() > 0 {
-			if _, werr := io.WriteString(out, clearScreen+frame.String()); werr != nil {
+			if _, werr := io.WriteString(ios.Out, clearScreen+frame.String()); werr != nil {
 				return werr
 			}
+		}
+		if notes.Len() > 0 {
+			// Nothing can report a failed write to stderr.
+			_, _ = notes.WriteTo(ios.ErrOut)
 		}
 		if err != nil && ExitCode(err) != ExitIncomplete {
 			return err

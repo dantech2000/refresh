@@ -48,8 +48,9 @@ func statusOf(t *testing.T, st state.State, name string) view.Status {
 }
 
 // The first sweep of a big fleet writes one summary, and a line only for
-// each cluster that failed: not one line per cluster, and none for a
-// cluster that only needs attention.
+// each cluster with an alarm, such as a health issue: not one line per
+// cluster, and none for a cluster that is only stale. A health issue needs
+// attention, as in "refresh status": it does not fail the row.
 func TestFirstSweepOfABigFleetSummarizes(t *testing.T) {
 	var clusters []*fleettest.Cluster
 	for i := range 12 {
@@ -58,21 +59,25 @@ func TestFirstSweepOfABigFleetSummarizes(t *testing.T) {
 	behind := cluster("behind", east, "1.34")
 	behind.Nodegroups[0].Version = "1.33"
 	broken := cluster("broken", east, "1.34")
+	// DEGRADED with no issue listed: the status is the health issue.
 	broken.Nodegroups[0].Status = fleettest.StatusDegraded
 	st := firstSweep(t, append(clusters, behind, broken)...)
 
 	if got, want := statusOf(t, st, "behind"), view.Warn; got != want {
 		t.Errorf("behind = %v, want %v", got, want)
 	}
-	if got, want := statusOf(t, st, "broken"), view.Fail; got != want {
+	if got, want := statusOf(t, st, "broken"), view.Warn; got != want {
 		t.Errorf("broken = %v, want %v", got, want)
 	}
 	feed := feedText(st)
 	if !strings.Contains(feed, "14 clusters: 2 need attention, 0 changing") {
 		t.Errorf("feed lacks the summary:\n%s", feed)
 	}
-	if lines := clusterLines(st, view.Fail); len(lines) != 1 || !strings.HasPrefix(lines[0], "broken ") || !strings.Contains(lines[0], "nodegroup ng DEGRADED") {
-		t.Errorf("the failed lines about clusters = %q, want one, for broken, that says why", lines)
+	if lines := clusterLines(st, view.Warn); len(lines) != 1 || lines[0] != "broken 1 health issue" {
+		t.Errorf("the warning lines about clusters = %q, want one, for broken, that says why", lines)
+	}
+	if lines := clusterLines(st, view.Fail); len(lines) != 0 {
+		t.Errorf("the failed lines about clusters = %q, want none", lines)
 	}
 }
 
@@ -95,21 +100,22 @@ func TestFirstSweepKeepsChangingClusters(t *testing.T) {
 	}
 }
 
-// A changing cluster that also has an error reports the error: the row
-// has failed, and the feed says why.
+// A changing cluster that is also out of standard support reports the
+// support: the row needs attention, not only a change, and the feed says
+// why. Extended support needs attention, as in "refresh status".
 func TestFirstSweepShowsTheErrorUnderAChange(t *testing.T) {
 	// 1.31 is in extended support on the clock of the test.
 	old := cluster("old", east, "1.31")
 	old.Nodegroups[0].Status = fleettest.StatusUpdating
 	st := firstSweep(t, cluster("ok", east, "1.34"), old)
-	if got, want := statusOf(t, st, "old"), view.Fail; got != want {
+	if got, want := statusOf(t, st, "old"), view.Warn; got != want {
 		t.Errorf("old = %v, want %v", got, want)
 	}
 	if feed := feedText(st); !strings.Contains(feed, "2 clusters: 1 need attention, 0 changing") {
 		t.Errorf("feed lacks the summary:\n%s", feed)
 	}
-	if lines := clusterLines(st, view.Fail); len(lines) != 1 || !strings.Contains(lines[0], "extended support") {
-		t.Errorf("the failed lines about clusters = %q, want one for old that names its support", lines)
+	if lines := clusterLines(st, view.Warn); len(lines) != 1 || !strings.Contains(lines[0], "extended support") {
+		t.Errorf("the warning lines about clusters = %q, want one for old that names its support", lines)
 	}
 }
 
@@ -132,8 +138,8 @@ func TestSweepRowWithAnUnreadAMI(t *testing.T) {
 		if c.Name != "prod" {
 			continue
 		}
-		if c.Stale.Unknown != 1 || c.Status == view.Healthy || !c.Incomplete {
-			t.Errorf("prod: unknown %d, status %v, incomplete %t; want 1 unknown, not healthy, and incomplete", c.Stale.Unknown, c.Status, c.Incomplete)
+		if c.Findings.UnreadAMIs != 1 || c.Status == view.Healthy || !c.Incomplete {
+			t.Errorf("prod: unread AMIs %d, status %v, incomplete %t; want 1 unread, not healthy, and incomplete", c.Findings.UnreadAMIs, c.Status, c.Incomplete)
 		}
 		return
 	}
@@ -143,7 +149,7 @@ func TestSweepRowWithAnUnreadAMI(t *testing.T) {
 // The fleet view counts the health issues that "refresh status" counts in
 // its HEALTH column: of the control plane, of the nodegroups, and of the
 // add-ons, and a DEGRADED add-on with no issue listed as one. A row with
-// any of them has failed, and the feed says how many.
+// any of them needs attention, and the feed says how many.
 func TestSweepCountsTheHealthIssuesOfStatus(t *testing.T) {
 	ngIssue := cluster("ng-issue", east, "1.34")
 	ngIssue.Nodegroups[0].HealthIssues = []fleettest.Issue{{Code: "AsgInstanceLaunchFailures", Message: "no capacity"}}
@@ -157,15 +163,15 @@ func TestSweepCountsTheHealthIssuesOfStatus(t *testing.T) {
 
 	want := map[string]string{"ng-issue": "1 health issue", "addon-issue": "1 health issue", "every": "3 health issues"}
 	for name, words := range want {
-		if got := statusOf(t, st, name); got != view.Fail {
-			t.Errorf("%s = %v, want %v", name, got, view.Fail)
+		if got := statusOf(t, st, name); got != view.Warn {
+			t.Errorf("%s = %v, want %v", name, got, view.Warn)
 		}
 		found := false
-		for _, l := range clusterLines(st, view.Fail) {
+		for _, l := range clusterLines(st, view.Warn) {
 			found = found || strings.HasPrefix(l, name+" ") && strings.Contains(l, words)
 		}
 		if !found {
-			t.Errorf("no failed line for %s with %q: %q", name, words, clusterLines(st, view.Fail))
+			t.Errorf("no warning line for %s with %q: %q", name, words, clusterLines(st, view.Warn))
 		}
 	}
 	if got := statusOf(t, st, "ok"); got != view.Healthy {

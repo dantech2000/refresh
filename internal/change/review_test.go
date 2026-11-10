@@ -17,6 +17,7 @@ import (
 
 	"github.com/dantech2000/refresh/internal/apidoc"
 	"github.com/dantech2000/refresh/internal/awsx/awsxtest"
+	"github.com/dantech2000/refresh/internal/fleet"
 	"github.com/dantech2000/refresh/internal/fleet/fleettest"
 	"github.com/dantech2000/refresh/internal/health"
 )
@@ -342,6 +343,62 @@ func TestSameRequest(t *testing.T) {
 	}
 	if err := sameRequest(&Plan{Kind: NodegroupScale}, scale); !errors.Is(err, ErrOtherRequest) {
 		t.Errorf("a plan with no request: error = %v", err)
+	}
+}
+
+// Every request type takes a reviewed plan as its consent through
+// WithExpect, keeps every other field, and is then the request of that
+// plan. A front end that starts the dry run it showed never loses the
+// consent for a type that it does not know.
+func TestWithExpectGivesEveryRequestItsConsent(t *testing.T) {
+	target := Target{Region: east, Cluster: "prod"}
+	common := Common{Nodes: true, Limits: Limits{Wait: time.Hour}}
+	requests := []Request{
+		AddonUpdateRequest{Common: common, Target: target, All: true},
+		ScaleRequest{Common: common, Target: target, Nodegroup: "web", Desired: size(3)},
+		RollRequest{Common: common, Target: target, Nodegroups: []string{"web"}},
+		UpgradeRequest{Common: common, Target: target, To: fleet.Version{Major: 1, Minor: 34}},
+		RollbackRequest{Common: common, Target: target},
+	}
+	kinds := map[Kind]bool{}
+	for _, req := range requests {
+		kinds[req.kind()] = true
+		reviewed := &Plan{Kind: req.kind(), Request: req}
+		got := WithExpect(req, reviewed)
+		if got.base().Expect != reviewed {
+			t.Errorf("%T: Expect = %p, want the reviewed plan", req, got.base().Expect)
+		}
+		// Only Expect changed.
+		back := reflect.New(reflect.TypeOf(got)).Elem()
+		back.Set(reflect.ValueOf(got))
+		back.FieldByName("Common").FieldByName("Expect").Set(reflect.Zero(reflect.TypeFor[*Plan]()))
+		if diff := cmp.Diff(req, back.Interface()); diff != "" {
+			t.Errorf("%T: WithExpect changed another field (-want +got):\n%s", req, diff)
+		}
+		if err := sameRequest(reviewed, got); err != nil {
+			t.Errorf("%T: the request with its consent is not the request of the plan: %v", req, err)
+		}
+	}
+	for _, k := range []Kind{AddonUpdate, NodegroupScale, NodegroupUpdate, ClusterUpgrade, ClusterRollback} {
+		if !kinds[k] {
+			t.Errorf("no request of kind %s in the test", k)
+		}
+	}
+}
+
+// Every kind of change has a default wait, the one of CONTRACT.md.
+func TestDefaultWait(t *testing.T) {
+	want := map[Kind]time.Duration{
+		NodegroupUpdate: 40 * time.Minute,
+		NodegroupScale:  5 * time.Minute,
+		AddonUpdate:     5 * time.Minute,
+		ClusterUpgrade:  4 * time.Hour,
+		ClusterRollback: 4 * time.Hour,
+	}
+	for k, d := range want {
+		if got := DefaultWait(k); got != d {
+			t.Errorf("DefaultWait(%s) = %s, want %s", k, got, d)
+		}
 	}
 }
 
@@ -706,16 +763,17 @@ const worse = "the health checks got worse since the plan (Addons: vpc-cni is DE
 // plan and is DEGRADED now is a warning that nobody accepted.
 func TestRun_AddonDegradesBeforeSubmit(t *testing.T) {
 	t.Run("--require-healthy blocks it", func(t *testing.T) {
-		e := newEnv(t, newWorld(nil))
-		degrade(e, 4)
-		req := yes(request("vpc-cni", "coredns"))
+		e := newEnv(t, withAgent(newWorld(nil)))
+		// The plan describes four add-ons: the fifth read is the fresh one.
+		degrade(e, 5)
+		req := yes(request("vpc-cni", agent))
 		req.Policy.RequireHealthy = true
 		res, err := Run(testContext(t), e.deps, req, Hooks{})
 		if err != nil {
 			t.Fatal(err)
 		}
 		// The add-on that is blocked does not stop the next one.
-		want := map[string]StepStatus{"vpc-cni": StepBlocked, "coredns": StepSucceeded}
+		want := map[string]StepStatus{"vpc-cni": StepBlocked, agent: StepSucceeded}
 		if diff := cmp.Diff(want, statuses(res)); diff != "" {
 			t.Errorf("steps (-want +got):\n%s", diff)
 		}
@@ -1005,19 +1063,20 @@ func TestRun_RecheckAfterWait_GoesOn(t *testing.T) {
 	})
 	t.Run("an add-on of the run that timed out does not block the next one", func(t *testing.T) {
 		e := newEnv(t, newWorld(func(c *fleettest.Cluster) { c.Addon("vpc-cni").UpdateScripts = []fleettest.UpdateScript{{Never: true}} }))
-		// Named add-ons: with --all, coredns would wait for its dependency.
-		res, err := Run(testContext(t), e.deps, yes(request("vpc-cni", "coredns", "kube-proxy")), Hooks{})
+		// agent does not depend on vpc-cni.
+		e.world = withAgent(e.world)
+		res, err := Run(testContext(t), e.deps, yes(request("vpc-cni", agent)), Hooks{})
 		if err != nil {
 			t.Fatal(err)
 		}
-		want := map[string]StepStatus{"vpc-cni": StepInProgress, "coredns": StepSucceeded, "kube-proxy": StepSkipped}
+		want := map[string]StepStatus{"vpc-cni": StepInProgress, agent: StepSucceeded}
 		if diff := cmp.Diff(want, statuses(res)); diff != "" {
 			t.Errorf("steps (-want +got):\n%s", diff)
 		}
 	})
 	t.Run("--no-wait reads the cluster once", func(t *testing.T) {
 		e := newEnv(t, newWorld(nil))
-		req := yes(request("vpc-cni", "coredns", "kube-proxy"))
+		req := yes(request("coredns", "vpc-cni", "kube-proxy"))
 		req.NoWait = true
 		if _, err := Run(testContext(t), e.deps, req, Hooks{}); err != nil {
 			t.Fatal(err)

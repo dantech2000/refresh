@@ -3,13 +3,17 @@ package change
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/eks"
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/dantech2000/refresh/internal/apidoc"
@@ -286,6 +290,60 @@ func TestInFlightUpdate(t *testing.T) {
 	}
 	if got.ID != started.ID || got.Type != "VersionUpdate" || got.CreatedAt.IsZero() {
 		t.Errorf("update = %+v, want the ID %s, the type VersionUpdate, and a time", got, started.ID)
+	}
+}
+
+// A resource with a long history: EKS lists the updates in no promised
+// order, so the update in progress is found wherever it is in the list.
+// The update listed last is described alone, first; the describe calls
+// after it run side by side. at is a position in the list as EKS answers
+// it, which is not the order of the history: the fake answers in an order
+// no caller would pick.
+func TestInFlightUpdate_LongHistory(t *testing.T) {
+	const finished = 40
+	for _, at := range []int{0, finished / 2, finished} {
+		t.Run(fmt.Sprintf("in progress at %d", at), func(t *testing.T) {
+			created := fleettest.New().Now().Add(-48 * time.Hour)
+			world := engineWorld(func(_ *fleettest.State, c *fleettest.Cluster) {
+				for i := range finished + 1 {
+					c.Updates = append(c.Updates, &fleettest.Update{ID: fmt.Sprintf("00000000-0000-4000-8000-%012d", i), Type: fleettest.TypeVersionUpdate, CreatedAt: created.Add(time.Duration(i) * time.Minute)})
+				}
+			})
+			e := newEnv(t, world)
+			listed, err := e.deps.AWS.Clients(east).EKS.ListUpdates(testContext(t), &eks.ListUpdatesInput{Name: aws.String("prod")})
+			if err != nil || len(listed.UpdateIds) != finished+1 {
+				t.Fatalf("listing the updates: %d IDs, %v", len(listed.UpdateIds), err)
+			}
+			inProgress := listed.UpdateIds[at]
+			world.Edit(func(s *fleettest.State) {
+				s.Cluster(east, "prod").Update(inProgress).Status = fleettest.UpdateInProgress
+			})
+			// The second describe waits until a third one arrives.
+			third := make(chan struct{})
+			var once sync.Once
+			e.onRequest(fleettest.EKSDescribeUpdate, func(n int) {
+				switch n {
+				case 2:
+					select {
+					case <-third:
+					case <-time.After(10 * time.Second):
+						t.Error("the second describe was alone for 10 s: the describes are serial")
+					}
+				case 3:
+					once.Do(func() { close(third) })
+				}
+			})
+			got, err := inFlightUpdate(testContext(t), e.deps.AWS.Clients(east), Resource{Target: Target{Region: east, Cluster: "prod"}, Kind: StepControlPlane})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.ID != inProgress {
+				t.Errorf("update = %+v, want %s", got, inProgress)
+			}
+			if n := e.count(fleettest.EKSDescribeUpdate); at == finished && n != 1 {
+				t.Errorf("%d DescribeUpdate requests, want 1 for an update in progress that is listed last", n)
+			}
+		})
 	}
 }
 

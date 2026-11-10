@@ -6,6 +6,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/dantech2000/refresh/internal/apidoc"
+	"github.com/dantech2000/refresh/internal/fleet"
 	"github.com/dantech2000/refresh/internal/view"
 )
 
@@ -30,6 +31,32 @@ func TestHealthLines(t *testing.T) {
 	}
 	if view.HealthStatus(apidoc.HealthOutcome("later")) != view.NoStatus {
 		t.Error("an outcome this build does not know should draw nothing")
+	}
+}
+
+// One status for each verdict, insight, and standing, for every front end.
+func TestStatusMappings(t *testing.T) {
+	tests := []struct {
+		name      string
+		got, want view.Status
+	}{
+		{"Ready", view.ReadinessStatus(apidoc.ReadinessReady), view.Healthy},
+		{"Review", view.ReadinessStatus(apidoc.ReadinessReview), view.Warn},
+		{"Blocked", view.ReadinessStatus(apidoc.ReadinessBlocked), view.Fail},
+		{"Incomplete", view.ReadinessStatus(apidoc.ReadinessIncomplete), view.Unknown},
+		{"PASSING", view.InsightStatus("PASSING"), view.Healthy},
+		{"WARNING", view.InsightStatus("WARNING"), view.Warn},
+		{"ERROR", view.InsightStatus("ERROR"), view.Fail},
+		{"UNKNOWN", view.InsightStatus("UNKNOWN"), view.Unknown},
+		{"Current", view.StandingStatus(fleet.StandingCurrent), view.Healthy},
+		{"Incomplete standing", view.StandingStatus(fleet.StandingIncomplete), view.Unknown},
+		{"NeedsAttention", view.StandingStatus(fleet.StandingNeedsAttention), view.Warn},
+		{"Unsupported", view.StandingStatus(fleet.StandingUnsupported), view.Fail},
+	}
+	for _, tt := range tests {
+		if tt.got != tt.want {
+			t.Errorf("%s: status %v, want %v", tt.name, tt.got, tt.want)
+		}
 	}
 }
 

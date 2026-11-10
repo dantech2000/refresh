@@ -99,9 +99,8 @@ type runner struct {
 	// waited says that a step of this cluster has waited, so the read of
 	// the plan is old.
 	waited bool
-	// steps are the steps of the phase that runs, and remaining the ones
-	// from the step that runs on.
-	steps, remaining []Step
+	// step is the state of the step that runs.
+	step stepRun
 	// stop ends the run before its next step: a question during the run
 	// was answered no, or could not be asked. hookErr is the error of the
 	// hook in the second case, which Run returns.
@@ -117,21 +116,33 @@ type runner struct {
 	// for every other kind, whose steps each have their own budget.
 	runWaitCtx context.Context //nolint:containedctx // see ctx
 	runWait    *budget
-	// unverified says that the check after the step that runs could not
-	// read what it needs. A run that is a sequence stops there.
-	unverified bool
-	// busySaid are the notices of the busy rule that the step of an
-	// upgrade or a rollback has said already.
-	busySaid struct {
-		step    StepRef
-		notices []string
-	}
-	// afterStep are the events that the step that runs holds back until
-	// its result is reported: see stepEnded.
-	afterStep []Event
 	// confirmedPhase is the phase that the start question of an upgrade
 	// with ConfirmPhases named. Its own question is answered already.
 	confirmedPhase *PhaseRef
+}
+
+// stepRun is the state of one step of a run whose steps run one at a
+// time. Each step starts with a new value (see startStep), so nothing of
+// one step reaches the next.
+type stepRun struct {
+	// steps are the steps of the phase, and remaining the ones from this
+	// step on.
+	steps, remaining []Step
+	// unverified says that the check after the step could not read what
+	// it needs. A run that is a sequence stops there.
+	unverified bool
+	// busySaid are the notices of the busy rule that the step has said
+	// already: the read of a step and the read before its request find
+	// the same thing.
+	busySaid []string
+	// after are the events that the step holds back until its result is
+	// reported: see stepEnded.
+	after []Event
+}
+
+// startStep starts the state of step i of the phase steps.
+func (r *runner) startStep(steps []Step, i int) {
+	r.step = stepRun{steps: steps, remaining: steps[i:]}
 }
 
 // stop is how a run ended that a question during the run stopped.

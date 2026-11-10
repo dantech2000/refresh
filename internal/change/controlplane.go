@@ -13,7 +13,6 @@ import (
 	"github.com/dantech2000/refresh/internal/apidoc"
 	"github.com/dantech2000/refresh/internal/awsx"
 	"github.com/dantech2000/refresh/internal/fleet"
-	"github.com/dantech2000/refresh/internal/health"
 )
 
 // runControlPlane runs the control-plane step of an upgrade hop or of a
@@ -53,7 +52,8 @@ func (r *runner) runControlPlane(cp *ClusterPlan, s Step, snap *fleet.Snapshot) 
 	if fresh.Status == clusterUpdating {
 		// The gate of the phase decides whether the run waits for an
 		// update that it did not start.
-		if out, ok := r.controlPlaneGate(cp, res, s, snap); !ok {
+		insights, _ := r.gateInsights(cp, s, snap)
+		if out, ok := r.controlPlaneGate(cp, res, s, snap, insights); !ok {
 			return out
 		}
 		out, done := r.attachControlPlane(cp, res, s, clients, poll)
@@ -107,17 +107,16 @@ func (r *runner) runControlPlane(cp *ClusterPlan, s Step, snap *fleet.Snapshot) 
 // plane must not move.
 //
 // An upgrade judges the readiness of the hop again, live: the plan judged
-// a later hop from versions that it only predicted. Two rules read the
-// kubelet skew, and either one blocks. health.VersionSkew runs first, on
-// the live versions. Then HopReadiness applies the rule of the planner,
-// and after it the insights, which a real run refreshes first. The skew
-// is judged before the insights by both, so a hop that the skew blocks
-// sends no insights refresh. The step is sent only from the minor version
-// before its goal, and for that hop the two rules are the same condition:
-// a nodegroup three or more minor versions behind the live control plane.
+// a later hop from versions that it only predicted. HopReadiness applies
+// the kubelet skew rule of the planner, and after it the insights, which
+// a real run refreshed before the gate (gateInsights). A hop that the
+// skew blocks sends no insights refresh. The step is sent only from the
+// minor version before its goal, so the rule blocks a nodegroup three or
+// more minor versions behind the live control plane, as
+// health.VersionSkew does.
 //
 // A rollback checks that no managed nodegroup is above its target.
-func (r *runner) controlPlaneGate(cp *ClusterPlan, res StepResult, s Step, snap *fleet.Snapshot) (StepResult, bool) {
+func (r *runner) controlPlaneGate(cp *ClusterPlan, res StepResult, s Step, snap *fleet.Snapshot, insights func(fleet.Version) InsightsRead) (StepResult, bool) {
 	var blockers []Blocker
 	switch req := r.req.(type) {
 	case UpgradeRequest:
@@ -126,18 +125,7 @@ func (r *runner) controlPlaneGate(cp *ClusterPlan, res StepResult, s Step, snap 
 			// The control plane is at the hop: the fresh read decides.
 			return res, true
 		}
-		clients := r.d.AWS.Clients(cp.Region)
-		skew := health.Run(r.readCtx, []health.Check{health.VersionSkew()}, &health.Input{Snapshot: snap, Clients: clients, Now: snap.FetchedAt})
-		for _, c := range skew {
-			if c.Outcome == health.Fail {
-				ref := s.Ref
-				blockers = append(blockers, Blocker{Kind: BlockerNotReady, Step: &ref, Message: c.Name + ": " + c.Message})
-			}
-		}
-		if len(blockers) > 0 {
-			break
-		}
-		ready := HopReadiness(snap, hop, req.SkipInsights, upgradeInsights(r.readCtx, clients, cp.Target, snap.Cluster.Version.String(), r.refresh))
+		ready := HopReadiness(snap, hop, req.SkipInsights, insights)
 		if err := r.readCtx.Err(); err != nil {
 			return r.unsent(cp, res, err), false
 		}
@@ -195,7 +183,7 @@ func (r *runner) attachControlPlane(cp *ClusterPlan, res StepResult, s Step, cli
 		var ended *UpdateError
 		switch {
 		case errors.As(err, &ended):
-			r.notice(fmt.Sprintf("the control-plane update %s that was already running %s", res.UpdateID, strings.TrimPrefix(ended.Error(), "update "+res.UpdateID+" of "+resource.String()+" ")))
+			r.notice(fmt.Sprintf("the control-plane update %s that was already running %s", res.UpdateID, ended.Outcome()))
 		case err != nil:
 			return r.waitFailed(ctx, cp, res, err), true
 		}

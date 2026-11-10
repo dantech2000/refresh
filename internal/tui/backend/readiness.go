@@ -5,7 +5,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/dantech2000/refresh/internal/apidoc"
 	"github.com/dantech2000/refresh/internal/fleet"
 	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/tui/state"
@@ -17,17 +16,20 @@ import (
 // run per cluster at a time.
 func (b *Live) Readiness(_ context.Context, key state.Key) error {
 	b.mu.Lock()
-	if !slices.ContainsFunc(b.clusters, func(c state.Cluster) bool { return c.Key == key }) {
-		b.mu.Unlock()
+	defer b.mu.Unlock()
+	switch {
+	case b.closed:
+		return ErrClosing
+	case !slices.ContainsFunc(b.clusters, func(c state.Cluster) bool { return c.Key == key }):
 		return ErrUnknownCluster
 	}
 	if r := b.readiness[key]; r != nil && r.Running() {
-		b.mu.Unlock()
 		return ErrReadinessRunning
 	}
 	b.readiness[key] = &state.Readiness{StartedAt: b.opts.Now()}
-	b.mu.Unlock()
-	b.bump()
+	b.bumpLocked()
+	// Under the lock that Run takes to close: the goroutine is one that
+	// Run waits for.
 	b.wg.Go(func() { b.runReadiness(key) })
 	return nil
 }
@@ -49,22 +51,9 @@ func (b *Live) runReadiness(key state.Key) {
 		b.say(key, view.Fail, "readiness: "+err.Error())
 	} else {
 		done.Report = &report
-		b.say(key, readinessStatus(report.Readiness), "readiness: "+strings.ToLower(string(report.Readiness)))
+		b.say(key, view.ReadinessStatus(report.Readiness), "readiness: "+strings.ToLower(string(report.Readiness)))
 	}
 	b.readiness[key] = &done
 	b.mu.Unlock()
 	b.bump()
-}
-
-// readinessStatus maps a verdict to the status that paints it.
-func readinessStatus(r apidoc.Readiness) view.Status {
-	switch r {
-	case apidoc.ReadinessReady:
-		return view.Healthy
-	case apidoc.ReadinessReview:
-		return view.Warn
-	case apidoc.ReadinessBlocked:
-		return view.Fail
-	}
-	return view.Unknown
 }

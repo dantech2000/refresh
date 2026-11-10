@@ -163,6 +163,17 @@ func updateCases() []updateCase {
 		{name: "all", args: []string{"--all", "--yes"}, updates: []string{"vpc-cni", "coredns"}},
 		// coredns depends on vpc-cni: without a wait, the order means nothing.
 		{name: "all-no-wait", args: []string{"--all", "--yes", "--no-wait"}, exit: cmdutil.ExitFailure},
+		// Named add-ons keep their order, and follow the same rules: a
+		// dependency named first makes --no-wait refuse, and stops its
+		// dependent when it does not end clean.
+		{name: "named-no-wait-pair", args: []string{"vpc-cni", "coredns", "--yes", "--no-wait"}, exit: cmdutil.ExitFailure},
+		{name: "named-dependency-failed", args: []string{"vpc-cni", "coredns", "--yes"}, exit: cmdutil.ExitFailure, updates: []string{"vpc-cni"},
+			seed: func(c *fleettest.Cluster) { addon(c, "vpc-cni").UpdateScripts = []fleettest.UpdateScript{fails} }},
+		// A dependency that is updated and DEGRADED stops its dependents.
+		{name: "all-dependency-degraded", args: []string{"--all", "--yes"}, exit: cmdutil.ExitVerifyFailed, updates: []string{"vpc-cni"},
+			seed: func(c *fleettest.Cluster) {
+				addon(c, "vpc-cni").UpdateScripts = []fleettest.UpdateScript{{ResourceStatus: fleettest.StatusDegraded}}
+			}},
 		{name: "skip-addon", args: []string{"--all", "--skip-addon", "coredns", "--yes"}, updates: []string{"vpc-cni"}},
 		{name: "pinned-version", args: []string{"coredns", "--version", dnsNew, "--yes"}, updates: []string{"coredns"}},
 		{name: "dry-run", args: []string{"--all", "--dry-run"}},

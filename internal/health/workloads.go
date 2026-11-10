@@ -3,7 +3,6 @@ package health
 import (
 	"context"
 	"fmt"
-	"slices"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -33,7 +32,7 @@ func Workloads() Check {
 func runWorkloads(_ context.Context, in *Input) Result {
 	var (
 		total, running int
-		problems       []string
+		problems       []finding
 		details        []string
 		failures       []apidoc.Failure
 		unread         []string
@@ -61,7 +60,7 @@ func runWorkloads(_ context.Context, in *Input) Result {
 			if problem := podProblem(pod); problem == "" {
 				nsRunning++
 			} else {
-				problems = append(problems, ns+"/"+pod.Name+" ("+problem+")")
+				problems = append(problems, finding{ns + "/" + pod.Name, ns + "/" + pod.Name + " (" + problem + ")"})
 			}
 		}
 		total += nsTotal
@@ -82,23 +81,18 @@ func runWorkloads(_ context.Context, in *Input) Result {
 }
 
 // evaluateWorkloads is the rule, apart from the reads.
-func evaluateWorkloads(total, running int, problems []string) Result {
-	findings := make([]string, 0, len(problems))
-	for _, p := range problems {
-		name, _, _ := strings.Cut(p, " (")
-		findings = append(findings, name)
-	}
-	slices.Sort(findings)
-	r := Result{Findings: findings}
+func evaluateWorkloads(total, running int, problems []finding) Result {
+	r := Result{Findings: findingNames(problems)}
+	texts := strings.Join(findingTexts(problems), ", ")
 	switch {
 	case total == 0:
 		r.Outcome, r.Message = Warn, "no pods in the system namespaces"
 	case len(problems) == 0:
 		r.Outcome, r.Message = Pass, fmt.Sprintf("%d/%d pods running in the system namespaces", running, total)
 	case running*100 >= total*minRunningPodPercent:
-		r.Outcome, r.Message = Warn, fmt.Sprintf("%d/%d system pods running; %s", running, total, strings.Join(problems, ", "))
+		r.Outcome, r.Message = Warn, fmt.Sprintf("%d/%d system pods running; %s", running, total, texts)
 	default:
-		r.Outcome, r.Message = Fail, fmt.Sprintf("%d/%d system pods running; %s", running, total, strings.Join(problems, ", "))
+		r.Outcome, r.Message = Fail, fmt.Sprintf("%d/%d system pods running; %s", running, total, texts)
 	}
 	return r
 }

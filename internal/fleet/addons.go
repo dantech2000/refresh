@@ -11,6 +11,7 @@ import (
 
 	"github.com/dantech2000/refresh/internal/apidoc"
 	"github.com/dantech2000/refresh/internal/awsx"
+	"github.com/dantech2000/refresh/internal/fanout"
 )
 
 // addonsResult is the add-on group of a snapshot.
@@ -56,7 +57,6 @@ func (f *Fetcher) fetchAddons(ctx context.Context, c *awsx.Clients, cluster stri
 		newest bool // the lookup of the newest version, not the describe
 	}
 	type result struct {
-		ran     bool
 		addon   Addon           // of a describe
 		failure *apidoc.Failure // of a describe
 		version string          // of a lookup
@@ -72,17 +72,17 @@ func (f *Fetcher) fetchAddons(ctx context.Context, c *awsx.Clients, cluster stri
 			tasks = append(tasks, task{index: i, newest: true})
 		}
 	}
-	results := each(ctx, f.tickets(c), tasks, func(ctx context.Context, t task) result {
+	results, started := fanout.ForEachIn(ctx, f.tickets(c), tasks, func(ctx context.Context, t task) result {
 		name := names[t.index]
 		if t.newest {
 			// The cluster is described in the first wave, so this wait is
 			// over when the task starts, or soon after.
 			version := clusterVersion()
 			if version.IsZero() {
-				return result{ran: true, skipped: true}
+				return result{skipped: true}
 			}
 			latest, err := f.latestAddon(ctx, c, name, version)
-			return result{ran: true, version: latest, err: err}
+			return result{version: latest, err: err}
 		}
 		out, err := c.EKS.DescribeAddon(ctx, &eks.DescribeAddonInput{ClusterName: aws.String(cluster), AddonName: aws.String(name)})
 		if err == nil && out.Addon == nil {
@@ -91,7 +91,7 @@ func (f *Fetcher) fetchAddons(ctx context.Context, c *awsx.Clients, cluster stri
 		if err != nil {
 			failure := inRegion(c, FailureFromError(apidoc.FailureAddon, name, err))
 			failure.Cluster = cluster
-			return result{ran: true, addon: Addon{Name: name, State: stateOf(err)}, failure: &failure}
+			return result{addon: Addon{Name: name, State: stateOf(err)}, failure: &failure}
 		}
 		in := out.Addon
 		addon := Addon{
@@ -110,12 +110,12 @@ func (f *Fetcher) fetchAddons(ctx context.Context, c *awsx.Clients, cluster stri
 				addon.Issues = append(addon.Issues, Issue{Code: string(issue.Code), Message: aws.ToString(issue.Message), ResourceIDs: issue.ResourceIds})
 			}
 		}
-		return result{ran: true, addon: addon}
+		return result{addon: addon}
 	})
 
 	res := addonsResult{addons: make([]Addon, len(names)), state: Collected}
 	for i, r := range results[:len(names)] {
-		if !r.ran {
+		if i >= started {
 			// The context ended before this add-on started.
 			failure := inRegion(c, notAttempted(ctx, apidoc.FailureAddon, names[i]))
 			failure.Cluster = cluster
@@ -132,7 +132,10 @@ func (f *Fetcher) fetchAddons(ctx context.Context, c *awsx.Clients, cluster stri
 		if a.State != Collected || l.skipped {
 			continue
 		}
-		err := chunkError(ctx, l.ran, l.err)
+		err := l.err
+		if len(names)+i >= started {
+			err = notSent(ctx)
+		}
 		if err != nil {
 			a.LatestState = stateOf(err)
 			failure := inRegion(c, FailureFromError(apidoc.FailureAddon, a.Name, err))

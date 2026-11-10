@@ -180,8 +180,8 @@ says. See [Exit codes](exit-codes.md#dry-runs).
 A command for one cluster uses one region, from the order in
 [Profile and region](#profile-and-region).
 
-`status`, `cluster list`, `ui`, and `nodegroup update --all-clusters` can
-read several regions. This is a sweep. The regions of a sweep are:
+`status`, `cluster list`, and `ui` can read several regions. This is a sweep.
+The regions of a sweep are:
 
 1. The regions of `-r`, when it is given.
 2. With `-A`, or when no region is configured: the list in
@@ -191,6 +191,12 @@ read several regions. This is a sweep. The regions of a sweep are:
 3. Otherwise, the configured region.
 
 `-A` together with `-r` is a usage error.
+
+`nodegroup update --all-clusters` changes clusters, so it reads only the
+regions that you point it at: the regions of `-r`, or else the configured
+region. It does not read `REFRESH_EKS_REGIONS`, it has no `-A`, and it never
+takes the default sweep. With no `-r` and no configured region, it fails
+before any request.
 
 refresh checks the shape of every region name before it sends a request: a
 partition prefix, a geographic word, and a number, such as `us-east-1`,

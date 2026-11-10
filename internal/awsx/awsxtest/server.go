@@ -210,6 +210,7 @@ func (h *Handler) begin(service, region string) (end func()) {
 type call struct {
 	world  *fleettest.World
 	svc    *service
+	op     operation
 	region string
 	in     input
 	// pageSize is the page size a fault forces, or 0.
@@ -306,7 +307,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.drop(req, false)
 	}
 
-	result, err := op.handle(&call{world: h.world, svc: svc, region: region, in: in, pageSize: admission.PageSize})
+	result, err := op.handle(&call{world: h.world, svc: svc, op: op, region: region, in: in, pageSize: admission.PageSize})
 	if err == nil && h.world.LoseResponse(admission) {
 		// The operation ran. The client never learns the result.
 		h.drop(req, true)

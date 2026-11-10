@@ -24,11 +24,12 @@ func TestAMIParameter(t *testing.T) {
 		{"BOTTLEROCKET_x86_64_FIPS", "/aws/service/bottlerocket/aws-k8s-1.33-fips/x86_64/latest/image_id"},
 		{"WINDOWS_CORE_2022_x86_64", "/aws/service/ami-windows-latest/Windows_Server-2022-English-Core-EKS_Optimized-1.33/image_id"},
 		{"WINDOWS_FULL_2025_x86_64", "/aws/service/ami-windows-latest/Windows_Server-2025-English-Full-EKS_Optimized-1.33/image_id"},
-		// A type newer than the table gets the base variant of its family.
-		{"AL2023_x86_64_SOMETHING_NEW", "/aws/service/eks/optimized-ami/1.33/amazon-linux-2023/x86_64/standard/recommended/image_id"},
-		{"BOTTLEROCKET_ARM_64_NEW", "/aws/service/bottlerocket/aws-k8s-1.33/arm64/latest/image_id"},
-		// No parameter: the user manages the AMI, or the family is not
-		// known. A guess would compare with the AMI of another family.
+		// No parameter: the user manages the AMI, or the table does not
+		// have the type. A type newer than the table is a new variant with
+		// its own AMI, also in a known family: the base variant of the
+		// family would call the nodegroup stale on every run.
+		{"AL2023_x86_64_SOMETHING_NEW", ""},
+		{"BOTTLEROCKET_ARM_64_NEW", ""},
 		{"CUSTOM", ""},
 		{"UBUNTU_24_x86_64", ""},
 		{"", ""},

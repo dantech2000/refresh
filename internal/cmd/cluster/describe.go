@@ -2,19 +2,15 @@ package cluster
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"maps"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/dantech2000/refresh/internal/apidoc"
-	"github.com/dantech2000/refresh/internal/awsx"
 	"github.com/dantech2000/refresh/internal/cmd/fleetcmd"
 	"github.com/dantech2000/refresh/internal/cmdutil"
 	"github.com/dantech2000/refresh/internal/fleet"
@@ -24,17 +20,8 @@ import (
 )
 
 type describeOptions struct {
-	ios    *cmdutil.IOStreams
-	global *cmdutil.GlobalOptions
-	// now returns the time that a snapshot records.
-	now func() time.Time
-	// resolve returns the cluster of the run, from the flag or the
-	// defaults, and clients the AWS clients of its region.
-	resolve func(cluster string) (cmdutil.Target, error)
-	clients func(ctx context.Context) (*awsx.Clients, error)
-	// kube returns the Kubernetes client of a cluster, for
-	// --check-readiness.
-	kube func(target kube.Target) (*kube.Client, error)
+	f   *cmdutil.Factory
+	ios *cmdutil.IOStreams
 
 	cluster        string
 	checkReadiness bool
@@ -45,12 +32,7 @@ type describeOptions struct {
 }
 
 func newCmdDescribe(f *cmdutil.Factory) *cobra.Command {
-	o := &describeOptions{
-		ios: f.IOStreams, global: &f.Global, now: f.Now,
-		resolve: func(cluster string) (cmdutil.Target, error) { return cmdutil.ResolveCluster(f, cluster, true) },
-		clients: func(ctx context.Context) (*awsx.Clients, error) { return cmdutil.ClusterClients(ctx, f) },
-		kube:    f.Kube,
-	}
+	o := &describeOptions{f: f, ios: f.IOStreams}
 	cmd := &cobra.Command{
 		Use:   "describe [cluster]",
 		Short: "Describe one cluster with its nodegroups and add-ons",
@@ -108,7 +90,7 @@ func (o *describeOptions) complete(args []string) error {
 	if len(args) > 0 {
 		o.cluster = args[0]
 	}
-	target, err := o.resolve(o.cluster)
+	target, err := cmdutil.ResolveCluster(o.f, o.cluster, true)
 	o.target = target
 	return err
 }
@@ -119,27 +101,29 @@ func (o *describeOptions) validate() error {
 	if !o.checkReadiness {
 		return nil
 	}
-	return kube.CheckContext(o.global.Kubeconfig, o.global.KubeContext)
+	return kube.CheckContext(o.f.Global.Kubeconfig, o.f.Global.KubeContext)
 }
 
 func (o *describeOptions) run(ctx context.Context) error {
 	ios := o.ios
-	ctx, cancel := cmdutil.WithTimeout(ctx, o.global.Timeout)
+	ctx, cancel := cmdutil.WithTimeout(ctx, o.f.Global.Timeout)
 	defer cancel()
-	clients, err := o.clients(ctx)
+	read, err := fleetcmd.FetchCluster(ctx, o.f, o.target, fleet.Need{Nodegroups: true, InstanceIDs: true, Addons: true, Support: true, VPC: true})
 	if err != nil {
 		return err
 	}
-	fetcher := fleet.Fetcher{Now: o.now}
-	snap, err := fetcher.Fetch(ctx, clients, o.target.Cluster, fleet.Need{Nodegroups: true, InstanceIDs: true, Addons: true, Support: true, VPC: true})
-	if err != nil {
-		return fleetcmd.ClusterError(ctx, &fetcher, clients, o.target.Cluster, err)
+	snap := read.Snapshot
+	// The Kubernetes checks were not asked for without --check-readiness,
+	// so that they do not run is not a warning. The summary is then the
+	// one that "cluster list --show-health" gives the cluster.
+	in := &health.Input{
+		Snapshot: snap, Clients: read.Clients, Now: snap.FetchedAt,
+		NoKube: "pass --check-readiness to run the Kubernetes checks", KubeNotRequested: !o.checkReadiness,
 	}
-	in := &health.Input{Snapshot: snap, Clients: clients, Now: snap.FetchedAt, NoKube: "pass --check-readiness to run the Kubernetes checks"}
 	var wg sync.WaitGroup
 	merge := func() {}
 	if o.checkReadiness {
-		access, err := fleetcmd.ConnectKube(o.kube, snap)
+		access, err := fleetcmd.ConnectKube(o.f.Kube, snap)
 		if err != nil {
 			return err
 		}
@@ -153,7 +137,7 @@ func (o *describeOptions) run(ctx context.Context) error {
 			kubeSnap := *snap
 			kubeSnap.Nodegroups = slices.Clone(snap.Nodegroups)
 			kubeSnap.Failures = nil
-			wg.Go(func() { fetcher.FetchKube(ctx, access.Client, &kubeSnap, fleet.KubeNeed{Ready: true}) })
+			wg.Go(func() { read.Fetcher.FetchKube(ctx, access.Client, &kubeSnap, fleet.KubeNeed{Ready: true}) })
 			merge = func() {
 				snap.Nodegroups = kubeSnap.Nodegroups
 				snap.Failures = append(snap.Failures, kubeSnap.Failures...)
@@ -161,16 +145,6 @@ func (o *describeOptions) run(ctx context.Context) error {
 		}
 	}
 	results := health.Run(ctx, health.Preflight(), in)
-	if !o.checkReadiness {
-		// The Kubernetes checks were not asked for, so that they did not
-		// run is not a warning. The summary is then the one that
-		// "cluster list --show-health" gives the cluster.
-		for i := range results {
-			if results[i].Name == health.AccessCheck {
-				results[i].Outcome, results[i].Message = health.Skipped, in.NoKube
-			}
-		}
-	}
 	wg.Wait()
 	merge()
 	hd := health.Doc(results)
@@ -178,24 +152,11 @@ func (o *describeOptions) run(ctx context.Context) error {
 	doc.Cluster.Health = &hd
 	doc.Cluster.Incomplete = len(doc.Failures) > 0
 	apidoc.SortFailures(doc.Failures)
-	if err := cmdutil.Print(ios, o.output, doc, describeView(doc)); err != nil {
-		return err
-	}
-	if o.output != cmdutil.FormatTable {
-		cmdutil.ReportFailures(ios, doc.Failures)
-	}
-	// An interrupt is not a partial result.
-	if errors.Is(ctx.Err(), context.Canceled) {
-		return fmt.Errorf("interrupted: %w", context.Canceled)
-	}
-	return cmdutil.IncompleteError(doc.Failures)
+	return cmdutil.PrintResult(ctx, ios, o.output, doc, describeView(doc), doc.Failures)
 }
 
-// dateLayout is how a describe view prints a time, and dayLayout a date.
-const (
-	dateLayout = "2006-01-02 15:04 UTC"
-	dayLayout  = "2006-01-02"
-)
+// dayLayout is how a describe view prints a date.
+const dayLayout = "2006-01-02"
 
 // describeView returns the table and plain form of doc.
 func describeView(doc apidoc.ClusterDescription) view.Description {
@@ -215,7 +176,7 @@ func describeView(doc apidoc.ClusterDescription) view.Description {
 		{Name: "upgrade policy", Value: c.UpgradePolicy},
 		{Name: "endpoint", Value: c.Endpoint},
 		{Name: "arn", Value: c.ARN},
-		{Name: "created", Value: formatTime(c.CreatedAt, dateLayout)},
+		{Name: "created", Value: view.Time(c.CreatedAt)},
 	}})
 	if n := c.Network; n != nil {
 		vpc := n.VPCID
@@ -249,19 +210,19 @@ func describeView(doc apidoc.ClusterDescription) view.Description {
 	nodegroups := view.Section{Title: "NODEGROUPS"}
 	for _, n := range c.Nodegroups {
 		item := view.Item{Name: n.Name, Fields: []view.Field{
-			{Name: "status", Value: orUnknownText(n.Incomplete, n.Status), Status: view.StatusOf(n.Status)},
-			{Name: "version", Value: orUnknownText(n.Incomplete, n.Version), Status: behindMark(n)},
-			{Name: "instance", Value: orUnknownText(n.Incomplete, strings.Join(n.InstanceTypes, ","))},
-			{Name: "nodes", Value: nodesCell(n)},
+			{Name: "status", Value: view.OrUnknown(n.Incomplete, n.Status), Status: view.StatusOf(n.Status)},
+			{Name: "version", Value: view.OrUnknown(n.Incomplete, n.Version), Status: view.BehindStatus(n)},
+			{Name: "instance", Value: view.OrUnknown(n.Incomplete, strings.Join(n.InstanceTypes, ","))},
+			{Name: "nodes", Value: view.NodesCell(n)},
 		}}
 		nodegroups.Items = append(nodegroups.Items, item)
 	}
 	addons := view.Section{Title: "ADD-ONS"}
 	for _, a := range c.Addons {
 		addons.Items = append(addons.Items, view.Item{Name: a.Name, Fields: []view.Field{
-			{Name: "version", Value: orUnknownText(a.Incomplete, a.Version)},
-			{Name: "status", Value: orUnknownText(a.Incomplete, a.Status), Status: view.StatusOf(a.Status)},
-			{Name: "health", Value: orUnknownText(a.Incomplete, string(a.Health))},
+			{Name: "version", Value: view.OrUnknown(a.Incomplete, a.Version)},
+			{Name: "status", Value: view.OrUnknown(a.Incomplete, a.Status), Status: view.StatusOf(a.Status)},
+			{Name: "health", Value: view.OrUnknown(a.Incomplete, string(a.Health))},
 		}})
 	}
 	tags := view.Section{Title: "TAGS"}
@@ -280,12 +241,7 @@ func healthSection(h *apidoc.Health) view.Section {
 		return s
 	}
 	s.Fields = []view.Field{{Name: "summary", Value: string(h.Summary), Status: view.HealthStatus(h.Summary)}}
-	for _, c := range h.Checks {
-		s.Items = append(s.Items, view.Item{Name: c.Name, Fields: []view.Field{
-			{Name: "outcome", Value: string(c.Outcome), Status: view.HealthStatus(c.Outcome)},
-			{Name: "message", Value: c.Message},
-		}})
-	}
+	s.Items = view.HealthItems(h.Checks)
 	return s
 }
 
@@ -324,7 +280,7 @@ func supportMark(s *apidoc.Support) view.Status {
 	if s == nil {
 		return view.NoStatus
 	}
-	return supportStatus(s)
+	return view.SupportStatus(s)
 }
 
 // endpointAccess says how the API server endpoint can be reached.
@@ -353,42 +309,4 @@ func orText(value, other string) string {
 		return other
 	}
 	return value
-}
-
-// orUnknownText returns value, or "unknown" for a thing that was not read.
-func orUnknownText(incomplete bool, value string) string {
-	if value == "" && incomplete {
-		return unknownCell
-	}
-	return value
-}
-
-// behindMark returns a warning for a nodegroup whose version is behind the
-// control plane.
-func behindMark(n apidoc.Nodegroup) view.Status {
-	if n.VersionBehind != nil && *n.VersionBehind {
-		return view.Warn
-	}
-	return view.NoStatus
-}
-
-// nodesCell returns the desired size of a nodegroup as a cell, with the
-// Ready count before it when it was read: "5/6".
-func nodesCell(n apidoc.Nodegroup) string {
-	if n.Scaling == nil {
-		return orUnknownText(n.Incomplete, "")
-	}
-	desired := strconv.Itoa(int(n.Scaling.Desired))
-	if n.ReadyNodes != nil {
-		return strconv.Itoa(*n.ReadyNodes) + "/" + desired
-	}
-	return desired
-}
-
-// formatTime returns t in a layout, or "" for the zero time.
-func formatTime(t time.Time, layout string) string {
-	if t.IsZero() {
-		return ""
-	}
-	return t.UTC().Format(layout)
 }

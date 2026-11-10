@@ -1,7 +1,10 @@
 package tui
 
 import (
+	"context"
+	"fmt"
 	"slices"
+	"strings"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -65,14 +68,43 @@ func globalBindings() []binding {
 			when: func(m Model) bool { return m.screen != screenFleet },
 			do:   func(m *Model) tea.Cmd { m.screen = screenFleet; return nil }},
 		{keys: []string{"ctrl+r"}, label: "ctrl+r", desc: "read the fleet from AWS now", do: func(m *Model) tea.Cmd {
-			m.b.Refresh()
 			m.say(progressStatus, "reading the fleet")
-			return nil
+			b := m.b
+			return m.guard(func() tea.Msg { b.Refresh(); return doneMsg{} })
 		}},
 		{keys: []string{"ctrl+l"}, label: "ctrl+l", desc: "redraw the whole screen (if another program wrote over it)", do: func(*Model) tea.Cmd { return tea.ClearScreen }},
 		{keys: []string{"?"}, label: "?", desc: "keys", do: func(m *Model) tea.Cmd { m.help, m.scroll = true, 0; return nil }},
-		{keys: []string{"q"}, label: "q", desc: "quit; in a dialog, close it", do: func(*Model) tea.Cmd { return tea.Quit }},
+		{keys: []string{"q"}, label: "q", desc: "quit; in a dialog, close it; while a change of this UI runs, press it twice", do: func(m *Model) tea.Cmd { return m.quit() }},
 	}
+}
+
+// quit ends the session, unless a change of this UI runs: quitting stops
+// it before its next step, so the first q says that and the second
+// quits. ctrl+c quits at once.
+func (m *Model) quit() tea.Cmd {
+	var own []state.Change
+	for _, c := range m.st.Changes {
+		if c.Running() && !c.Elsewhere {
+			own = append(own, c)
+		}
+	}
+	if len(own) == 0 {
+		return tea.Quit
+	}
+	what := "the " + strings.ToLower(kindLabel(own[0].Kind)) + " of " + own[0].Target.Cluster + " runs from this UI: q again quits, and what it has"
+	if len(own) > 1 {
+		what = plural(len(own), "change") + " run from this UI: q again quits, and what they have"
+	}
+	m.say(view.Warn, "%s not started will not run; any other key stays", what)
+	m.quitWarning = m.notice
+	return nil
+}
+
+// quitArmed reports whether a q quits at once: the warning of the q
+// before is still the notice on screen. A newer notice, or the end of
+// the warning's time, takes it back.
+func (m Model) quitArmed() bool {
+	return m.quitWarning != "" && m.notice == m.quitWarning && m.noticeShows()
 }
 
 // listBindings move a cursor over n items.
@@ -146,14 +178,14 @@ func actionBindings(here func(Model) bool) []binding {
 			when: here, do: propose(func(m *Model) tea.Cmd { return m.planRoll() })},
 		{keys: []string{"a"}, label: "a", desc: "dry-run the update of the stale add-ons", short: "add-ons", bar: true, primary: true,
 			when: here, do: propose(func(m *Model) tea.Cmd {
-				return m.plan(state.Action{Kind: state.ActionAddons, Cluster: m.cluster().Key})
+				return m.plan(state.Action{Kind: change.AddonUpdate, Cluster: m.cluster().Key})
 			})},
 		{keys: []string{"U"}, label: "U", desc: "dry-run an upgrade: choose the parts", short: "upgrade", bar: true, primary: true,
 			when: here, do: propose(func(m *Model) tea.Cmd { return m.planUpgrade() })},
 		{keys: []string{"B"}, label: "B", desc: "dry-run the rollback of the control plane (in its window)", short: "rollback", bar: true, primary: true,
 			when: func(m Model) bool { return here(m) && m.cluster().Rollback != nil },
 			do: propose(func(m *Model) tea.Cmd {
-				return m.plan(state.Action{Kind: state.ActionRollback, Cluster: m.cluster().Key})
+				return m.plan(state.Action{Kind: change.ClusterRollback, Cluster: m.cluster().Key})
 			})},
 	}
 }
@@ -171,59 +203,77 @@ func changeBindings() []binding {
 	}
 	steer := func(m Model) bool { return controls(m).Pause || controls(m).Stop }
 	asking := func(m Model) bool { return controls(m).Answer }
+	// answer is asking, once the question has shown for answerDelay.
+	answer := func(m Model) bool {
+		c, ok := m.change()
+		return ok && on(m) && m.answerable(c)
+	}
 	paused := func(m Model) bool {
 		c, ok := m.change()
 		return ok && on(m) && c.State == change.Paused && c.Controls.Pause
 	}
 	several := func(m Model) bool { return on(m) && len(m.st.Changes) > 1 }
-	call := func(name string, f func(m *Model, c state.Change) error) func(*Model) tea.Cmd {
+	// call steers the change on screen in a command, off the UI loop. A
+	// failure comes back as a doneMsg, which the log strip shows.
+	call := func(name string, f func(ctx context.Context, b Backend, c state.Change) error) func(*Model) tea.Cmd {
 		return func(m *Model) tea.Cmd {
 			c, ok := m.change()
 			if !ok {
 				return nil
 			}
-			if err := f(m, c); err != nil {
-				m.say(view.Fail, "%s: %v", name, err)
-			}
-			return nil
+			b, ctx := m.b, m.ctx
+			return m.guard(func() tea.Msg {
+				if err := f(ctx, b, c); err != nil {
+					return doneMsg{err: fmt.Errorf("%s: %w", name, err)}
+				}
+				return doneMsg{}
+			})
+		}
+	}
+	// said says a notice, then does the call.
+	said := func(status view.Status, notice string, do func(*Model) tea.Cmd) func(*Model) tea.Cmd {
+		return func(m *Model) tea.Cmd {
+			m.say(status, "%s", notice)
+			return do(m)
 		}
 	}
 	return []binding{
-		{keys: []string{"y"}, label: "y", desc: "answer the question: go on", short: "go on", bar: true, primary: true, when: asking,
-			do: call("answer", func(m *Model, c state.Change) error { return m.b.Answer(m.ctx, c.ID, c.Question.ID, true) })},
-		{keys: []string{"n"}, label: "n", desc: "answer the question: stop", short: "stop here", bar: true, primary: true, when: asking,
-			do: call("answer", func(m *Model, c state.Change) error { return m.b.Answer(m.ctx, c.ID, c.Question.ID, false) })},
+		{keys: []string{"y"}, label: "y", desc: "answer the question: go on", short: "go on", bar: true, primary: true, when: answer,
+			do: call("answer", func(ctx context.Context, b Backend, c state.Change) error {
+				return b.Answer(ctx, c.ID, c.Question.ID, true)
+			})},
+		{keys: []string{"n"}, label: "n", desc: "answer the question: stop", short: "stop here", bar: true, primary: true, when: answer,
+			do: call("answer", func(ctx context.Context, b Backend, c state.Change) error {
+				return b.Answer(ctx, c.ID, c.Question.ID, false)
+			})},
 		{keys: []string{"P"}, label: "P", desc: "pause before the next phase; again to resume", short: "pause", bar: true, primary: true,
 			when: func(m Model) bool { return steer(m) && !asking(m) && !paused(m) },
-			do: call("pause", func(m *Model, c state.Change) error {
-				m.say(progressStatus, "pause requested: the change pauses before its next phase")
-				return m.b.Pause(m.ctx, c.ID)
-			})},
+			do: said(progressStatus, "pause requested: the change pauses before its next phase",
+				call("pause", func(ctx context.Context, b Backend, c state.Change) error { return b.Pause(ctx, c.ID) }))},
 		{keys: []string{"P"}, label: "P", desc: "resume", short: "resume", bar: true, primary: true, when: paused,
-			do: call("resume", func(m *Model, c state.Change) error { return m.b.Resume(m.ctx, c.ID) })},
+			do: call("resume", func(ctx context.Context, b Backend, c state.Change) error { return b.Resume(ctx, c.ID) })},
 		{keys: []string{"S"}, label: "S", desc: "stop before the next phase; what started finishes", short: "stop", bar: true, primary: true,
 			when: func(m Model) bool { return steer(m) && !asking(m) },
-			do: call("stop", func(m *Model, c state.Change) error {
-				m.say(view.Warn, "stop requested: the change stops before its next phase")
-				return m.b.Stop(m.ctx, c.ID)
-			})},
+			do: said(view.Warn, "stop requested: the change stops before its next phase",
+				call("stop", func(ctx context.Context, b Backend, c state.Change) error { return b.Stop(ctx, c.ID) }))},
 		{keys: []string{"space"}, label: "space", desc: "freeze the log; again to follow", short: "freeze", bar: true,
 			when: func(m Model) bool { _, ok := m.change(); return ok && on(m) },
 			do: func(m *Model) tea.Cmd {
-				c, _ := m.change()
-				if m.frozen != 0 {
-					m.frozen = 0
+				if m.frozen != nil {
+					m.frozen = nil
 				} else {
-					m.frozen = c.LastSeq
+					c, _ := m.change()
+					f := m.freezeLog(c)
+					m.frozen = &f
 				}
 				return nil
 			}},
 		{keys: []string{"w"}, label: "w", desc: "log: warnings and failures only", short: "warnings", bar: true, when: on,
 			do: func(m *Model) tea.Cmd { m.warnOnly = !m.warnOnly; return nil }},
 		{keys: []string{"["}, label: "[ ]", desc: "the change before, the change after", short: "other change", bar: true, when: several,
-			do: func(m *Model) tea.Cmd { m.chg, m.frozen = max(0, m.chg-1), 0; return nil }},
+			do: func(m *Model) tea.Cmd { m.chg, m.frozen = max(0, m.chg-1), nil; return nil }},
 		{keys: []string{"]"}, when: several,
-			do: func(m *Model) tea.Cmd { m.chg, m.frozen = min(len(m.st.Changes)-1, m.chg+1), 0; return nil }},
+			do: func(m *Model) tea.Cmd { m.chg, m.frozen = min(len(m.st.Changes)-1, m.chg+1), nil; return nil }},
 	}
 }
 
@@ -244,10 +294,25 @@ func scrollBindings() []binding {
 }
 
 // key handles one key press. A dialog takes every key; the screen keys
-// do nothing behind it.
+// do nothing behind it. A screen too small to draw takes only q and
+// ctrl+c: a key must not act on what the user cannot see.
 func (m Model) key(k string) (Model, tea.Cmd) {
 	if k == "ctrl+c" {
 		return m, tea.Quit
+	}
+	if m.quitArmed() {
+		m.quitWarning = ""
+		if k == "q" {
+			return m, tea.Quit
+		}
+		// The key only takes the warning back: a y here must not answer
+		// a question the warning covered.
+		m.notice = ""
+		return m, nil
+	}
+	m.quitWarning = ""
+	if m.tooSmall() && k != "q" {
+		return m, nil
 	}
 	var table []binding
 	switch {
@@ -300,5 +365,5 @@ func (m *Model) goTo(s screen) tea.Cmd {
 func (m *Model) runReadiness() tea.Cmd {
 	key, b, ctx := m.cluster().Key, m.b, m.ctx
 	m.checkSel = 0
-	return func() tea.Msg { return doneMsg{err: b.Readiness(ctx, key)} }
+	return m.guard(func() tea.Msg { return doneMsg{err: b.Readiness(ctx, key)} })
 }

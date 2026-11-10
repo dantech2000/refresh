@@ -5,6 +5,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -174,6 +176,7 @@ type want struct {
 	message  string // a part of the message
 	findings []string
 	failures int
+	detail   string // a part of one detail
 }
 
 func check(t *testing.T, got health.Result, w want) {
@@ -183,6 +186,9 @@ func check(t *testing.T, got health.Result, w want) {
 	}
 	if !strings.Contains(got.Message, w.message) {
 		t.Errorf("message = %q, want it to contain %q", got.Message, w.message)
+	}
+	if w.detail != "" && !slices.ContainsFunc(got.Details, func(d string) bool { return strings.Contains(d, w.detail) }) {
+		t.Errorf("details = %q, want one to contain %q", got.Details, w.detail)
 	}
 	if w.findings != nil {
 		if diff := cmp.Diff(w.findings, got.Findings); diff != "" {
@@ -330,12 +336,16 @@ func TestControlPlane(t *testing.T) {
 		edits []edit
 		want  want
 	}{
-		{name: "healthy", want: want{outcome: health.Pass, message: "etcd 12% of 8 GiB"}},
-		{name: "etcd growing", edits: []edit{metrics(6.6*(1<<30), 100, 0, 0)}, want: want{outcome: health.Warn, message: "etcd database growing toward the 8 GiB limit (82.5%)"}},
-		{name: "etcd near the limit", edits: []edit{metrics(7.7*(1<<30), 100, 0, 0)}, want: want{outcome: health.Fail, message: "near the 8 GiB read-only limit (96.2%)"}},
+		{name: "healthy", want: want{outcome: health.Pass, message: "etcd 13% of 8 GB"}},
+		{name: "etcd growing", edits: []edit{metrics(6.6e9, 100, 0, 0)}, want: want{outcome: health.Warn, message: "etcd database growing toward the 8 GB limit (82.5%)"}},
+		{name: "etcd near the limit", edits: []edit{metrics(7.7e9, 100, 0, 0)}, want: want{outcome: health.Fail, message: "near the 8 GB read-only limit (96.2%)"}},
+		// The unit of the limit is not confirmed. Read as GiB, 7.8e9 bytes
+		// would be 90.8 percent, a warning, and the check would never fail
+		// before a real limit of 8e9 bytes.
+		{name: "near a decimal limit", edits: []edit{metrics(7.8e9, 100, 0, 0)}, want: want{outcome: health.Fail, message: "near the 8 GB read-only limit (97.5%)"}},
 		{name: "server errors", edits: []edit{metrics(1<<30, 10000, 250, 0)}, want: want{outcome: health.Warn, message: "elevated API server error rate (2.50% 5xx)"}},
 		{name: "throttling", edits: []edit{metrics(1<<30, 10000, 0, 150)}, want: want{outcome: health.Warn, message: "throttling requests (1.5% 429)"}},
-		{name: "errors below the request floor", edits: []edit{metrics(1<<30, 100, 50, 50)}, want: want{outcome: health.Pass, message: "etcd 12% of 8 GiB"}},
+		{name: "errors below the request floor", edits: []edit{metrics(1<<30, 100, 50, 50)}, want: want{outcome: health.Pass, message: "etcd 13% of 8 GB"}},
 		{name: "no metrics emitted", edits: []edit{func(s *fleettest.State, _ *fleettest.Cluster) {
 			s.Metrics = slices.DeleteFunc(s.Metrics, func(m fleettest.Metric) bool { return m.Namespace == "AWS/EKS" })
 		}}, want: want{outcome: health.Skipped, message: "not emitted"}},
@@ -351,6 +361,42 @@ func TestControlPlane(t *testing.T) {
 		h.world.SetFault(fleettest.CloudWatchGetMetricData, fleettest.Fault{Deny: true})
 		check(t, h.run(testContext(t), health.ControlPlane()), want{outcome: health.Unreadable, message: "could not read the control-plane metrics", failures: 1})
 	})
+}
+
+// The etcd limit is 8 GB in Standard mode and 16 GB on a tier of the
+// Provisioned Control Plane. A tier that refresh does not know keeps the
+// smaller limit, and the details say so.
+func TestControlPlane_Tier(t *testing.T) {
+	tier := func(name string, etcd float64) edit {
+		return func(s *fleettest.State, c *fleettest.Cluster) {
+			c.ControlPlaneTier = name
+			s.Metrics = slices.DeleteFunc(s.Metrics, func(m fleettest.Metric) bool { return m.Namespace == "AWS/EKS" })
+			s.Metrics = append(s.Metrics, eksMetrics("prod", etcd, 100, 0, 0)...)
+		}
+	}
+	const unknown = "the control-plane tier \"tier-16xl\" is not known; the check uses the 8 GB limit of Standard mode"
+	tests := []struct {
+		name   string
+		edit   edit
+		want   want
+		detail string
+	}{
+		{name: "no scaling config", edit: tier("", 7.7e9), want: want{outcome: health.Fail, message: "near the 8 GB read-only limit (96.2%)"}},
+		{name: "standard", edit: tier("standard", 7.7e9), want: want{outcome: health.Fail, message: "near the 8 GB read-only limit (96.2%)"}},
+		{name: "XL, past the limit of Standard mode", edit: tier("tier-xl", 7.7e9), want: want{outcome: health.Pass, message: "etcd 48% of 16 GB"}},
+		{name: "8XL, near its limit", edit: tier("tier-8xl", 15.4e9), want: want{outcome: health.Fail, message: "near the 16 GB read-only limit (96.2%)"}},
+		{name: "a tier refresh does not know", edit: tier("tier-16xl", 7.7e9), want: want{outcome: health.Fail, message: "near the 8 GB read-only limit"}, detail: unknown},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newHarness(t, tt.edit)
+			got := h.run(testContext(t), health.ControlPlane())
+			check(t, got, tt.want)
+			if has := slices.Contains(got.Details, unknown); has != (tt.detail != "") {
+				t.Errorf("details = %q; want the note on the tier: %v", got.Details, tt.detail != "")
+			}
+		})
+	}
 }
 
 func TestQuotas(t *testing.T) {
@@ -735,13 +781,50 @@ func TestDrainBlockers(t *testing.T) {
 		{name: "two targets", edits: []edit{tight("api")}, targets: []string{"ng-a", "ng-b"}, want: want{outcome: health.Fail, findings: []string{"default/api"}}},
 		{name: "an unsynced budget", edits: []edit{func(_ *fleettest.State, c *fleettest.Cluster) {
 			c.PDBs[0].Unsynced, c.PDBs[0].DisruptionsAllowed, c.PDBs[0].ExpectedPods = true, 0, 0
-		}}, targets: []string{"ng-a"}, want: want{outcome: health.Fail, message: "PDB default/web allows 0 disruptions", findings: []string{"default/web"}}},
+		}}, targets: []string{"ng-a"}, want: want{outcome: health.Fail, message: "PDB default/web refuses evictions (not processed since its last change)", findings: []string{"default/web"}}},
 		{name: "a sync-failed budget", edits: []edit{func(_ *fleettest.State, c *fleettest.Cluster) {
 			c.PDBs[0].SyncFailed, c.PDBs[0].DisruptionsAllowed, c.PDBs[0].ExpectedPods = true, 0, 0
-		}}, targets: []string{"ng-a"}, want: want{outcome: health.Fail, findings: []string{"default/web"}}},
-		{name: "a synced empty budget", edits: []edit{func(_ *fleettest.State, c *fleettest.Cluster) {
+		}}, targets: []string{"ng-a"}, want: want{outcome: health.Fail, message: "PDB default/web refuses evictions (sync failed)", findings: []string{"default/web"}}},
+		// SyncFailed while the count still allows one: the controller
+		// writes 0 when a sync fails, so the counts are not trusted and
+		// the check fails closed.
+		{name: "a sync-failed budget that counts a disruption", edits: []edit{func(_ *fleettest.State, c *fleettest.Cluster) {
+			c.PDBs[0].SyncFailed, c.PDBs[0].DisruptionsAllowed = true, 1
+		}}, targets: []string{"ng-a"}, want: want{outcome: health.Fail, message: "PDB default/web refuses evictions (sync failed)", findings: []string{"default/web"},
+			detail: "default/web (the disruption controller failed to sync it, 1 disruptions allowed; evictions are refused)"}},
+		{name: "a sync-failed budget that counts a disruption and no pod, unscoped", edits: []edit{func(_ *fleettest.State, c *fleettest.Cluster) {
+			c.PDBs[1].SyncFailed, c.PDBs[1].DisruptionsAllowed, c.PDBs[1].ExpectedPods = true, 1, 0
+		}}, want: want{outcome: health.Fail, message: "PDB default/api refuses evictions (sync failed)", findings: []string{"default/api"}}},
+		{name: "a refused budget beside a tight one", edits: []edit{tight("api"), func(_ *fleettest.State, c *fleettest.Cluster) { c.PDBs[0].Unsynced = true }},
+			want: want{outcome: health.Fail, message: "PDB default/api allows 0 disruptions and PDB default/web refuses evictions (not processed since its last change); a drain would stall", findings: []string{"default/api", "default/web"}}},
+		// The status is of an older generation and still allows a
+		// disruption. The eviction API refuses every pod of the budget
+		// until the controller has processed the new spec.
+		{name: "an unsynced budget that allowed a disruption", edits: []edit{func(_ *fleettest.State, c *fleettest.Cluster) { c.PDBs[0].Unsynced = true }},
+			targets: []string{"ng-a"}, want: want{outcome: health.Fail, message: "PDB default/web refuses evictions (not processed since its last change) on the target nodegroups", findings: []string{"default/web"},
+				detail: "default/web (not processed by the disruption controller since its last change: generation 1, observed 0; evictions are refused)"}},
+		{name: "an unsynced budget elsewhere", edits: []edit{func(_ *fleettest.State, c *fleettest.Cluster) { c.PDBs[1].Unsynced = true }},
+			targets: []string{"ng-a"}, want: want{outcome: health.Pass}},
+		{name: "an unsynced budget that allowed a disruption, unscoped", edits: []edit{func(_ *fleettest.State, c *fleettest.Cluster) { c.PDBs[1].Unsynced = true }},
+			want: want{outcome: health.Fail, findings: []string{"default/api"}}},
+		// More than 2000 evictions the controller has not confirmed: the
+		// eviction API refuses with 403 whatever the count allows.
+		{name: "too many unconfirmed evictions", edits: []edit{func(_ *fleettest.State, c *fleettest.Cluster) { c.PDBs[0].DisruptedPods = 2001 }},
+			targets: []string{"ng-a"}, want: want{outcome: health.Fail, message: "PDB default/web refuses evictions (more than 2000 disrupted pods)", findings: []string{"default/web"}, detail: "2001 evictions not yet confirmed"}},
+		{name: "2000 unconfirmed evictions", edits: []edit{func(_ *fleettest.State, c *fleettest.Cluster) { c.PDBs[0].DisruptedPods = 2000 }},
+			targets: []string{"ng-a"}, want: want{outcome: health.Pass}},
+		{name: "a negative count", edits: []edit{func(_ *fleettest.State, c *fleettest.Cluster) {
+			c.PDBs[1].DisruptionsAllowed, c.PDBs[1].ExpectedPods = -1, 0
+		}}, want: want{outcome: health.Fail, message: "PDB default/api refuses evictions (negative disruption count)", findings: []string{"default/api"}, detail: "-1 disruptions allowed"}},
+		// A synced status that counts no pod while a pod it selects runs
+		// on the target: the eviction API reads disruptionsAllowed, not
+		// expectedPods, and refuses the pod.
+		{name: "a synced budget that counts no pod, with a pod on the target", edits: []edit{func(_ *fleettest.State, c *fleettest.Cluster) {
 			c.PDBs[0].DisruptionsAllowed, c.PDBs[0].ExpectedPods = 0, 0
-		}}, targets: []string{"ng-a"}, want: want{outcome: health.Pass}},
+		}}, targets: []string{"ng-a"}, want: want{outcome: health.Fail, findings: []string{"default/web"}}},
+		{name: "a synced empty budget, unscoped", edits: []edit{func(_ *fleettest.State, c *fleettest.Cluster) {
+			c.PDBs[0].DisruptionsAllowed, c.PDBs[0].ExpectedPods = 0, 0
+		}}, want: want{outcome: health.Pass}},
 		{name: "a pod covered by two budgets", edits: []edit{addPDB(fleettest.PDB{Namespace: "default", Name: "web-too", Selector: map[string]string{"app": "web"}, MinAvailable: 1, DisruptionsAllowed: 1, CurrentHealthy: 2, DesiredHealthy: 1, ExpectedPods: 2})},
 			targets: []string{"ng-a"}, want: want{outcome: health.Fail, message: "2 pods covered by more than one PDB", findings: []string{"default/web-1", "default/web-2"}}},
 		{name: "a multi-budget pod elsewhere", edits: []edit{addPDB(fleettest.PDB{Namespace: "default", Name: "api-too", Selector: map[string]string{"app": "api"}, MinAvailable: 1, DisruptionsAllowed: 1, CurrentHealthy: 2, DesiredHealthy: 1, ExpectedPods: 2})},
@@ -798,6 +881,31 @@ func TestDrainBlockers(t *testing.T) {
 	})
 }
 
+// The budgets and the nodes of a scale-down are listed in one round trip:
+// the first of the two lists is answered only once the other arrived.
+func TestScaleDownBlockers_ListsTogether(t *testing.T) {
+	h := newHarness(t)
+	other := make(chan struct{})
+	var once sync.Once
+	var first atomic.Bool
+	h.kube.OnRequest = func(ctx context.Context, r kubetest.Request) {
+		if r.Operation != fleettest.KubeListPDBs && r.Operation != fleettest.KubeListNodes {
+			return
+		}
+		if first.CompareAndSwap(false, true) {
+			select {
+			case <-other:
+			case <-ctx.Done():
+			case <-time.After(10 * time.Second):
+				t.Error("the first of the budget and node lists was alone for 10 s")
+			}
+			return
+		}
+		once.Do(func() { close(other) })
+	}
+	check(t, h.run(testContext(t), health.ScaleDownBlockers("ng-b", 1)), want{outcome: health.Pass})
+}
+
 func TestScaleDownBlockers(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -810,6 +918,15 @@ func TestScaleDownBlockers(t *testing.T) {
 		{name: "two nodes lose more than allowed", remove: 2, want: want{outcome: health.Fail, message: "removing 2 nodes from ng-b could evict more pods than PDB default/api allows", findings: []string{"default/api"}}},
 		{name: "a tight budget", edits: []edit{tight("api")}, remove: 1, want: want{outcome: health.Fail, findings: []string{"default/api"}}},
 		{name: "a tight budget elsewhere", edits: []edit{tight("web")}, remove: 1, want: want{outcome: health.Pass}},
+		// Budgets whose counts allow one, while the eviction API refuses
+		// every pod: each lets none go.
+		{name: "an unsynced budget", edits: []edit{func(_ *fleettest.State, c *fleettest.Cluster) { c.PDBs[1].Unsynced = true }}, remove: 1,
+			want: want{outcome: health.Fail, findings: []string{"default/api"}, detail: "generation 1, observed 0"}},
+		{name: "a sync-failed budget that counts a disruption", edits: []edit{func(_ *fleettest.State, c *fleettest.Cluster) {
+			c.PDBs[1].SyncFailed, c.PDBs[1].DisruptionsAllowed = true, 1
+		}}, remove: 1, want: want{outcome: health.Fail, findings: []string{"default/api"}, detail: "failed to sync it, 1 disruptions allowed"}},
+		{name: "too many unconfirmed evictions", edits: []edit{func(_ *fleettest.State, c *fleettest.Cluster) { c.PDBs[1].DisruptedPods = 2001 }}, remove: 1,
+			want: want{outcome: health.Fail, findings: []string{"default/api"}, detail: "2001 evictions not yet confirmed"}},
 		{name: "a pod with two budgets is not a scale-down blocker", remove: 1, edits: []edit{func(_ *fleettest.State, c *fleettest.Cluster) {
 			c.PDBs = append(c.PDBs, fleettest.PDB{Namespace: "default", Name: "api-too", Selector: map[string]string{"app": "api"}, MinAvailable: 1, DisruptionsAllowed: 1, CurrentHealthy: 2, DesiredHealthy: 1, ExpectedPods: 2})
 		}}, want: want{outcome: health.Pass}},
@@ -900,6 +1017,7 @@ func TestUtilization(t *testing.T) {
 func TestRun(t *testing.T) {
 	t.Run("the whole set passes", testRunWholeSet)
 	t.Run("no Kubernetes", testRunNoKube)
+	t.Run("Kubernetes not requested", testRunKubeNotRequested)
 	t.Run("an unreachable API", testRunUnreachable)
 	t.Run("the run's deadline", testRunDeadline)
 	t.Run("the client's timeout on one list", testRunClientTimeout)
@@ -956,6 +1074,23 @@ func testRunNoKube(t *testing.T) {
 	}
 	if v := health.Gate(results, health.Policy{}); v.Decision != health.Ask || v.Exit != 2 {
 		t.Errorf("verdict = %+v, want Ask with exit 2", v)
+	}
+}
+
+// Without Kubernetes checks asked for, as "cluster describe" without
+// --check-readiness, the access result is Skipped and not a warning.
+func testRunKubeNotRequested(t *testing.T) {
+	h := newHarness(t)
+	ctx := testContext(t)
+	in := h.input(ctx)
+	in.Kube, in.Metrics = nil, nil
+	in.NoKube, in.KubeNotRequested = "pass --check-readiness to run the Kubernetes checks", true
+	results := health.Run(ctx, health.Preflight(), in)
+	for _, r := range results {
+		switch r.Name {
+		case "Workloads", health.AccessCheck:
+			check(t, r, want{outcome: health.Skipped, message: "pass --check-readiness to run the Kubernetes checks"})
+		}
 	}
 }
 

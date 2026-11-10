@@ -2,7 +2,6 @@ package nodegroup
 
 import (
 	"context"
-	"time"
 
 	"github.com/spf13/cobra"
 
@@ -13,20 +12,9 @@ import (
 	"github.com/dantech2000/refresh/internal/cmdutil"
 )
 
-// scaleWaitTimeout is the default of --wait-timeout.
-const scaleWaitTimeout = 5 * time.Minute
-
 type scaleOptions struct {
+	f   *cmdutil.Factory
 	ios *cmdutil.IOStreams
-	// deps builds the dependencies of the change. Calling it is the first
-	// use of the network.
-	deps func(ctx context.Context) (change.Deps, error)
-	// resolve returns the cluster of the run, the way a change does:
-	// never from the kubeconfig.
-	resolve func(explicit string) (cmdutil.Target, error)
-	// timeout returns --timeout, which the root command sets before the
-	// command runs.
-	timeout func() time.Duration
 
 	cluster string
 	// desired, min, and max are the values of the flags. complete keeps
@@ -43,12 +31,7 @@ type scaleOptions struct {
 }
 
 func newCmdScale(f *cmdutil.Factory) *cobra.Command {
-	o := &scaleOptions{
-		ios:     f.IOStreams,
-		deps:    changecmd.Deps(f),
-		resolve: func(explicit string) (cmdutil.Target, error) { return cmdutil.ResolveCluster(f, explicit, false) },
-		timeout: func() time.Duration { return f.Global.Timeout },
-	}
+	o := &scaleOptions{f: f, ios: f.IOStreams}
 	cmd := &cobra.Command{
 		Use:   "scale <nodegroup>",
 		Short: "Change the sizes of a nodegroup",
@@ -120,7 +103,7 @@ refresh context. It never comes from the kubeconfig.
 	cmd.Flags().Int32Var(&o.desired, "desired", 0, "Desired number of nodes")
 	cmd.Flags().Int32Var(&o.min, "min", 0, "Minimum number of nodes")
 	cmd.Flags().Int32Var(&o.max, "max", 0, "Maximum number of nodes")
-	cmdutil.AddChangeFlags(cmd, &o.change, scaleWaitTimeout, "the scale", true, true)
+	cmdutil.AddChangeFlags(cmd, &o.change, cmdutil.ChangeFlagOptions{Wait: change.DefaultWait(change.NodegroupScale), WaitFor: "the scale", NoWait: true, Force: true})
 	cmdutil.AddOutputFlag(cmd, &o.output, cmdutil.FormatTable, cmdutil.FormatJSON, cmdutil.FormatYAML, cmdutil.FormatPlain)
 	return cmd
 }
@@ -138,7 +121,8 @@ func (o *scaleOptions) complete(cmd *cobra.Command, args []string) error {
 			*s.size = s.value
 		}
 	}
-	target, err := o.resolve(o.cluster)
+	// A change never takes its cluster from the kubeconfig.
+	target, err := cmdutil.ResolveCluster(o.f, o.cluster, false)
 	o.target = target
 	return err
 }
@@ -156,7 +140,7 @@ func (o *scaleOptions) validate() error {
 // request returns the change that the flags describe.
 func (o *scaleOptions) request() change.ScaleRequest {
 	return change.ScaleRequest{
-		Common:    changecmd.Common(&o.change, o.timeout()),
+		Common:    changecmd.Common(&o.change, o.f.Global.Timeout),
 		Target:    change.Target{Cluster: o.target.Cluster},
 		Nodegroup: o.nodegroup,
 		Desired:   o.sizes.desired,
@@ -166,13 +150,13 @@ func (o *scaleOptions) request() change.ScaleRequest {
 }
 
 func (o *scaleOptions) run(ctx context.Context) error {
-	d, err := o.deps(ctx)
+	d, err := changecmd.Deps(ctx, o.f)
 	if err != nil {
 		return err
 	}
 	req := o.request()
 	if o.change.DryRun {
-		return changecmd.PrintPlan(ctx, o.ios, o.output, d, req, o.timeout(), nil)
+		return changecmd.PrintPlan(ctx, o.ios, o.output, d, req, o.f.Global.Timeout, nil)
 	}
 	return changecmd.RunChange(ctx, o.ios, o.output, d, req, changecmd.NewRenderer(o.ios, o.change.Quiet))
 }

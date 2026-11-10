@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dantech2000/refresh/internal/apidoc"
 	"github.com/dantech2000/refresh/internal/fleet"
 )
 
@@ -85,9 +84,9 @@ func PlanRollback(snap *fleet.Snapshot, req RollbackRequest, in RollbackInputs) 
 	}
 	p := &rollbackPlanner{
 		snap: snap, req: req, in: in, live: live,
-		cp: &ClusterPlan{Target: target, From: live, Failures: slices.Clone(snap.Failures), snapshot: snap},
+		planWriter: planWriter{cp: &ClusterPlan{Target: target, From: live, Failures: slices.Clone(snap.Failures), snapshot: snap}},
 	}
-	if s := snap.Have.Nodegroups; s == fleet.Collected || s == fleet.Partial {
+	if snap.Have.Nodegroups.Listed() {
 		have := make([]string, len(snap.Nodegroups))
 		for i, n := range snap.Nodegroups {
 			have[i] = n.Name
@@ -137,30 +136,13 @@ type rollbackPlanner struct {
 	snap *fleet.Snapshot
 	req  RollbackRequest
 	in   RollbackInputs
-	cp   *ClusterPlan
+	planWriter
 	// live is the version that the control plane runs.
 	live fleet.Version
 }
 
 func (p *rollbackPlanner) plan() *Plan {
 	return &Plan{Kind: ClusterRollback, Request: p.req, Clusters: []ClusterPlan{*p.cp}, At: p.in.Now}
-}
-
-func (p *rollbackPlanner) notice(format string, args ...any) {
-	p.cp.Notices = append(p.cp.Notices, fmt.Sprintf(format, args...))
-}
-
-func (p *rollbackPlanner) block(kind BlockerKind, step *StepRef, format string, args ...any) {
-	p.cp.Blockers = append(p.cp.Blockers, Blocker{Kind: kind, Step: step, Message: fmt.Sprintf(format, args...)})
-}
-
-func (p *rollbackPlanner) fail(kind apidoc.FailureKind, name string, err error) {
-	f := fleet.FailureFromError(kind, name, err)
-	f.Region = p.cp.Region
-	if kind != apidoc.FailureCluster {
-		f.Cluster = p.cp.Cluster
-	}
-	p.cp.Failures = appendFailure(p.cp.Failures, f)
 }
 
 // RollbackControlPlaneBlockers checks the snapshot that a run reads

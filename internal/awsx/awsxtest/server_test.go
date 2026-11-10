@@ -264,6 +264,27 @@ func TestAPIErrors(t *testing.T) {
 			_, err := c.eks.UpdateAddon(ctx, &eks.UpdateAddonInput{ClusterName: aws.String("staging"), AddonName: aws.String("kube-proxy")})
 			return err
 		}, wireError{"ResourceInUseException", is[*ekstypes.ResourceInUseException]}},
+		{"control plane two minors ahead", func() error {
+			_, err := c.eks.UpdateClusterVersion(ctx, &eks.UpdateClusterVersionInput{Name: aws.String("prod"), Version: aws.String("1.34")})
+			return err
+		}, invalid},
+		{"nodegroup above the control plane", func() error {
+			_, err := c.eks.UpdateNodegroupVersion(ctx, &eks.UpdateNodegroupVersionInput{
+				ClusterName: aws.String("prod"), NodegroupName: aws.String("ng-b"), Version: aws.String("1.33"),
+			})
+			return err
+		}, invalid},
+		{"add-on version the catalog does not list", func() error {
+			_, err := c.eks.UpdateAddon(ctx, &eks.UpdateAddonInput{ClusterName: aws.String("prod"), AddonName: aws.String("vpc-cni"), AddonVersion: aws.String("v9.9.9-eksbuild.1")})
+			return err
+		}, invalid},
+		{"nodegroup that is not ACTIVE", func() error {
+			f.world.Edit(func(s *fleettest.State) {
+				s.Cluster(region, "prod").Nodegroup("ng-b").Status = fleettest.StatusCreateFailed
+			})
+			_, err := c.eks.UpdateNodegroupConfig(ctx, &eks.UpdateNodegroupConfigInput{ClusterName: aws.String("prod"), NodegroupName: aws.String("ng-b")})
+			return err
+		}, wireError{"ResourceInUseException", is[*ekstypes.ResourceInUseException]}},
 		{"short client request token", func() error {
 			_, err := c.eks.UpdateClusterVersion(ctx, &eks.UpdateClusterVersionInput{
 				Name: aws.String("prod"), Version: aws.String("1.33"), ClientRequestToken: aws.String("0123456789abcdef0123456789abcdef"),
@@ -303,6 +324,47 @@ func TestAPIErrors(t *testing.T) {
 			})
 			return err
 		}, wireError{"InvalidNextToken", is[*cwtypes.InvalidNextToken]}},
+		// The request limits of the API references (TI-08).
+		{"EKS page size above 100", func() error {
+			_, err := c.eks.ListClusters(ctx, &eks.ListClustersInput{MaxResults: aws.Int32(101)})
+			return err
+		}, invalid},
+		{"more than 50 Auto Scaling group names", func() error {
+			_, err := c.asg.DescribeAutoScalingGroups(ctx, &autoscaling.DescribeAutoScalingGroupsInput{AutoScalingGroupNames: manyNames("asg", 51)})
+			return err
+		}, wireError{"ValidationError", generic}},
+		{"Auto Scaling page size above 100", func() error {
+			_, err := c.asg.DescribeScalingActivities(ctx, &autoscaling.DescribeScalingActivitiesInput{MaxRecords: aws.Int32(101)})
+			return err
+		}, wireError{"ValidationError", generic}},
+		{"more than 100 instance types", func() error {
+			_, err := c.ec2.DescribeInstanceTypes(ctx, &ec2.DescribeInstanceTypesInput{InstanceTypes: instanceTypes(101)})
+			return err
+		}, wireError{"InvalidParameterValue", generic}},
+		{"EC2 instance IDs with MaxResults", func() error {
+			_, err := c.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{InstanceIds: []string{"i-1"}, MaxResults: aws.Int32(5)})
+			return err
+		}, wireError{"InvalidParameterCombination", generic}},
+		{"EC2 page size below the minimum", func() error {
+			_, err := c.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{MaxResults: aws.Int32(4)})
+			return err
+		}, wireError{"InvalidParameterValue", generic}},
+		{"more than 200 values in an EC2 filter", func() error {
+			_, err := c.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
+				Filters: []ec2types.Filter{{Name: aws.String("instance-id"), Values: manyNames("i", 201)}},
+			})
+			return err
+		}, wireError{"FilterLimitExceeded", generic}},
+		{"more than 500 metric queries", func() error {
+			queries := make([]cwtypes.MetricDataQuery, 501)
+			for i := range queries {
+				queries[i] = cwtypes.MetricDataQuery{Id: aws.String(fmt.Sprintf("q%d", i)), Expression: aws.String("1")}
+			}
+			_, err := c.cw.GetMetricData(ctx, &cloudwatch.GetMetricDataInput{
+				StartTime: aws.Time(time.Unix(0, 0)), EndTime: aws.Time(time.Unix(60, 0)), MetricDataQueries: queries,
+			})
+			return err
+		}, wireError{"ValidationError", generic}},
 		{"operation the fake does not model", func() error {
 			_, err := c.eks.ListFargateProfiles(ctx, &eks.ListFargateProfilesInput{ClusterName: aws.String("prod")})
 			return err
@@ -1020,5 +1082,65 @@ func TestCloseReleasesHeldRequests(t *testing.T) {
 		}
 	case <-ctx.Done():
 		t.Fatal("the held request did not return after Close")
+	}
+}
+
+// manyNames returns n names with the prefix.
+func manyNames(prefix string, n int) []string {
+	out := make([]string, n)
+	for i := range out {
+		out[i] = fmt.Sprintf("%s-%d", prefix, i)
+	}
+	return out
+}
+
+// instanceTypes returns n instance types.
+func instanceTypes(n int) []ec2types.InstanceType {
+	out := make([]ec2types.InstanceType, n)
+	for i, name := range manyNames("m5", n) {
+		out[i] = ec2types.InstanceType(name)
+	}
+	return out
+}
+
+// TestDefaultPages checks the page an operation answers when the request
+// sets no size, and the limit that a larger MaxRecords lifts.
+func TestDefaultPages(t *testing.T) {
+	t.Parallel()
+	w := fleettest.New()
+	w.Edit(func(s *fleettest.State) {
+		for _, name := range manyNames("c", 150) {
+			s.Clusters = append(s.Clusters, &fleettest.Cluster{Name: name, Version: "1.33"})
+		}
+		for _, name := range manyNames("asg", 60) {
+			s.AutoScalingGroups = append(s.AutoScalingGroups, fleettest.AutoScalingGroup{Name: name})
+		}
+	})
+	srv := awsxtest.NewServer(w)
+	t.Cleanup(srv.Close)
+	cfg := srv.Config("us-east-1")
+	ctx := t.Context()
+
+	clusters, err := eks.NewFromConfig(cfg).ListClusters(ctx, &eks.ListClustersInput{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(clusters.Clusters) != 100 || clusters.NextToken == nil {
+		t.Errorf("ListClusters with no maxResults = %d clusters, next %v; want 100 and a token", len(clusters.Clusters), clusters.NextToken)
+	}
+	asg := autoscaling.NewFromConfig(cfg)
+	groups, err := asg.DescribeAutoScalingGroups(ctx, &autoscaling.DescribeAutoScalingGroupsInput{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(groups.AutoScalingGroups) != 50 || groups.NextToken == nil {
+		t.Errorf("DescribeAutoScalingGroups with no MaxRecords = %d groups, next %v; want 50 and a token", len(groups.AutoScalingGroups), groups.NextToken)
+	}
+	named, err := asg.DescribeAutoScalingGroups(ctx, &autoscaling.DescribeAutoScalingGroupsInput{AutoScalingGroupNames: manyNames("asg", 60), MaxRecords: aws.Int32(100)})
+	if err != nil {
+		t.Fatalf("60 names with MaxRecords 100: %v", err)
+	}
+	if len(named.AutoScalingGroups) != 60 {
+		t.Errorf("60 names with MaxRecords 100 = %d groups", len(named.AutoScalingGroups))
 	}
 }

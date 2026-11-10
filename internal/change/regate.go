@@ -142,7 +142,7 @@ func (r *runner) recheck(cp *ClusterPlan, res StepResult, checks func(snap *flee
 	}
 	// A change of an independent kind gets no notice from the busy rule:
 	// what is in flight and is not a target refuses.
-	if blocked, stop := r.phaseBusy(cp, res, snap, r.steps); stop {
+	if blocked, stop := r.phaseBusy(cp, res, snap, r.step.steps); stop {
 		return blocked, false
 	}
 	if r.common.Policy.Skip {
@@ -164,7 +164,7 @@ func (r *runner) recheck(cp *ClusterPlan, res StepResult, checks func(snap *flee
 // own fresh read decides.
 func (r *runner) remainingAddons(snap *fleet.Snapshot) []health.Check {
 	var targets []string
-	for _, s := range r.remaining {
+	for _, s := range r.step.remaining {
 		i := slices.IndexFunc(snap.Addons, func(a fleet.Addon) bool { return a.Name == s.Ref.Name })
 		if s.Action == Submit && i >= 0 && snap.Addons[i].State == fleet.Collected && !addonInFlight(snap.Addons[i].Status) {
 			targets = append(targets, s.Ref.Name)
@@ -179,12 +179,8 @@ func (r *runner) remainingAddons(snap *fleet.Snapshot) []health.Check {
 // freshAddonHealth returns the result of the add-on check for one target,
 // from the fresh read before its submit.
 func (r *runner) freshAddonHealth(cp *ClusterPlan, name string, fresh Settled) []health.Result {
-	addon := fleet.Addon{Name: name, State: fleet.Collected, Version: fresh.Version, Status: fresh.Status}
 	// The health of an add-on reads its issues too: fleet.Addon.Health.
-	for _, issue := range fresh.Issues {
-		code, message, _ := strings.Cut(issue, ": ")
-		addon.Issues = append(addon.Issues, fleet.Issue{Code: code, Message: message})
-	}
+	addon := fleet.Addon{Name: name, State: fleet.Collected, Version: fresh.Version, Status: fresh.Status, Issues: fresh.Issues}
 	snap := &fleet.Snapshot{Cluster: cp.snapshot.Cluster, Addons: []fleet.Addon{addon}}
 	return health.Run(r.readCtx, []health.Check{health.Addons([]string{name})}, &health.Input{
 		Snapshot: snap, Clients: r.d.AWS.Clients(cp.Region), Now: r.d.now(),

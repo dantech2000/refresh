@@ -102,9 +102,16 @@ func newHarness(t *testing.T, w, h int, th view.Theme) *harness {
 	t.Helper()
 	b := &scripted{}
 	hs := &harness{t: t, b: b, m: New(t.Context(), b, th)}
+	// The clock is the test's: a scheduled tick is held, and the test
+	// ticks with h.tick.
+	hs.m.tick = func() tea.Cmd { return func() tea.Msg { return heldTick{} } }
 	hs.update(tea.WindowSizeMsg{Width: w, Height: h})
 	return hs
 }
+
+// heldTick is what a tick that the model schedules delivers in the
+// harness: nothing.
+type heldTick struct{}
 
 var (
 	colorTheme = view.Theme{Depth: view.TrueColor, Unicode: true}
@@ -119,8 +126,11 @@ func (h *harness) update(msg tea.Msg) {
 	for len(queue) > 0 {
 		m := queue[0]
 		queue = queue[1:]
-		if _, ok := m.(tea.QuitMsg); ok {
+		switch m.(type) {
+		case tea.QuitMsg:
 			h.quit = true
+			continue
+		case heldTick:
 			continue
 		}
 		if batch, ok := m.(tea.BatchMsg); ok {
@@ -239,7 +249,7 @@ func cluster(name, region, version string) state.Cluster {
 		},
 		FetchedAt: now,
 	}
-	return state.Cluster{Key: state.Key{Region: region, Name: name}, Snapshot: snap, Status: view.Healthy, Version: v(version), Support: apidoc.SupportStandard}
+	return state.Cluster{Key: state.Key{Region: region, Name: name}, Snapshot: snap, Findings: snap.Findings(), Status: view.Healthy, Version: v(version), Support: apidoc.SupportStandard}
 }
 
 // stale makes a row need attention: one outdated AMI and one add-on
@@ -247,7 +257,7 @@ func cluster(name, region, version string) state.Cluster {
 func stale(c state.Cluster) state.Cluster {
 	c.Snapshot.Nodegroups[0].AMI.Current = "ami-0"
 	c.Snapshot.Addons[0].Version = "v1.11.1-eksbuild.1"
-	c.Stale = state.Stale{AMIs: 1, Addons: 1}
+	c.Findings = c.Snapshot.Findings()
 	c.Status = view.Warn
 	return c
 }
@@ -255,7 +265,7 @@ func stale(c state.Cluster) state.Cluster {
 // changing makes a row show a nodegroup in flight.
 func changing(c state.Cluster) state.Cluster {
 	c.Snapshot.Nodegroups[1].Status = "UPDATING"
-	c.InFlight = []string{"nodegroup web UPDATING"}
+	c.InFlight = []state.InFlight{{Kind: apidoc.StepNodegroup, Name: "web", Status: "UPDATING"}}
 	c.Status = view.Progress
 	return c
 }
@@ -265,7 +275,7 @@ func incomplete(c state.Cluster) state.Cluster {
 	c.Snapshot.Nodegroups[1].State = fleet.Failed
 	c.Snapshot.Failures = []apidoc.Failure{{Kind: apidoc.FailureNodegroup, Name: "web", Reason: apidoc.ReasonThrottled, Error: "throttled"}}
 	c.Incomplete = true
-	c.Stale.Unknown = 1
+	c.Findings = c.Snapshot.Findings()
 	c.Status = view.Unknown
 	return c
 }
@@ -274,7 +284,8 @@ func incomplete(c state.Cluster) state.Cluster {
 func extended(c state.Cluster) state.Cluster {
 	c.Snapshot.Cluster.Support.Tier = apidoc.SupportExtended
 	c.Support = apidoc.SupportExtended
-	c.Status = view.Fail
+	c.Findings = c.Snapshot.Findings()
+	c.Status = view.Warn
 	return c
 }
 
@@ -283,7 +294,10 @@ func extended(c state.Cluster) state.Cluster {
 func report() *health.ReadinessReport {
 	return &health.ReadinessReport{
 		Readiness: apidoc.ReadinessReview,
-		Reasons:   []string{"Insights: 1 insight warns about 1.34 (DEPRECATED_APIS)", "VersionSkew: nodegroup web is 1 minor behind"},
+		Reasons: []health.Reason{
+			{Check: "Insights", Outcome: health.Warn, Message: "1 insight warns about 1.34 (DEPRECATED_APIS)"},
+			{Check: "VersionSkew", Outcome: health.Warn, Message: "nodegroup web is 1 minor behind"},
+		},
 		Checks: []health.Result{
 			{Name: "Insights", Outcome: health.Warn, Blocking: true, Message: "1 insight warns about 1.34", Details: []string{"DEPRECATED_APIS: 3 clients use apps/v1beta1"}, Findings: []string{"DEPRECATED_APIS"}},
 			{Name: "VersionSkew", Outcome: health.Pass, Blocking: true, Message: "every nodegroup is within 3 minors of the control plane"},
@@ -324,7 +338,7 @@ func fleetState(n int) state.State {
 	}
 	st.Feed = []state.Line{
 		{At: now.Add(-3 * time.Second), Status: view.Neutral, Text: fmt.Sprintf("%d clusters: 2 need attention, 1 changing", n)},
-		{At: now.Add(-2 * time.Second), Cluster: state.Key{Region: "us-east-1", Name: "c-004"}, Status: view.Fail, Text: "extended support"},
+		{At: now.Add(-2 * time.Second), Cluster: state.Key{Region: "us-east-1", Name: "c-004"}, Status: view.Warn, Text: "extended support"},
 		{At: now, Cluster: state.Key{Region: "eu-west-1", Name: "c-005"}, Status: view.Warn, Text: "readiness: review"},
 	}
 	return st

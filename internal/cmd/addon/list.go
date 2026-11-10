@@ -2,15 +2,12 @@ package addon
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"strconv"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/dantech2000/refresh/internal/apidoc"
-	"github.com/dantech2000/refresh/internal/awsx"
 	"github.com/dantech2000/refresh/internal/cmd/fleetcmd"
 	"github.com/dantech2000/refresh/internal/cmdutil"
 	"github.com/dantech2000/refresh/internal/fleet"
@@ -18,16 +15,8 @@ import (
 )
 
 type listOptions struct {
-	ios    *cmdutil.IOStreams
-	global *cmdutil.GlobalOptions
-	// now returns the time that a snapshot records.
-	now func() time.Time
-	// resolve returns the cluster of the run, from the flag or the
-	// defaults, and clients the AWS clients of its region.
-	resolve func(cluster string) (cmdutil.Target, error)
-	clients func(ctx context.Context) (*awsx.Clients, error)
-	// after is the pause between two reads of a watch.
-	after func(time.Duration) <-chan time.Time
+	f   *cmdutil.Factory
+	ios *cmdutil.IOStreams
 
 	cluster  string
 	watch    bool
@@ -39,12 +28,7 @@ type listOptions struct {
 }
 
 func newCmdList(f *cmdutil.Factory) *cobra.Command {
-	o := &listOptions{
-		ios: f.IOStreams, global: &f.Global, now: f.Now,
-		resolve: func(cluster string) (cmdutil.Target, error) { return cmdutil.ResolveCluster(f, cluster, true) },
-		clients: func(ctx context.Context) (*awsx.Clients, error) { return cmdutil.ClusterClients(ctx, f) },
-		after:   f.After,
-	}
+	o := &listOptions{f: f, ios: f.IOStreams}
 	cmd := &cobra.Command{
 		Use:     "list",
 		Aliases: []string{"ls"},
@@ -82,9 +66,9 @@ Exit codes:
 				return err
 			}
 			if o.watch {
-				return cmdutil.Watch(cmd.Context(), o.ios, o.interval, o.after, o.run)
+				return cmdutil.Watch(cmd.Context(), o.ios, o.interval, f.After, o.run)
 			}
-			return o.run(cmd.Context())
+			return o.run(cmd.Context(), o.ios)
 		},
 	}
 	cmdutil.AddClusterFlag(cmd, &o.cluster)
@@ -95,7 +79,7 @@ Exit codes:
 }
 
 func (o *listOptions) complete() error {
-	target, err := o.resolve(o.cluster)
+	target, err := cmdutil.ResolveCluster(o.f, o.cluster, true)
 	o.target = target
 	return err
 }
@@ -104,19 +88,15 @@ func (o *listOptions) validate() error {
 	return cmdutil.ValidateWatch(o.ios, o.output, o.watch, o.interval)
 }
 
-func (o *listOptions) run(ctx context.Context) error {
-	ios := o.ios
-	ctx, cancel := cmdutil.WithTimeout(ctx, o.global.Timeout)
+// run reads the add-ons once and prints them to ios.
+func (o *listOptions) run(ctx context.Context, ios *cmdutil.IOStreams) error {
+	ctx, cancel := cmdutil.WithTimeout(ctx, o.f.Global.Timeout)
 	defer cancel()
-	clients, err := o.clients(ctx)
+	read, err := fleetcmd.FetchCluster(ctx, o.f, o.target, fleet.Need{Addons: true})
 	if err != nil {
 		return err
 	}
-	fetcher := fleet.Fetcher{Now: o.now}
-	snap, err := fetcher.Fetch(ctx, clients, o.target.Cluster, fleet.Need{Addons: true})
-	if err != nil {
-		return fleetcmd.ClusterError(ctx, &fetcher, clients, o.target.Cluster, err)
-	}
+	snap := read.Snapshot
 
 	cluster := snap.ClusterDoc()
 	doc := apidoc.AddonList{
@@ -129,17 +109,7 @@ func (o *listOptions) run(ctx context.Context) error {
 		doc.Addons = []apidoc.Addon{}
 	}
 	apidoc.SortFailures(doc.Failures)
-	if err := cmdutil.Print(ios, o.output, doc, listView(doc)); err != nil {
-		return err
-	}
-	if o.output != cmdutil.FormatTable {
-		cmdutil.ReportFailures(ios, doc.Failures)
-	}
-	// An interrupt is not a partial result.
-	if errors.Is(ctx.Err(), context.Canceled) {
-		return fmt.Errorf("interrupted: %w", context.Canceled)
-	}
-	return cmdutil.IncompleteError(doc.Failures)
+	return cmdutil.PrintResult(ctx, ios, o.output, doc, listView(doc), doc.Failures)
 }
 
 // listView returns the table and plain form of doc.
@@ -152,16 +122,16 @@ func listView(doc apidoc.AddonList) view.List[apidoc.Addon] {
 		Failures: doc.Failures,
 		Columns: []view.Column[apidoc.Addon]{
 			{Title: "NAME", MinWidth: 8, Value: func(a apidoc.Addon) string { return a.Name }},
-			{Title: "VERSION", MinWidth: 8, Value: func(a apidoc.Addon) string { return orUnknown(a, a.Version) }},
+			{Title: "VERSION", MinWidth: 8, Value: func(a apidoc.Addon) string { return view.OrUnknown(a.Incomplete, a.Version) }},
 			{
 				Title: "STATUS", Truncate: view.TruncateNever,
-				Value:  func(a apidoc.Addon) string { return orUnknown(a, a.Status) },
+				Value:  func(a apidoc.Addon) string { return view.OrUnknown(a.Incomplete, a.Status) },
 				Status: func(a apidoc.Addon) view.Status { return view.StatusOf(a.Status) },
 			},
 			{
 				Title: "HEALTH", Truncate: view.TruncateNever,
-				Value:  func(a apidoc.Addon) string { return orUnknown(a, string(a.Health)) },
-				Status: func(a apidoc.Addon) view.Status { return healthStatus(a.Health) },
+				Value:  func(a apidoc.Addon) string { return view.OrUnknown(a.Incomplete, string(a.Health)) },
+				Status: func(a apidoc.Addon) view.Status { return view.AddonHealthStatus(a.Health) },
 			},
 		},
 	}

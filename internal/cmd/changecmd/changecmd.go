@@ -5,14 +5,15 @@
 // It is beside the command packages and not in cmdutil, because cmdutil
 // knows nothing about the fleet and internal/change imports it. It is the
 // one place that knows both a change and a terminal: internal/change
-// returns typed errors and results, and this package gives them the words
-// of the command line.
+// returns typed errors and results, and this package prints them. The
+// messages of internal/change name the flags of the command line, and
+// change.Command builds a whole command; this package gives it the words
+// of the run around it (FollowUp).
 package changecmd
 
 import (
 	"context"
 	"errors"
-	"fmt"
 	"slices"
 	"time"
 
@@ -26,41 +27,34 @@ import (
 	"github.com/dantech2000/refresh/internal/view"
 )
 
-// Deps returns the function that builds the dependencies of a change of
-// one cluster in the region of the run. Calling that function is the
-// first use of the network: it loads the AWS configuration.
-func Deps(f *cmdutil.Factory) func(ctx context.Context) (change.Deps, error) {
-	return func(ctx context.Context) (change.Deps, error) {
-		// The checks of a command that reads one cluster: one region, and
-		// a region at all.
-		if _, err := cmdutil.ClusterClients(ctx, f); err != nil {
-			return change.Deps{}, err
-		}
-		provider, err := f.AWS(ctx)
-		if err != nil {
-			return change.Deps{}, err
-		}
-		return depsOf(f, provider), nil
+// Deps returns the dependencies of a change of one cluster in the region
+// of the run. It is the first use of the network: it loads the AWS
+// configuration. It fails when the run has more than one region or none.
+func Deps(ctx context.Context, f *cmdutil.Factory) (change.Deps, error) {
+	// A change never takes its cluster from the kubeconfig, so its target
+	// has no region of its own.
+	provider, err := cmdutil.ClusterProvider(ctx, f, cmdutil.Target{})
+	if err != nil {
+		return change.Deps{}, err
 	}
+	return DepsOf(f, provider), nil
 }
 
-// FleetDeps returns the function that builds the dependencies of a change
-// of every cluster of a region sweep. It has no check for one region:
-// the sweep names its regions. Calling that function is the first use of
-// the network.
-func FleetDeps(f *cmdutil.Factory) func(ctx context.Context) (change.Deps, error) {
-	return func(ctx context.Context) (change.Deps, error) {
-		provider, err := f.AWS(ctx)
-		if err != nil {
-			return change.Deps{}, err
-		}
-		return depsOf(f, provider), nil
+// FleetDeps returns the dependencies of a change of every cluster of a
+// set of regions. It has no check for one region: the fleet names its
+// regions. It is the first use of the network.
+func FleetDeps(ctx context.Context, f *cmdutil.Factory) (change.Deps, error) {
+	provider, err := f.AWS(ctx)
+	if err != nil {
+		return change.Deps{}, err
 	}
+	return DepsOf(f, provider), nil
 }
 
-// depsOf returns the dependencies of a change from the factory: the
-// clients, the Kubernetes access, and the clock.
-func depsOf(f *cmdutil.Factory, provider *awsx.Provider) change.Deps {
+// DepsOf returns the dependencies of a change from the factory: the
+// clients, the Kubernetes access, the clock, and the words around a
+// command that a notice names.
+func DepsOf(f *cmdutil.Factory, provider *awsx.Provider) change.Deps {
 	return change.Deps{
 		AWS:       provider,
 		Fetch:     &fleet.Fetcher{Now: f.Now},
@@ -69,8 +63,22 @@ func depsOf(f *cmdutil.Factory, provider *awsx.Provider) change.Deps {
 		After:     f.After,
 		AfterFunc: f.AfterFunc,
 		Tick:      f.Tick,
-		FollowUp:  change.FollowUp{Profile: cmdutil.ExplicitProfile(f)},
+		FollowUp:  followUp(f),
 	}
+}
+
+// followUp returns the words that put a command of a notice in the
+// account, the region, and the Kubernetes context of the run. Resume is
+// for the command to fill: only it knows its defaults.
+func followUp(f *cmdutil.Factory) change.FollowUp {
+	g := &f.Global
+	region := ""
+	if len(g.Regions) == 1 {
+		region = g.Regions[0]
+	}
+	fu := change.FollowUpFor(g.Profile, region, g.Kubeconfig, g.KubeContext)
+	fu.Profile = cmdutil.ExplicitProfile(f)
+	return fu
 }
 
 // Common returns the part of a request that the shared flags fill.
@@ -132,7 +140,7 @@ func PrintPlan(ctx context.Context, ios *cmdutil.IOStreams, format cmdutil.Forma
 	}
 	// An interrupt is not a partial result.
 	if errors.Is(ctx.Err(), context.Canceled) {
-		return fmt.Errorf("interrupted: %w", context.Canceled)
+		return cmdutil.ErrInterrupted
 	}
 	return planExit(plan)
 }

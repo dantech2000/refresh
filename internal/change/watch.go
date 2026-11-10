@@ -11,7 +11,6 @@ import (
 	metricsv1beta1 "k8s.io/metrics/pkg/client/clientset/versioned/typed/metrics/v1beta1"
 
 	"github.com/dantech2000/refresh/internal/apidoc"
-	"github.com/dantech2000/refresh/internal/awsx"
 	"github.com/dantech2000/refresh/internal/exitcode"
 	"github.com/dantech2000/refresh/internal/fanout"
 	"github.com/dantech2000/refresh/internal/fleet"
@@ -137,17 +136,17 @@ func watchUpdate(ctx, rctx context.Context, read *budget, d Deps, r Resource, o 
 	// The snapshot gives the endpoint that the kubeconfig is matched to,
 	// and the nodegroup that the verification judges. It is the last of
 	// the first reads.
-	fetcher := &fleet.Fetcher{Now: d.Now}
+	fetcher := d.fetcher()
 	var snap *fleet.Snapshot
 	var kube kubeClients
 	if r.Kind == StepNodegroup {
 		snap, _ = fetcher.Fetch(rctx, clients, r.Cluster, fleet.Need{})
 		if rctx.Err() != nil {
 			read.stop()
-			res = watchWaitFailed(rctx, r, res, rctx.Err(), d.now())
+			res = waitOutcome(rctx, r.Target, res, rctx.Err(), d.now())
 			report()
 			emit(Event{At: d.now(), Kind: PhaseEnded, Phase: step.Ref.Phase})
-			return watchResult(plan, r, res, nil)
+			return watchResult(plan, r, res, nil, nil)
 		}
 		kube.client, kube.metrics, kube.noKube = kubeAccess(d, snap)
 	}
@@ -158,29 +157,34 @@ func watchUpdate(ctx, rctx context.Context, read *budget, d Deps, r Resource, o 
 		}
 	}
 	if err := fanout.RunAlongside(wctx, observe, waitFn); err != nil {
-		res = watchWaitFailed(wctx, r, res, err, d.now())
+		res = waitOutcome(wctx, r.Target, res, err, d.now())
 		report()
 		emit(Event{At: d.now(), Kind: PhaseEnded, Phase: step.Ref.Phase})
-		return watchResult(plan, r, res, nil)
+		return watchResult(plan, r, res, nil, nil)
 	}
 	res.Status, res.FinishedAt = StepSucceeded, d.now()
 
 	var verification []health.Result
+	var failures []apidoc.Failure
 	if r.Kind == StepNodegroup {
-		after, _ := fetcher.Fresh().Fetch(wctx, clients, r.Cluster, fleet.Need{Nodegroups: true})
+		// The verification of a run, for the one nodegroup: a check that
+		// fails is an issue, named by its check, and one that could not
+		// read is a failure.
+		after, _ := fetcher.Fresh().Fetch(wctx, clients, r.Cluster, fleet.Need{OnlyNodegroups: []string{r.Name}})
 		checks := health.Verify([]string{r.Name}, health.Baseline{}, health.WaitOptions{Interval: opts.interval(), After: d.After, Now: d.Now})
-		verification = health.Run(wctx, checks, &health.Input{Snapshot: after, Clients: clients, Kube: kube.client, NoKube: kube.noKube, Metrics: kube.metrics, Now: d.now()})
+		verification = health.Run(wctx, checks, &health.Input{Snapshot: after, Targets: []string{r.Name}, Clients: clients, Kube: kube.client, NoKube: kube.noKube, Metrics: kube.metrics, Now: d.now()})
 		emit(Event{At: d.now(), Kind: VerifyReport, Phase: step.Ref.Phase, Step: step.Ref, Checks: verification})
 		for _, v := range verification {
 			if v.Outcome == health.Fail {
-				res.VerifyIssue = v.Message
+				res.VerifyIssue = v.Name + ": " + v.Message
 				break
 			}
 		}
+		failures = verifyFailures(r.Target, verification, after)
 	}
 	report()
 	emit(Event{At: d.now(), Kind: PhaseEnded, Phase: step.Ref.Phase})
-	return watchResult(plan, r, res, verification)
+	return watchResult(plan, r, res, verification, failures)
 }
 
 // kubeClients is the Kubernetes access of a watch.
@@ -246,61 +250,20 @@ func watchFailed(r Resource, err error) Result {
 	return Result{Status: Failed, Failures: []apidoc.Failure{f}, Err: err, ended: ending{code: exitcode.Failure}}
 }
 
-// watchWaitFailed is the step of a watch whose wait did not end in
-// success, by the table of a run's wait.
-func watchWaitFailed(ctx context.Context, r Resource, res StepResult, err error, now time.Time) StepResult {
-	failure := func(reason apidoc.Reason, msg string) *apidoc.Failure {
-		f := apidoc.NewFailure(apidoc.FailureUpdate, r.Name, reason, msg)
-		f.Cluster, f.Region, f.UpdateID = r.Cluster, r.Region, res.UpdateID
-		return &f
-	}
-	var ended *UpdateError
-	var unobserved *UnobservedError
+// watchResult is the result of a watch with its one step, with the
+// status by the rule of a run (statusOf).
+func watchResult(plan *Plan, r Resource, res StepResult, verification []health.Result, failures []apidoc.Failure) Result {
+	steps := []StepResult{res}
+	status := statusOf(plan.Kind, steps, failures)
+	out := Result{Status: status, Plan: plan, Failures: failures,
+		Clusters: []ClusterResult{{Target: r.Target, Status: status, Steps: steps, Verification: verification}}}
 	switch {
-	case errors.As(err, &ended):
-		res.Status, res.FinishedAt = StepFailed, now
-		reason := apidoc.ReasonUpdateFailed
-		if ended.Cancelled() {
-			res.Status, reason = StepCancelled, apidoc.ReasonUpdateCancelled
-		}
-		res.Failure = failure(reason, err.Error())
-	case errors.As(err, &unobserved):
-		res.Status = StepInProgress
-		err = unobserved.of(res.UpdateID)
-		res.Failure = failure(apidoc.ReasonNotMonitored, err.Error())
-		res.Failure.Operation, res.Failure.AWSErrorCode = awsx.Operation(err), awsx.ErrorCode(err)
-	case ctx.Err() != nil && timedOut(ctx):
-		res.Status = StepInProgress
-		res.Failure = failure(apidoc.ReasonTimeout, "--wait-timeout passed before the update of "+r.String()+" finished; it may still be running")
-	case ctx.Err() != nil:
-		res.Status = StepInProgress
-		res.Failure = failure(apidoc.ReasonInterrupted, "interrupted while the update of "+r.String()+" was running; it may still be running")
-	default:
-		res.Status, res.FinishedAt = StepFailed, now
-		res.Failure = failure(apidoc.ReasonUpdateFailed, err.Error())
-	}
-	return res
-}
-
-// watchResult is the result of a watch with its one step.
-func watchResult(plan *Plan, r Resource, res StepResult, verification []health.Result) Result {
-	status := Succeeded
-	switch {
-	case res.Status == StepInProgress:
-		status = Incomplete
-		if res.Failure != nil && res.Failure.Reason == apidoc.ReasonInterrupted {
-			status = Interrupted
-		}
-	case res.Status != StepSucceeded:
-		status = Failed
-	case res.VerifyIssue != "":
-		status = VerifyFailed
-	}
-	out := Result{Status: status, Plan: plan, Clusters: []ClusterResult{{Target: r.Target, Status: status, Steps: []StepResult{res}, Verification: verification}}}
-	if res.Failure != nil {
+	case res.Failure != nil:
 		out.Err = errors.New(res.Failure.Error)
-	} else if res.VerifyIssue != "" {
+	case res.VerifyIssue != "":
 		out.Err = errors.New(res.VerifyIssue)
+	case len(failures) > 0:
+		out.Err = errors.New(failures[0].Error)
 	}
 	if status == Interrupted {
 		out.ended = ending{interrupted: true}

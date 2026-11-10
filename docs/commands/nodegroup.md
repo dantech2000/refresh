@@ -122,6 +122,11 @@ here. `cluster upgrade` does that.
   anyway.
 - A nodegroup with a custom AMI is never rolled. Publish a new launch template
   version for it.
+- A nodegroup whose AMI type this version of `refresh` does not know, such as
+  a type that EKS added later, is not rolled. Its step is skipped with the
+  reason `AMITypeUnknown`, and a notice names the AMI type. Upgrade `refresh`
+  to roll it. A nodegroup for which EKS returned no AMI type is skipped the
+  same way.
 
 ### What a run does
 
@@ -135,7 +140,8 @@ here. `cluster upgrade` does that.
 4. It asks once. `--yes` skips the question.
 5. It starts every roll and waits for all of them.
 6. It verifies: the nodegroups are `ACTIVE`, the new nodes are `Ready`, and no
-   pod is newly `Pending`.
+   new pod is stuck `Pending`: unschedulable, or unable to pull its image or
+   read its configuration.
 
 ```bash
 refresh nodegroup update -c dev-orders-32 --yes
@@ -194,7 +200,10 @@ the latest AMI.
 ### Every cluster: `--all-clusters`
 
 `--all-clusters` rolls every cluster of the regions of `-r`, one cluster after
-another.
+another. Without `-r` it rolls the clusters of the configured region only. It
+never reads `REFRESH_EKS_REGIONS` and never sweeps every region: a change acts
+only where you point it. With no `-r` and no configured region, it fails
+before any request.
 
 1. The command lists the clusters of the regions.
 2. It plans every cluster. A dry run stops here.
@@ -214,7 +223,7 @@ cannot be used with `-c`, with nodegroup names, or with `--kube-context`.
 | Flag | Meaning |
 |---|---|
 | `-f, --filter` | Select the targets by `key=value`. |
-| `--all-clusters` | Roll every cluster of the regions of `-r`. |
+| `--all-clusters` | Roll every cluster of the regions of `-r`, or of the configured region. |
 | `--reroll` | Also roll a nodegroup that is on the latest AMI. |
 | `--changelog` | With `--dry-run`, show the AMI release notes of each roll. |
 | `--live` | Show the nodes of the roll as they drain and join, also without a terminal. |

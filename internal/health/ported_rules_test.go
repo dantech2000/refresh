@@ -166,7 +166,7 @@ func TestControlPlane_AStray429Passes(t *testing.T) {
 		requests, throttled float64
 		want                want
 	}{
-		{"one of 4348", 4348, 1, want{outcome: health.Pass, message: "etcd 12% of 8 GiB"}},
+		{"one of 4348", 4348, 1, want{outcome: health.Pass, message: "etcd 13% of 8 GB"}},
 		{"just below one percent", 10000, 99, want{outcome: health.Pass}},
 		{"one percent", 10000, 100, want{outcome: health.Warn, message: "throttling requests (1.0% 429)"}},
 	}
@@ -180,7 +180,7 @@ func TestControlPlane_AStray429Passes(t *testing.T) {
 
 // pendingFor returns a Pending DaemonSet pod that is not bound yet and
 // that its node affinity pins to a node by name, as the DaemonSet
-// controller makes it.
+// controller makes it, and that the scheduler could not place.
 func pendingFor(name, node string) *corev1.Pod {
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Namespace: "kube-system", Name: name},
@@ -189,7 +189,9 @@ func pendingFor(name, node string) *corev1.Pod {
 				MatchFields: []corev1.NodeSelectorRequirement{{Key: "metadata.name", Operator: corev1.NodeSelectorOpIn, Values: []string{node}}},
 			}}},
 		}}},
-		Status: corev1.PodStatus{Phase: corev1.PodPending},
+		Status: corev1.PodStatus{Phase: corev1.PodPending, Conditions: []corev1.PodCondition{
+			{Type: corev1.PodScheduled, Status: corev1.ConditionFalse, Reason: corev1.PodReasonUnschedulable},
+		}},
 	}
 }
 

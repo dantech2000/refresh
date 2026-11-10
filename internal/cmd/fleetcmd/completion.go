@@ -50,7 +50,7 @@ func complete(f *cmdutil.Factory, most int, list lister) cobra.CompletionFunc {
 		quiet.ErrOut = io.Discard
 		silent := *f
 		silent.IOStreams = &quiet
-		clients, err := cmdutil.ClusterClients(ctx, &silent)
+		clients, err := cmdutil.ClusterClients(ctx, &silent, cmdutil.Target{})
 		if err != nil {
 			return nil, cobra.ShellCompDirectiveNoFileComp
 		}

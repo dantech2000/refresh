@@ -54,7 +54,7 @@ documents have it as `support.extendedSupportPremiumUsdPerHour`.
 | `COMPUTE` | The managed nodegroups, Auto Mode, Karpenter, or none. |
 | `STALE AMI` | "1/3 (130d)": one of three nodegroups does not run the latest AMI for its own Kubernetes version, and the oldest such AMI is 130 days old. "1 behind CP": one nodegroup is on an older Kubernetes version than the control plane. |
 | `ADDONS` | The add-ons that have a newer compatible version. |
-| `HEALTH` | The health issues that EKS reports for the control plane, the nodegroups, and the add-ons, as one count, such as `2 issues`. An add-on that is `DEGRADED` with no issue listed counts as one. The JSON has each part: `healthIssues` of the cluster and of each nodegroup, and `issues` and `status` of each add-on. |
+| `HEALTH` | The health issues that EKS reports for the control plane, the nodegroups, and the add-ons, as one count, such as `2 issues`. A resource in a failed status with no issue listed counts as one: a `FAILED` control plane; a `DEGRADED`, `CREATE_FAILED`, or `DELETE_FAILED` nodegroup; or an add-on that is `DEGRADED` or whose create, update, or delete failed. A resource with issues counts its issues, not one more for its status. The JSON has each part: `healthIssues` of the cluster and of each nodegroup, and `issues` and `status` of each add-on. |
 
 ## Flags
 

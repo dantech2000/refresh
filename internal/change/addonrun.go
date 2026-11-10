@@ -2,7 +2,6 @@ package change
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 
@@ -52,15 +51,10 @@ func (r *runner) runAddonStep(cp *ClusterPlan, s Step) StepResult {
 		}
 		res.StartedAt = r.d.now()
 		id, err := submitAddon(r.readCtx, clients, resource, s.To)
-		switch {
-		case err != nil:
-			return r.unanswered(cp, res, err)
-		case id == "":
-			res.Status = StepInProgress
-			res.Failure = r.stepFailure(cp, res, apidoc.ReasonNotMonitored, "EKS accepted the update of add-on "+s.Ref.Name+" and returned no update ID; it cannot be followed, and it may still be running")
+		var ok bool
+		if res, ok = r.submitted(cp, res, id, err); !ok {
 			return res
 		}
-		res.Status, res.UpdateID = StepStarted, id
 		// Without a wait, this is the result of the step, and the phase
 		// reports it.
 		if !r.common.NoWait {
@@ -189,124 +183,6 @@ func addonSettled(s Settled) (bool, error) {
 	return false, nil
 }
 
-// resourceKind returns the kind of the resource of a step, for a failure
-// about it.
-func resourceKind(r StepRef) apidoc.FailureKind {
-	switch r.Kind {
-	case StepAddon:
-		return apidoc.FailureAddon
-	case StepNodegroup, StepScale:
-		return apidoc.FailureNodegroup
-	}
-	return apidoc.FailureCluster
-}
-
-// changeVerb returns the verb for what a step does to its resource: a
-// scale scales, and every other step updates.
-func changeVerb(r StepRef) (verb, done string) {
-	if r.Kind == StepScale {
-		return "scale", "scaled"
-	}
-	return "update", "updated"
-}
-
-// stepFailure returns a failure of the step of res, about its resource
-// or, once an update was accepted, about that update.
-func (r *runner) stepFailure(cp *ClusterPlan, res StepResult, reason apidoc.Reason, msg string) *apidoc.Failure {
-	kind := resourceKind(res.Ref)
-	if res.UpdateID != "" {
-		kind = apidoc.FailureUpdate
-	}
-	f := apidoc.NewFailure(kind, res.Ref.Name, reason, msg)
-	f.Cluster, f.Region, f.UpdateID = cp.Cluster, cp.Region, res.UpdateID
-	return &f
-}
-
-// unsent returns the result of a step whose read before its request
-// failed, or that the run ended before its request. Nothing was sent for
-// the step, so a run that ended leaves it NotAttempted, also after the
-// step waited for an update that someone else started: that update is
-// not a request of this run. See unanswered for a request that failed.
-func (r *runner) unsent(cp *ClusterPlan, res StepResult, err error) StepResult {
-	return r.notSent(cp, res, err, false)
-}
-
-// unanswered returns the result of a step whose request failed. A
-// request that never left, because the run ended first, leaves the step
-// NotAttempted. A request that left and got no answer may have started
-// the update, so the step is InProgress.
-func (r *runner) unanswered(cp *ClusterPlan, res StepResult, err error) StepResult {
-	return r.notSent(cp, res, err, true)
-}
-
-// notSent is unsent and unanswered. requested says that err is the error
-// of the request of the step.
-func (r *runner) notSent(cp *ClusterPlan, res StepResult, err error, requested bool) StepResult {
-	f := fleet.FailureFromError(resourceKind(res.Ref), res.Ref.Name, err)
-	f.Cluster, f.Region = cp.Cluster, cp.Region
-	ended := r.readCtx.Err() != nil
-	verb, done := changeVerb(res.Ref)
-	switch {
-	case ended && (!requested || errors.Is(err, awsx.ErrNotSent)):
-		res.Status = StepNotAttempted
-		if timedOut(r.readCtx) {
-			f.Reason, f.Retryable = apidoc.ReasonTimeout, true
-			f.Error = "the --timeout budget ran out before " + stepName(res.Ref) + " was " + done + " (increase --timeout)"
-			if errors.Is(context.Cause(r.readCtx), ErrWaitTimeout) {
-				f.Error = "--wait-timeout passed before " + stepName(res.Ref) + " was " + done + "; nothing was sent for it"
-			}
-			r.failures = append(r.failures, f)
-		} else {
-			r.interrupted = true
-		}
-		return res
-	case ended:
-		res.Status = StepInProgress
-		f.Error = "the request to " + verb + " " + stepName(res.Ref) + " got no answer before the run ended; the update may be running"
-		if timedOut(r.readCtx) {
-			f.Reason = apidoc.ReasonTimeout
-		}
-	default:
-		res.Status, res.FinishedAt = StepFailed, r.d.now()
-	}
-	res.Failure = &f
-	return res
-}
-
-// waitFailed returns the result of a step whose wait did not end in
-// success. ctx is the context of the wait.
-func (r *runner) waitFailed(ctx context.Context, cp *ClusterPlan, res StepResult, err error) StepResult {
-	var ended *UpdateError
-	var unobserved *UnobservedError
-	switch {
-	case errors.As(err, &ended):
-		res.Status, res.FinishedAt = StepFailed, r.d.now()
-		reason := apidoc.ReasonUpdateFailed
-		if ended.Cancelled() {
-			res.Status, reason = StepCancelled, apidoc.ReasonUpdateCancelled
-		}
-		res.Failure = r.stepFailure(cp, res, reason, err.Error())
-	case errors.As(err, &unobserved):
-		res.Status = StepInProgress
-		err = unobserved.of(res.UpdateID)
-		res.Failure = r.stepFailure(cp, res, apidoc.ReasonNotMonitored, err.Error())
-		res.Failure.Operation, res.Failure.AWSErrorCode = awsx.Operation(err), awsx.ErrorCode(err)
-	case ctx.Err() != nil && timedOut(ctx):
-		res.Status = StepInProgress
-		res.Failure = r.stepFailure(cp, res, apidoc.ReasonTimeout,
-			"--wait-timeout passed before the update of "+stepName(res.Ref)+" finished; it may still be running")
-	case ctx.Err() != nil:
-		res.Status = StepInProgress
-		res.Failure = r.stepFailure(cp, res, apidoc.ReasonInterrupted,
-			"interrupted while the update of "+stepName(res.Ref)+" was running; it may still be running")
-	default:
-		// The done function of the wait, or the version that it settled at.
-		res.Status, res.FinishedAt = StepFailed, r.d.now()
-		res.Failure = r.stepFailure(cp, res, apidoc.ReasonUpdateFailed, err.Error())
-	}
-	return res
-}
-
 // confirmAddon judges the add-on after a wait that succeeded. got is the
 // add-on as it is now, and err the error of its read.
 //
@@ -330,7 +206,7 @@ func (r *runner) confirmAddon(cp *ClusterPlan, res StepResult, s Step, got Settl
 		f.Cluster, f.Region, f.UpdateID = cp.Cluster, cp.Region, res.UpdateID
 		f.Error = "the update of add-on " + name + " succeeded, and the add-on could not be read after it: " + f.Error
 		r.failures = append(r.failures, f)
-		r.unverified = true
+		r.step.unverified = true
 		check.Outcome, check.Message = health.Unreadable, "could not read "+name+" after its update"
 	case fleet.CompareAddonVersions(got.Version, s.To) != 0:
 		res.Status = StepFailed
@@ -340,13 +216,17 @@ func (r *runner) confirmAddon(cp *ClusterPlan, res StepResult, s Step, got Settl
 	case got.Status != string(ekstypes.AddonStatusActive):
 		res.VerifyIssue = fmt.Sprintf("add-on %s ended in status %s (expected ACTIVE)", name, got.Status)
 	case len(got.Issues) > 0:
-		res.VerifyIssue = fmt.Sprintf("add-on %s is ACTIVE but has %d health issue(s): %s", name, len(got.Issues), strings.Join(got.Issues, "; "))
+		issues := make([]string, len(got.Issues))
+		for i, issue := range got.Issues {
+			issues[i] = issue.Code + ": " + issue.Message
+		}
+		res.VerifyIssue = fmt.Sprintf("add-on %s is ACTIVE but has %d health issue(s): %s", name, len(got.Issues), strings.Join(issues, "; "))
 	}
 	if res.VerifyIssue != "" {
 		check.Outcome, check.Message, check.Findings = health.Fail, res.VerifyIssue, []string{name}
 	}
 	r.verification = append(r.verification, check)
 	// The check is reported after the result of its step: see stepEnded.
-	r.afterStep = append(r.afterStep, Event{Kind: VerifyReport, Phase: s.Ref.Phase, Step: s.Ref, Checks: []health.Result{check}})
+	r.step.after = append(r.step.after, Event{Kind: VerifyReport, Phase: s.Ref.Phase, Step: s.Ref, Checks: []health.Result{check}})
 	return res
 }

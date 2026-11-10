@@ -5,12 +5,14 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/dantech2000/refresh/internal/apidoc"
+	"github.com/dantech2000/refresh/internal/awsx/awsxtest"
 	"github.com/dantech2000/refresh/internal/exitcode"
 	"github.com/dantech2000/refresh/internal/fleet/fleettest"
 	"github.com/dantech2000/refresh/internal/health"
@@ -196,8 +198,11 @@ func TestEngineGuard_SubmitAfterAttachment(t *testing.T) {
 	t.Run("an add-on: the control plane starts to change during the wait", func(t *testing.T) {
 		// The control plane is at 1.33 already, and someone updates
 		// vpc-cni to a build that 1.33 cannot run.
-		world := engineWorld(func(_ *fleettest.State, c *fleettest.Cluster) { c.Version = "1.33" })
-		startElsewhere(t, world, "vpc-cni", "v1.19.5-eksbuild.1", fleettest.UpdateScript{After: 30 * time.Second})
+		world := engineWorld(func(s *fleettest.State, c *fleettest.Cluster) {
+			c.Version = "1.33"
+			s.AddonVersions = append(s.AddonVersions, fleettest.AddonVersion{Addon: "vpc-cni", Version: cniOther, ClusterVersions: []string{"1.32"}})
+		})
+		startElsewhere(t, world, "vpc-cni", cniOther, fleettest.UpdateScript{After: 30 * time.Second})
 		e := newEnv(t, world)
 		started := false
 		hooks := Hooks{Event: func(ev Event) {
@@ -751,5 +756,181 @@ func TestEngineGuard_AddonNeedsTheControlPlaneOfItsHop(t *testing.T) {
 	wantBlocked(t, stepResultOf(t, res, StepAddon, "vpc-cni"), "the control plane of prod runs 1.32", "a version for Kubernetes 1.33", "must be at 1.33")
 	if res.ExitCode() != exitcode.Blocked {
 		t.Errorf("exit = %d, want 3 (%v)", res.ExitCode(), res.Err)
+	}
+}
+
+// The roll of an engine nodegroup step runs as a batch inside its step,
+// and keeps the state of that step. A busy notice is said once for each
+// nodegroup step.
+func TestEngine_BusyNoticeOncePerNodegroupStep(t *testing.T) {
+	world := engineWorld(func(_ *fleettest.State, c *fleettest.Cluster) {
+		c.Version = "1.33"
+		c.Addon("vpc-cni").Version, c.Addon("coredns").Version = cni33, dns33
+	})
+	startElsewhere(t, world, "kube-proxy", proxy33, fleettest.UpdateScript{Never: true})
+	e := newEnv(t, world)
+	req := upgradeTo("1.33")
+	req.SkipAddons = []string{"kube-proxy"}
+	req.Policy.Skip = true
+	var mu sync.Mutex
+	n := 0
+	mustRun(t, e, req, Hooks{Event: func(ev Event) {
+		mu.Lock()
+		defer mu.Unlock()
+		if ev.Kind == Notice && strings.Contains(ev.Text, "kube-proxy is UPDATING; the run does not wait for it") {
+			n++
+		}
+	}})
+	if n != 2 {
+		t.Errorf("the busy notice was said %d times, want 2: once for each nodegroup step", n)
+	}
+}
+
+// A nodegroup of the phase that EKS starts to delete between the read of
+// the step and the read before the request refuses the roll of its
+// sibling: the busy rule before the request has the steps of the phase.
+func TestEngine_GuardBusyRuleSeesPhaseSteps(t *testing.T) {
+	world := engineWorld(func(_ *fleettest.State, c *fleettest.Cluster) {
+		c.Version = "1.33"
+		c.Addon("vpc-cni").Version, c.Addon("coredns").Version, c.Addon("kube-proxy").Version = cni33, dns33, proxy33
+	})
+	e := newEnv(t, world)
+	var mu sync.Mutex
+	sinceList, done := 0, false
+	e.srv.OnRequest = func(_ context.Context, r awsxtest.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		switch {
+		case r.Operation == fleettest.EKSListNodegroups:
+			sinceList = 0
+		case r.Operation == fleettest.EKSDescribeNodegroup && r.Input["nodegroupName"] == "ng-a":
+			// The second describe of ng-a after a list is the read
+			// before the request.
+			sinceList++
+			if sinceList == 2 && !done {
+				done = true
+				world.Edit(func(s *fleettest.State) { s.Cluster(east, "prod").Nodegroup("ng-b").Status = "DELETING" })
+			}
+		}
+	}
+	req := upgradeTo("1.33")
+	req.Policy.Skip = true
+	mustRun(t, e, req, Hooks{})
+	mu.Lock()
+	defer mu.Unlock()
+	if !done {
+		t.Fatal("ng-b was never set DELETING")
+	}
+	if slices.Contains(e.sent(), sentA33) {
+		t.Errorf("the roll of ng-a was sent while ng-b, a target of the phase, is DELETING: %v", e.sent())
+	}
+}
+
+// beforeHop returns a checkpoint hook that calls change once, before the
+// control-plane phase of hop.
+func beforeHop(hop string, change func()) func(context.Context, StepRef) (Checkpoint, error) {
+	done := false
+	return func(_ context.Context, next StepRef) (Checkpoint, error) {
+		if next.Phase.Kind == PhaseControlPlane && next.Phase.Hop.String() == hop && next.Kind == "" && !done {
+			done = true
+			change()
+			return Checkpoint{Waited: true}, nil
+		}
+		return Checkpoint{}, nil
+	}
+}
+
+// controlPlaneOf returns the result of the control-plane step of hop.
+func controlPlaneOf(t *testing.T, res Result, hop string) StepResult {
+	t.Helper()
+	for _, s := range res.Clusters[0].Steps {
+		if s.Ref.Kind == StepControlPlane && s.Ref.Phase.Hop.String() == hop {
+			return s
+		}
+	}
+	t.Fatalf("no control-plane step of %s in %+v", hop, res.Clusters[0].Steps)
+	return StepResult{}
+}
+
+// When the gate of a control-plane step refreshes the insights. A real
+// run with --skip-insights-check sends no refresh. A hop that the kubelet
+// skew blocks at the gate sends none either: only the plan refreshed.
+func TestEngine_GateRefreshesOnlyWhenItReadsInsights(t *testing.T) {
+	t.Run("--skip-insights-check", func(t *testing.T) {
+		e := newEnv(t, engineWorld(nil))
+		req := upgradeTo("1.34")
+		req.SkipInsights = true
+		res := mustRun(t, e, req, Hooks{})
+		if res.ExitCode() != exitcode.OK {
+			t.Fatalf("exit %d: %v", res.ExitCode(), res.Err)
+		}
+		if n := e.count(fleettest.EKSStartInsightsRefresh); n != 0 {
+			t.Errorf("%d insights refreshes sent with --skip-insights-check, want none", n)
+		}
+	})
+	t.Run("a second hop that the skew blocks at the gate", func(t *testing.T) {
+		world := engineWorld(nil)
+		e := newEnv(t, world)
+		hooks := Hooks{Checkpoint: beforeHop("1.34", func() {
+			world.Edit(func(s *fleettest.State) { s.Cluster(east, "prod").Nodegroup("ng-b").Version = "1.30" })
+		})}
+		res := mustRun(t, e, upgradeTo("1.34"), hooks)
+		wantBlocked(t, controlPlaneOf(t, res, "1.34"), "kubelet skew limit")
+		if n := e.count(fleettest.EKSStartInsightsRefresh); n != 1 {
+			t.Errorf("%d insights refreshes sent, want 1, the one of the plan: the skew blocks the hop before the gate reads insights", n)
+		}
+		if slices.Contains(e.sent(), "eks:UpdateClusterVersion 1.34") {
+			t.Errorf("the control plane moved to 1.34 past the skew: %v", e.sent())
+		}
+	})
+}
+
+// A gate refresh takes minutes, so the guard reads the cluster again after
+// it. A control plane that someone else moved to the goal meanwhile is
+// Skipped, and nothing is sent.
+func TestEngine_GateReadsAgainAfterItsRefresh(t *testing.T) {
+	world := engineWorld(nil)
+	e := newEnv(t, world)
+	var mu sync.Mutex
+	starts := 0
+	e.srv.OnRequest = func(_ context.Context, r awsxtest.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		if r.Operation == fleettest.EKSStartInsightsRefresh {
+			// The second refresh is the one of the gate of hop 1.34.
+			if starts++; starts == 2 {
+				world.Edit(func(s *fleettest.State) { s.Cluster(east, "prod").Version = "1.34" })
+			}
+		}
+	}
+	res := mustRun(t, e, upgradeTo("1.34"), Hooks{})
+	mu.Lock()
+	defer mu.Unlock()
+	if starts != 2 {
+		t.Fatalf("%d insights refreshes, want 2", starts)
+	}
+	if slices.Contains(e.sent(), "eks:UpdateClusterVersion 1.34") {
+		t.Errorf("the control plane update was sent from the read before the refresh: %v", e.sent())
+	}
+	if got := controlPlaneOf(t, res, "1.34").Status; got != StepSkipped {
+		t.Errorf("control plane of 1.34 = %s, want Skipped", got)
+	}
+}
+
+// startStep gives each step a new state: nothing of the step before it
+// is carried over.
+func TestStartStep_CarriesNothingOver(t *testing.T) {
+	steps := []Step{{Ref: StepRef{Kind: StepAddon, Name: "a"}}, {Ref: StepRef{Kind: StepAddon, Name: "b"}}}
+	r := &runner{}
+	r.startStep(steps, 0)
+	r.step.unverified = true
+	r.step.busySaid = []string{"said"}
+	r.step.after = []Event{{Kind: Notice}}
+	r.startStep(steps, 1)
+	if r.step.unverified || len(r.step.busySaid) != 0 || len(r.step.after) != 0 {
+		t.Errorf("state after startStep = %+v, want only the steps", r.step)
+	}
+	if len(r.step.steps) != 2 || len(r.step.remaining) != 1 || r.step.remaining[0].Ref.Name != "b" {
+		t.Errorf("steps %v, remaining %v; want both steps and b", r.step.steps, r.step.remaining)
 	}
 }

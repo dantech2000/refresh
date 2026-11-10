@@ -2,6 +2,7 @@ package health
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"sync"
 
@@ -19,8 +20,10 @@ type ReadinessReport struct {
 	// Snapshot is the cluster as the report read it.
 	Snapshot  *fleet.Snapshot
 	Readiness apidoc.Readiness
-	// Reasons are the reasons behind a verdict other than Ready.
-	Reasons []string
+	// Reasons are the reasons behind a verdict other than Ready, worst
+	// first. A support window that is not standard is a Warn reason of
+	// SupportReason, which no check has.
+	Reasons []Reason
 	// Checks are the results of Insights, VersionSkew, and ControlPlane.
 	Checks []Result
 	// Insights are the insights of the category, every status included.
@@ -47,17 +50,18 @@ func CheckReadiness(ctx context.Context, c *awsx.Clients, f *fleet.Fetcher, clus
 		fetchErr error
 		insights []apidoc.Insight
 		listErr  error
-		cp       []Result
+		metrics  controlPlaneMetrics
+		cpErr    error
 	)
-	// The control-plane metrics need only the name of the cluster.
-	stub := &fleet.Snapshot{Cluster: fleet.Cluster{Name: cluster, Region: c.Region}}
+	// The control-plane metrics need only the name of the cluster. The
+	// check judges them after the fetch: the etcd limit depends on the
+	// tier of the control plane.
+	stub := &Input{Snapshot: &fleet.Snapshot{Cluster: fleet.Cluster{Name: cluster, Region: c.Region}}, Clients: c, Now: f.Time()}
 	wg.Go(func() {
 		snap, fetchErr = f.Fetch(ctx, c, cluster, fleet.Need{Nodegroups: true, Addons: true, LatestAddons: true, Support: true, Updates: true})
 	})
 	wg.Go(func() { insights, listErr = ListInsights(ctx, c, cluster, category) })
-	wg.Go(func() {
-		cp = Run(ctx, []Check{ControlPlane()}, &Input{Snapshot: stub, Clients: c, Now: f.Time()})
-	})
+	wg.Go(func() { metrics, cpErr = fetchControlPlaneMetrics(ctx, stub, cluster) })
 	wg.Wait()
 	if fetchErr != nil {
 		return ReadinessReport{}, fetchErr
@@ -69,21 +73,27 @@ func CheckReadiness(ctx context.Context, c *awsx.Clients, f *fleet.Fetcher, clus
 			report.RollbackInsights = list
 		}
 	}
-	checks := []Check{Insights(InsightsInput{Insights: insights, Err: listErr, Category: category}), VersionSkew()}
-	report.Checks = append(Run(ctx, checks, &Input{Snapshot: snap, Clients: c, Now: snap.FetchedAt}), cp...)
+	cp := ControlPlane()
+	cp.Run = func(context.Context, *Input) Result { return controlPlaneResult(snap, metrics, cpErr) }
+	checks := []Check{Insights(InsightsInput{Insights: insights, Err: listErr, Category: category}), VersionSkew(), cp}
+	report.Checks = Run(ctx, checks, &Input{Snapshot: snap, Clients: c, Now: snap.FetchedAt})
 	report.Readiness, report.Reasons = readinessOf(report.Checks, snap.ClusterDoc().Support)
 	return report, nil
 }
 
+// SupportReason is the name of the reason that a support window gives.
+const SupportReason = "Support"
+
+// ReasonTexts returns the reasons of the report as the document words
+// them, such as "VersionSkew: ...".
+func (r ReadinessReport) ReasonTexts() []string { return reasonStrings(r.Reasons) }
+
 // readinessOf folds the results into the verdict: the gate with an empty
 // policy, where a block from unread data alone is Incomplete. A support
 // window that is not standard is a reason to review.
-func readinessOf(results []Result, support *apidoc.Support) (apidoc.Readiness, []string) {
+func readinessOf(results []Result, support *apidoc.Support) (apidoc.Readiness, []Reason) {
 	v := Gate(results, Policy{})
-	reasons := make([]string, 0, len(v.Reasons)+1)
-	for _, r := range v.Reasons {
-		reasons = append(reasons, r.String())
-	}
+	reasons := slices.Clone(v.Reasons)
 	readiness := apidoc.ReadinessReady
 	switch v.Decision {
 	case Block:
@@ -97,7 +107,7 @@ func readinessOf(results []Result, support *apidoc.Support) (apidoc.Readiness, [
 		readiness = apidoc.ReadinessReview
 	}
 	if support != nil && support.Tier != apidoc.SupportStandard && support.Tier != apidoc.SupportUnknown {
-		reasons = append(reasons, "Support: the cluster is in "+strings.ToLower(string(support.Tier))+" support")
+		reasons = append(reasons, Reason{Check: SupportReason, Outcome: Warn, Message: "the cluster is in " + strings.ToLower(string(support.Tier)) + " support"})
 		if readiness == apidoc.ReadinessReady {
 			readiness = apidoc.ReadinessReview
 		}

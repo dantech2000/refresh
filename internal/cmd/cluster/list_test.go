@@ -3,11 +3,13 @@ package cluster_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -322,6 +324,43 @@ func TestList_SortAndFilter(t *testing.T) {
 				t.Errorf("clusters (-want +got):\n%s", diff)
 			}
 		})
+	}
+}
+
+// --show-health checks only the clusters that the filters keep. A filter
+// on the version runs after the describe calls, so it selects the same
+// cluster as a filter on the name and must make the same health reads.
+func TestList_HealthOfTheSelectedClustersOnly(t *testing.T) {
+	health := func(t *testing.T, filter string) []string {
+		t.Helper()
+		e := newEnv(t, newWorld())
+		if err := e.run(testContext(t), "--show-health", "-f", filter, "-o", "json"); err != nil && cmdutil.ExitCode(err) != cmdutil.ExitIncomplete {
+			t.Fatalf("run: %v", err)
+		}
+		var list apidoc.ClusterList
+		if err := json.Unmarshal(e.out.Bytes(), &list); err != nil {
+			t.Fatal(err)
+		}
+		if len(list.Clusters) != 1 || list.Clusters[0].Name != "prod-payments" {
+			t.Fatalf("clusters = %+v, want prod-payments alone", list.Clusters)
+		}
+		// The sweep reads every cluster and its nodegroups before the
+		// filter on the version runs; the rest are the reads of the checks.
+		var out []string
+		for _, op := range operations(e) {
+			if !slices.ContainsFunc([]string{"eks:ListClusters ", "eks:DescribeCluster ", "eks:ListNodegroups "}, func(p string) bool { return strings.HasPrefix(op, p) }) {
+				out = append(out, op)
+			}
+		}
+		slices.Sort(out)
+		return out
+	}
+	byName := health(t, "name=prod-payments")
+	if len(byName) == 0 {
+		t.Fatal("the health checks of prod-payments made no request")
+	}
+	if diff := cmp.Diff(byName, health(t, "version=1.33")); diff != "" {
+		t.Errorf("health requests with a version filter (-name filter +version filter):\n%s", diff)
 	}
 }
 

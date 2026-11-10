@@ -604,6 +604,12 @@ func TestRunScale_EventsAndRequest(t *testing.T) {
 			if got := e.web(); got != tt.want {
 				t.Errorf("nodegroup = %s, want %s", got, tt.want)
 			}
+			// The update ends after 20 s, so the second poll at 30 s sees
+			// it Successful. The nodegroup is read at once after that,
+			// not one interval later.
+			if step := oneStep(t, res); step.FinishedAt.Sub(step.StartedAt) != 30*time.Second {
+				t.Errorf("the step took %s, want 30s", step.FinishedAt.Sub(step.StartedAt))
+			}
 		})
 	}
 }
@@ -1045,6 +1051,9 @@ func TestRunScale_BusyTarget(t *testing.T) {
 		if s.Status != StepBusy || s.InFlight != "" || s.Failure == nil ||
 			s.Failure.Error != "nodegroup web is DELETING; it was not changed. Run the command again once that finishes" {
 			t.Errorf("step = %s, in flight %q, failure %+v; want Busy with the status alone", s.Status, s.InFlight, s.Failure)
+		}
+		if n := e.count(fleettest.EKSListUpdates); n != 0 {
+			t.Errorf("%d ListUpdates requests, want none for a target that EKS is deleting", n)
 		}
 	})
 }

@@ -87,6 +87,28 @@ func count(srv *awsxtest.Server, op fleettest.Operation) int {
 	return n + len(calls)
 }
 
+// A launch template of a nodegroup that is not CUSTOM names no image: EKS
+// chooses it. The template is not read, and the image comes from an
+// instance, as for a nodegroup with no template.
+func TestFetch_TemplateOfANodegroupThatIsNotCustom(t *testing.T) {
+	world, srv, provider := nodegroupWorld(t)
+	world.Edit(func(s *fleettest.State) {
+		s.Clusters[0].Nodegroup("api").LaunchTemplate = &fleettest.LaunchTemplate{ID: "lt-api", Version: "1"}
+		s.LaunchTemplateVersions = append(s.LaunchTemplateVersions, fleettest.LaunchTemplateVersion{TemplateID: "lt-api", Version: "1"})
+	})
+	var fetcher fleet.Fetcher
+	snap, err := fetcher.Fetch(testContext(t), provider.Clients(east), "prod", fleet.Need{AMI: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := amiRows(snap)[0]; got != (amiRow{"api", apidoc.AMILatest, true, latest133, latest133}) {
+		t.Errorf("api = %+v, want the latest AMI, read from its instance", got)
+	}
+	if got := count(srv, fleettest.EC2DescribeLaunchTemplateVersions); got != 1 {
+		t.Errorf("DescribeLaunchTemplateVersions calls = %d, want 1: the template of gpu alone", got)
+	}
+}
+
 func TestFetch_NodegroupsAndAMIs(t *testing.T) {
 	_, srv, provider := nodegroupWorld(t)
 	var fetcher fleet.Fetcher
@@ -485,5 +507,30 @@ func TestFetch_InstanceIDs(t *testing.T) {
 	}
 	if len(snap.Failures) != 6 || snap.Nodegroups[0].InstanceIDsState != fleet.Failed {
 		t.Errorf("failures = %d, state = %v, want 6 and Failed", len(snap.Failures), snap.Nodegroups[0].InstanceIDsState)
+	}
+}
+
+// The instance IDs come from the group call alone. A failed instance call
+// after it costs the AMI and the instance list, not the instance IDs.
+func TestFetch_InstanceIDsSurviveAFailedInstanceCall(t *testing.T) {
+	world, _, provider := nodegroupWorld(t)
+	world.SetFault(fleettest.EC2DescribeInstances, fleettest.Fault{Deny: true})
+	var fetcher fleet.Fetcher
+	snap, err := fetcher.Fetch(testContext(t), provider.Clients(east), "prod", fleet.Need{OnlyNodegroups: []string{"web"}, InstanceIDs: true, AMI: true, Instances: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	web := snap.Nodegroups[0]
+	if web.InstanceIDsState != fleet.Collected {
+		t.Errorf("InstanceIDsState = %v, want Collected", web.InstanceIDsState)
+	}
+	if diff := cmp.Diff([]string{"i-web-1", "i-web-2"}, web.InstanceIDs); diff != "" {
+		t.Errorf("instance IDs (-want +got):\n%s", diff)
+	}
+	if web.InstancesState != fleet.Failed || web.AMI.State != fleet.Failed {
+		t.Errorf("InstancesState = %v, AMI.State = %v, want Failed and Failed", web.InstancesState, web.AMI.State)
+	}
+	if diff := cmp.Diff([]string{"Nodegroup web AccessDenied ec2:DescribeInstances"}, failureKeys(snap.Failures)); diff != "" {
+		t.Errorf("Failures (-want +got):\n%s", diff)
 	}
 }

@@ -52,7 +52,7 @@ func namespaces(c *fleettest.Cluster) []item {
 	out := make([]item, 0, len(names))
 	for _, name := range names {
 		out = append(out, item{
-			name: name, fields: map[string]string{"metadata.name": name}, summary: name,
+			name: name, fields: map[string]string{"metadata.name": name}, state: Item{Name: name},
 			object: corev1.Namespace{
 				TypeMeta: metav1.TypeMeta{Kind: "Namespace", APIVersion: "v1"}, ObjectMeta: meta("", name, nil, c.CreatedAt),
 				Status: corev1.NamespaceStatus{Phase: corev1.NamespaceActive},
@@ -73,9 +73,9 @@ func nodes(c *fleettest.Cluster) []item {
 		if n.ImageID != "" {
 			labels[labelImage] = n.ImageID
 		}
-		ready, reason, summary := corev1.ConditionTrue, "KubeletReady", n.Name+"=Ready"
+		ready, reason, state := corev1.ConditionTrue, "KubeletReady", "Ready"
 		if n.NotReady {
-			ready, reason, summary = corev1.ConditionFalse, "KubeletNotReady", n.Name+"=NotReady"
+			ready, reason, state = corev1.ConditionFalse, "KubeletNotReady", "NotReady"
 		}
 		if n.ReadyReason != "" {
 			reason = n.ReadyReason
@@ -90,11 +90,11 @@ func nodes(c *fleettest.Cluster) []item {
 		}
 		if n.Unschedulable {
 			node.Spec.Taints = []corev1.Taint{{Key: corev1.TaintNodeUnschedulable, Effect: corev1.TaintEffectNoSchedule}}
-			summary += ",cordoned"
+			state += ",cordoned"
 		}
 		out = append(out, item{
 			name: n.Name, labels: labels, fields: map[string]string{"metadata.name": n.Name, "spec.unschedulable": fmt.Sprint(n.Unschedulable)},
-			object: node, summary: summary,
+			object: node, state: Item{Name: n.Name, State: state},
 		})
 	}
 	return out
@@ -126,6 +126,10 @@ func pods(c *fleettest.Cluster) []item {
 				ContainerStatuses: []corev1.ContainerStatus{{Name: "main", Ready: ready, Started: &running}},
 			},
 		}
+		if p.Node == "" {
+			// A pod with no node is one the scheduler could not place.
+			pod.Status.Conditions[0].Reason = corev1.PodReasonUnschedulable
+		}
 		if p.DisruptionTarget {
 			pod.Status.Conditions = append(pod.Status.Conditions, corev1.PodCondition{
 				Type: corev1.DisruptionTarget, Status: corev1.ConditionTrue, Reason: corev1.PodReasonTerminationByKubelet,
@@ -135,17 +139,14 @@ func pods(c *fleettest.Cluster) []item {
 			now := metav1.NewTime(p.CreatedAt.UTC())
 			pod.DeletionTimestamp = &now
 		}
-		summary := p.Namespace + "/" + p.Name + "=" + p.Phase
+		state := p.Phase
 		if running && p.NotReady {
-			summary += ",notReady"
-		}
-		if p.Node != "" {
-			summary += "@" + p.Node
+			state += ",notReady"
 		}
 		out = append(out, item{
 			namespace: p.Namespace, name: p.Name, labels: p.Labels,
 			fields: map[string]string{"metadata.name": p.Name, "metadata.namespace": p.Namespace, "spec.nodeName": p.Node, "status.phase": p.Phase},
-			object: pod, summary: summary,
+			object: pod, state: Item{Namespace: p.Namespace, Name: p.Name, State: state, Node: p.Node},
 		})
 	}
 	return out
@@ -186,13 +187,19 @@ func pdbs(c *fleettest.Cluster) []item {
 		if p.Unsynced {
 			budget.Status.ObservedGeneration = 0
 		}
+		if p.DisruptedPods > 0 {
+			budget.Status.DisruptedPods = make(map[string]metav1.Time, p.DisruptedPods)
+			for i := range p.DisruptedPods {
+				budget.Status.DisruptedPods[fmt.Sprintf("gone-%d", i)] = metav1.NewTime(c.CreatedAt)
+			}
+		}
 		if p.SyncFailed {
 			budget.Status.Conditions[0] = metav1.Condition{Type: policyv1.DisruptionAllowedCondition, Status: metav1.ConditionFalse, Reason: policyv1.SyncFailedReason}
 		}
 		out = append(out, item{
 			namespace: p.Namespace, name: p.Name, fields: map[string]string{"metadata.name": p.Name, "metadata.namespace": p.Namespace},
-			summary: fmt.Sprintf("%s/%s=allows%d", p.Namespace, p.Name, p.DisruptionsAllowed),
-			object:  budget,
+			state:  Item{Namespace: p.Namespace, Name: p.Name, State: fmt.Sprint(p.DisruptionsAllowed)},
+			object: budget,
 		})
 	}
 	return out
@@ -209,8 +216,8 @@ func deployments(c *fleettest.Cluster) []item {
 		replicas := d.Replicas
 		out = append(out, item{
 			namespace: d.Namespace, name: d.Name, labels: d.Selector,
-			fields:  map[string]string{"metadata.name": d.Name, "metadata.namespace": d.Namespace},
-			summary: fmt.Sprintf("%s/%s=%d", d.Namespace, d.Name, d.Replicas),
+			fields: map[string]string{"metadata.name": d.Name, "metadata.namespace": d.Namespace},
+			state:  Item{Namespace: d.Namespace, Name: d.Name, State: fmt.Sprint(d.Replicas)},
 			object: appsv1.Deployment{
 				TypeMeta: metav1.TypeMeta{Kind: "Deployment", APIVersion: "apps/v1"}, ObjectMeta: meta(d.Namespace, d.Name, d.Selector, c.CreatedAt),
 				Spec: appsv1.DeploymentSpec{
@@ -234,7 +241,7 @@ func events(c *fleettest.Cluster) []item {
 				"metadata.name": e.Name, "metadata.namespace": e.Namespace, "type": e.Type, "reason": e.Reason,
 				"involvedObject.kind": e.Kind, "involvedObject.name": e.Object,
 			},
-			summary: fmt.Sprintf("%s/%s=%s:%s", e.Kind, e.Object, e.Type, e.Reason),
+			state: Item{Name: e.Kind + "/" + e.Object, State: e.Type + ":" + e.Reason},
 			object: corev1.Event{
 				TypeMeta: metav1.TypeMeta{Kind: "Event", APIVersion: "v1"}, ObjectMeta: meta(e.Namespace, e.Name, nil, e.At),
 				InvolvedObject: corev1.ObjectReference{Kind: e.Kind, Name: e.Object, Namespace: e.Namespace},
@@ -250,7 +257,7 @@ func nodeMetrics(c *fleettest.Cluster) []item {
 	for _, n := range c.Nodes {
 		out = append(out, item{
 			name: n.Name, labels: nodegroupLabel(n), fields: map[string]string{"metadata.name": n.Name},
-			summary: fmt.Sprintf("%s=%dm", n.Name, n.UsedMilliCPU),
+			state: Item{Name: n.Name, State: fmt.Sprintf("%dm", n.UsedMilliCPU)},
 			object: metricsv1beta1.NodeMetrics{
 				TypeMeta: metav1.TypeMeta{Kind: "NodeMetrics", APIVersion: "metrics.k8s.io/v1beta1"}, ObjectMeta: meta("", n.Name, nil, n.CreatedAt),
 				Window: metav1.Duration{Duration: 30 * time.Second},

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
@@ -13,6 +12,7 @@ import (
 
 	"github.com/dantech2000/refresh/internal/apidoc"
 	"github.com/dantech2000/refresh/internal/awsx"
+	"github.com/dantech2000/refresh/internal/fanout"
 	"github.com/dantech2000/refresh/internal/fleet"
 	"github.com/dantech2000/refresh/internal/health"
 )
@@ -22,58 +22,71 @@ import (
 const categoryRollbackReadiness = string(ekstypes.CategoryRollbackReadiness)
 
 // engineNeed is what the plan and each phase of an upgrade or a rollback
-// read of the cluster: the nodegroups with their instances, for the
-// health gate, and the add-ons. A rollback plan also reads the update
-// history.
-func engineNeed(history bool) fleet.Need {
-	return fleet.Need{Nodegroups: true, Addons: true, InstanceIDs: true, Updates: history}
+// read of the cluster: the nodegroups and the add-ons. A rollback also
+// reads the update history. instances reads the instance IDs of the
+// nodegroups too, for a read whose snapshot goes to the health checks of
+// a nodegroup: the Capacity and Quotas checks count the instances.
+func engineNeed(history, instances bool) fleet.Need {
+	return fleet.Need{Nodegroups: true, Addons: true, InstanceIDs: instances, Updates: history}
 }
 
-// planUpgrade builds the plan of a cluster upgrade. It reads the cluster
-// once, hands the snapshot to PlanUpgrade with the reads that the planner
-// asks for one by one, and then applies the busy rule and the health gate
-// to the steps.
+// planUpgrade builds the plan of a cluster upgrade. It reads the cluster,
+// hands the snapshot to PlanUpgrade with the reads that the planner asks
+// for one by one, and then applies the busy rule and the health gate to
+// the steps.
 //
 // The reads of the planner stay lazy. An add-on that the request skips is
-// not looked up. The insights are read only for the hop after the live
-// version, and only when the kubelet skew lets that hop through, so a hop
-// that the skew blocks sends no insights refresh.
+// not looked up. The insights are read only for the hop that the planner
+// names (readsInsights): the hop after the live version, when the kubelet
+// skew lets it through, so a hop that the skew blocks sends no insights
+// refresh.
 //
 // With refresh, a real run, the insights are refreshed before they are
 // read: the block decision needs fresh ones. It is the one request of the
-// plan that is not a read. Without it, a dry run, the insights are read
-// as they are.
+// plan that is not a read, and it is sent after the refusals of the
+// planner and before the hops are planned. A refresh can take minutes,
+// so the plan that is shown, gated, and confirmed comes from a read after
+// it. A refresh that failed is not tried again: the plan blocks on it.
+// Without refresh, a dry run, the insights are read as they are.
 func planUpgrade(ctx context.Context, d Deps, req UpgradeRequest, refresh *insightsRefresher) (*Plan, error) {
 	if req.Cluster == "" {
 		return nil, errors.New("no cluster to upgrade")
 	}
 	clients := d.AWS.Clients(req.Region)
-	var p *Plan
-	for again := false; ; again = true {
-		snap, err := d.Fetch.Fetch(ctx, clients, req.Cluster, engineNeed(false))
+	// The reads before and after a refresh share the catalogue reads: the
+	// catalogue is a fact about EKS, and the refresh does not change it.
+	cat := newCatalogue(d.Fetch, clients)
+	start := func() (*upgradePlanner, error) {
+		snap, err := d.Fetch.Fetch(ctx, clients, req.Cluster, engineNeed(false, true))
 		if err != nil {
 			return nil, &ClusterReadError{Target: Target{Region: clients.Region, Cluster: req.Cluster}, Err: err}
 		}
-		ran := 0
-		if refresh != nil {
-			ran = refresh.ran
-		}
-		p, err = PlanUpgrade(snap, req, upgradeInputs(ctx, d, clients, snap, refresh))
-		if err := planEnded(ctx, err); err != nil {
-			return nil, err
-		}
-		// A refresh can take minutes, and the read of the cluster is from
-		// before it. The plan that is shown, gated, and confirmed comes
-		// from a read after the refresh: the cluster is read once more,
-		// and the second plan reuses the refresh. A refresh that failed
-		// is not tried a second time: the plan blocks on it.
-		if refresh == nil || refresh.ran == ran || refresh.failed || again {
-			break
-		}
-		d.Fetch = d.Fetch.Fresh()
+		p, err := newUpgradePlanner(snap, req, upgradeInputs(ctx, d, clients, snap, req, refresh, cat))
+		return p, planEnded(ctx, err)
 	}
-	p.Clusters[0].gateEngine(ctx, d, ClusterUpgrade, req.Policy)
-	return p, planEnded(ctx, nil)
+	p, err := start()
+	if err != nil {
+		return nil, err
+	}
+	if refresh != nil && p.readsInsights() {
+		t, live := p.cp.Target, p.live.String()
+		if !refresh.current(t, live) {
+			if err := refresh.refresh(ctx, t, live); err != nil {
+				p.in.Insights = func(fleet.Version) InsightsRead { return InsightsRead{Refreshed: true, RefreshErr: err} }
+			} else {
+				d.Fetch = d.Fetch.Fresh()
+				if p, err = start(); err != nil {
+					return nil, err
+				}
+			}
+		}
+	}
+	plan := p.finish()
+	if err := planEnded(ctx, nil); err != nil {
+		return nil, err
+	}
+	plan.Clusters[0].gateEngine(ctx, d, ClusterUpgrade, req.Policy)
+	return plan, planEnded(ctx, nil)
 }
 
 // planEnded returns the error of a plan whose context ended while the
@@ -88,23 +101,133 @@ func planEnded(ctx context.Context, err error) error {
 }
 
 // upgradeInputs returns the reads of PlanUpgrade and of HopReadiness
-// against live AWS.
-func upgradeInputs(ctx context.Context, d Deps, clients *awsx.Clients, snap *fleet.Snapshot, refresh *insightsRefresher) UpgradeInputs {
+// against live AWS. The add-on catalogue is read through cat.
+func upgradeInputs(ctx context.Context, d Deps, clients *awsx.Clients, snap *fleet.Snapshot, req UpgradeRequest, refresh *insightsRefresher, cat *catalogue) UpgradeInputs {
 	t := Target{Region: snap.Cluster.Region, Cluster: snap.Cluster.Name}
 	return UpgradeInputs{
-		Now:     d.now(),
-		Version: versionOffer(ctx, clients),
-		AddonVersions: func(addon string, kubernetes fleet.Version) ([]string, error) {
-			return d.Fetch.AddonVersions(ctx, clients, addon, kubernetes)
-		},
-		Insights: upgradeInsights(ctx, clients, t, snap.Cluster.Version.String(), refresh),
-		Command:  d.FollowUp,
+		Now:           d.now(),
+		Version:       versionOffer(ctx, clients),
+		AddonVersions: cat.lookup(ctx, upgradeCatalogueKeys(snap, req)),
+		Insights:      upgradeInsights(ctx, clients, t, snap.Cluster.Version.String(), refresh),
+		Command:       d.FollowUp,
+	}
+}
+
+// catalogueKey is one read of the add-on catalogue: an add-on at a
+// Kubernetes version.
+type catalogueKey struct {
+	addon   string
+	version fleet.Version
+}
+
+// catalogue holds the add-on catalogue reads of a plan. A planner asks
+// for them one at a time, so its first ask reads every pair that the plan
+// will ask for in one bounded fan-out, and the asks after it are answered
+// from those reads. A pair that was not foreseen, and a pair whose read
+// failed, is read when the planner asks for it: a failure is not kept.
+type catalogue struct {
+	fetch   *fleet.Fetcher
+	clients *awsx.Clients
+	reads   map[catalogueKey][]string
+}
+
+func newCatalogue(fetch *fleet.Fetcher, clients *awsx.Clients) *catalogue {
+	return &catalogue{fetch: fetch, clients: clients, reads: map[catalogueKey][]string{}}
+}
+
+// lookup returns the AddonVersions read of one plan. keys returns the
+// pairs that the plan will ask for, given the version of its first ask.
+// The planner asks from one goroutine.
+func (c *catalogue) lookup(ctx context.Context, keys func(first fleet.Version) []catalogueKey) func(string, fleet.Version) ([]string, error) {
+	first := true
+	return func(addon string, kubernetes fleet.Version) ([]string, error) {
+		if first {
+			first = false
+			c.read(ctx, keys(kubernetes))
+		}
+		key := catalogueKey{addon: addon, version: kubernetes}
+		if versions, ok := c.reads[key]; ok {
+			return versions, nil
+		}
+		versions, err := c.fetch.AddonVersions(ctx, c.clients, addon, kubernetes)
+		if err == nil {
+			c.reads[key] = versions
+		}
+		return versions, err
+	}
+}
+
+// read reads the pairs that c does not have yet, side by side, and keeps
+// the ones that succeeded.
+func (c *catalogue) read(ctx context.Context, keys []catalogueKey) {
+	var missing []catalogueKey
+	for _, k := range keys {
+		if _, ok := c.reads[k]; !ok && !slices.Contains(missing, k) {
+			missing = append(missing, k)
+		}
+	}
+	type result struct {
+		versions []string
+		ok       bool
+	}
+	got := fanout.ForEach(ctx, missing, 0, func(ctx context.Context, k catalogueKey) result {
+		versions, err := c.fetch.AddonVersions(ctx, c.clients, k.addon, k.version)
+		return result{versions: versions, ok: err == nil}
+	})
+	for i, r := range got {
+		if r.ok {
+			c.reads[missing[i]] = r.versions
+		}
+	}
+}
+
+// upgradeCatalogueKeys returns the catalogue reads that PlanUpgrade asks
+// for: each installed add-on that was read and that the request does not
+// skip, at the live version when the plan has a catch-up hop, and at each
+// hop.
+func upgradeCatalogueKeys(snap *fleet.Snapshot, req UpgradeRequest) func(fleet.Version) []catalogueKey {
+	return func(fleet.Version) []catalogueKey {
+		live := snap.Cluster.Version
+		hops, _ := Hops(live, req.To)
+		if len(hops) == 0 {
+			hops = []fleet.Version{req.To}
+		}
+		if hops[0] != live {
+			hops = append([]fleet.Version{live}, hops...)
+		}
+		var keys []catalogueKey
+		for _, a := range snap.Addons {
+			if a.State != fleet.Collected || slices.Contains(req.SkipAddons, a.Name) {
+				continue
+			}
+			for _, v := range hops {
+				keys = append(keys, catalogueKey{addon: a.Name, version: v})
+			}
+		}
+		return keys
+	}
+}
+
+// rollbackCatalogueKeys returns the catalogue reads that PlanRollback
+// asks for: each installed add-on that was read, at the target of the
+// rollback, which is the version of the first ask.
+func rollbackCatalogueKeys(addons []fleet.Addon) func(fleet.Version) []catalogueKey {
+	return func(target fleet.Version) []catalogueKey {
+		var keys []catalogueKey
+		for _, a := range addons {
+			if a.State == fleet.Collected {
+				keys = append(keys, catalogueKey{addon: a.Name, version: target})
+			}
+		}
+		return keys
 	}
 }
 
 // upgradeInsights returns the read of the UPGRADE_READINESS insights for
-// a planner. With refresh it first asks EKS to evaluate them anew and
-// waits for that. live is the version that the control plane runs.
+// a planner. With refresh it refreshes them first. The caller has
+// refreshed them already, so refresh sends nothing and does not wait,
+// unless the control plane moved since that refresh. live is the version
+// that the control plane runs.
 func upgradeInsights(ctx context.Context, clients *awsx.Clients, t Target, live string, refresh *insightsRefresher) func(fleet.Version) InsightsRead {
 	return func(fleet.Version) InsightsRead {
 		read := InsightsRead{Refreshed: refresh != nil}
@@ -157,11 +280,11 @@ func planRollback(ctx context.Context, d Deps, req RollbackRequest) (*Plan, erro
 		return nil, err
 	}
 	clients := d.AWS.Clients(req.Region)
-	snap, err := d.Fetch.Fetch(ctx, clients, req.Cluster, engineNeed(true))
+	snap, err := d.Fetch.Fetch(ctx, clients, req.Cluster, engineNeed(true, true))
 	if err != nil {
 		return nil, &ClusterReadError{Target: Target{Region: clients.Region, Cluster: req.Cluster}, Err: err}
 	}
-	p, err := PlanRollback(snap, req, rollbackInputs(ctx, d, clients, snap.Cluster.Name))
+	p, err := PlanRollback(snap, req, rollbackInputs(ctx, d, clients, snap.Cluster.Name, snap.Addons))
 	if err := planEnded(ctx, err); err != nil {
 		return nil, err
 	}
@@ -176,15 +299,13 @@ func planRollback(ctx context.Context, d Deps, req RollbackRequest) (*Plan, erro
 }
 
 // rollbackInputs returns the reads of PlanRollback and of
-// RollbackStillEligible against live AWS.
-func rollbackInputs(ctx context.Context, d Deps, clients *awsx.Clients, cluster string) RollbackInputs {
-	fetch := d.fetcher()
+// RollbackStillEligible against live AWS. The first catalogue read reads
+// the catalogue of each of addons with it.
+func rollbackInputs(ctx context.Context, d Deps, clients *awsx.Clients, cluster string, addons []fleet.Addon) RollbackInputs {
 	return RollbackInputs{
-		Now:     d.now(),
-		Version: versionOffer(ctx, clients),
-		AddonVersions: func(addon string, kubernetes fleet.Version) ([]string, error) {
-			return fetch.AddonVersions(ctx, clients, addon, kubernetes)
-		},
+		Now:           d.now(),
+		Version:       versionOffer(ctx, clients),
+		AddonVersions: newCatalogue(d.fetcher(), clients).lookup(ctx, rollbackCatalogueKeys(addons)),
 		Insights: func() InsightsRead {
 			insights, err := health.ListInsights(ctx, clients, cluster, categoryRollbackReadiness)
 			return InsightsRead{Insights: insights, Err: err}
@@ -278,90 +399,9 @@ func (cp *ClusterPlan) foreignRolls(ctx context.Context, c *awsx.Clients, kind K
 			}
 			if msg := foreignRoll(kind, s.Ref.Name, s.To, l.u, l.err); msg != "" {
 				ref := s.Ref
-				out = append(out, Blocker{Kind: BlockerBusy, Step: &ref, Message: cp.Cluster + " is busy: " + msg + "; nothing was started. Run it again once that finishes"})
+				out = append(out, busyBlocker(cp.Cluster+" is busy: "+msg, &ref))
 			}
 		}
 	}
 	return out
-}
-
-// engineCommand returns the command line that runs the request again, for
-// the message of a run that stopped: planning again from live state is
-// how a run resumes.
-//
-// The command repeats every flag that decides what the run changes and
-// what stops it, so a resume never widens the run and never meets a gate
-// that the first run was told to pass: the parts, the exclusions, and
-// --force, --skip-health-check, --require-healthy, --skip-verify, and
-// --wait-timeout. It keeps --yes, so the resume of an unattended run is
-// unattended too.
-func engineCommand(f FollowUp, req Request) string {
-	prefix := f.Prefix
-	if prefix == "" {
-		prefix = "refresh"
-	}
-	words := []string{prefix, "cluster"}
-	switch r := req.(type) {
-	case UpgradeRequest:
-		words = append(words, "upgrade", shellQuote(r.Cluster), "--to", r.To.String())
-		if len(r.Only) > 0 {
-			words = append(words, "--only", joinPartsFlag(r.Only))
-		}
-		for _, n := range r.Nodegroups {
-			words = append(words, "-n", shellQuote(n))
-		}
-		for _, a := range r.SkipAddons {
-			words = append(words, "--skip-addon", shellQuote(a))
-		}
-		for _, n := range r.SkipNodegroups {
-			words = append(words, "--skip-nodegroup", shellQuote(n))
-		}
-		if r.SkipInsights {
-			words = append(words, "--skip-insights-check")
-		}
-	case RollbackRequest:
-		words = append(words, "rollback", shellQuote(r.Cluster))
-		for _, n := range r.SkipNodegroups {
-			words = append(words, "--skip-nodegroup", shellQuote(n))
-		}
-		if r.SkipInsights {
-			words = append(words, "--skip-insights-check")
-		}
-		if r.RollbackTimeout > 0 {
-			words = append(words, "--rollback-timeout", r.RollbackTimeout.String())
-		}
-	}
-	c := req.base()
-	for _, fl := range []struct {
-		set  bool
-		name string
-	}{
-		{c.Policy.Force, "--force"},
-		{c.Policy.Skip, "--skip-health-check"},
-		{c.Policy.RequireHealthy, "--require-healthy"},
-		{c.SkipVerify, "--skip-verify"},
-	} {
-		if fl.set {
-			words = append(words, fl.name)
-		}
-	}
-	if s := strings.TrimSpace(f.Resume); s != "" {
-		words = append(words, s)
-	}
-	if c.Policy.Yes {
-		words = append(words, "--yes")
-	}
-	if s := strings.TrimSpace(f.Suffix); s != "" {
-		words = append(words, s)
-	}
-	return strings.Join(words, " ")
-}
-
-// joinPartsFlag returns the parts as one value of --only.
-func joinPartsFlag(parts []Part) string {
-	words := make([]string, len(parts))
-	for i, p := range parts {
-		words[i] = string(p)
-	}
-	return strings.Join(words, ",")
 }

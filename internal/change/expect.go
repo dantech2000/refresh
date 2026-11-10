@@ -4,8 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-
-	"github.com/dantech2000/refresh/internal/health"
 )
 
 // ErrOtherRequest is the error of a run whose Common.Expect is not a plan
@@ -42,6 +40,20 @@ func sameRequest(reviewed *Plan, req Request) error {
 	return fmt.Errorf("%w (%s); nothing was changed", ErrOtherRequest, differs)
 }
 
+// WithExpect returns req with reviewed as its consent: the plan that a
+// person reviewed, in Common.Expect. A front end that shows a dry run and
+// then starts it gives the run its consent here. Every request type sets
+// the field itself, so a new type cannot drop the consent in silence.
+func WithExpect(req Request, reviewed *Plan) Request {
+	return req.withExpect(reviewed)
+}
+
+func (r AddonUpdateRequest) withExpect(p *Plan) Request { r.Expect = p; return r }
+func (r ScaleRequest) withExpect(p *Plan) Request       { r.Expect = p; return r }
+func (r RollRequest) withExpect(p *Plan) Request        { r.Expect = p; return r }
+func (r UpgradeRequest) withExpect(p *Plan) Request     { r.Expect = p; return r }
+func (r RollbackRequest) withExpect(p *Plan) Request    { r.Expect = p; return r }
+
 // differs names the first field of the target in which t differs from o.
 func (t Target) differs(o Target) string {
 	switch {
@@ -54,15 +66,10 @@ func (t Target) differs(o Target) string {
 }
 
 // differs names the first field of the policy in which c differs from o.
-// Limits, NoWait, Expect, and Policy.Yes are not compared: see
-// sameRequest.
+// Every field of the policy but Yes is compared. Limits, NoWait, Expect,
+// and Policy.Yes are not: see sameRequest.
 func (c Common) differs(o Common) string {
-	return policyDiffers(c.Policy, o.Policy)
-}
-
-// policyDiffers compares every field of the policy but Yes.
-func policyDiffers(p, o health.Policy) string {
-	switch {
+	switch p, o := c.Policy, o.Policy; {
 	case p.RequireHealthy != o.RequireHealthy:
 		return "--require-healthy"
 	case p.Force != o.Force:

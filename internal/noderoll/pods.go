@@ -3,6 +3,7 @@ package noderoll
 import (
 	"context"
 	"slices"
+	"sync"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -51,23 +52,43 @@ func (o *Observer) fillPodEviction(ctx context.Context, snap *Snapshot) {
 	}
 }
 
+// podListsAtOnce bounds the pod lists of one read that run at once.
+const podListsAtOnce = 8
+
 // drainingPods returns the pods that each of the draining nodes still
 // has, for the nodes whose pods could be read. It makes one list per node,
 // with a field selector on the node name, so the cost follows the number
 // of draining nodes and not the number of pods of the cluster. It never
-// lists the pods of the whole cluster. With a refresh time, a read for
-// the same nodes that is younger than it is used again. A read that
-// missed a node is not: the next snapshot tries again.
+// lists the pods of the whole cluster. The lists run side by side, at
+// most podListsAtOnce at a time, and ask for resource version "0": the API
+// server answers them from its watch cache, as it answers the kubelet,
+// and a view of the drain needs no read from etcd. With a refresh time, a
+// read for the same nodes that is younger than it is used again. A read
+// that missed a node is not: the next snapshot tries again.
 func (o *Observer) drainingPods(ctx context.Context, nodes []string) (map[string]int, map[string][]PodView) {
 	d := &o.drains
 	if d.refresh > 0 && d.counts != nil && o.now().Sub(d.at) < d.refresh && sameKeys(d.counts, nodes) {
 		return d.counts, d.lists
 	}
+	read := make([]*corev1.PodList, len(nodes))
+	slots := make(chan struct{}, podListsAtOnce)
+	var wg sync.WaitGroup
+	for i, name := range nodes {
+		slots <- struct{}{}
+		wg.Go(func() {
+			defer func() { <-slots }()
+			pods, err := o.client.CoreV1().Pods(metav1.NamespaceAll).List(ctx, metav1.ListOptions{FieldSelector: podsOnNodeSelector(name), ResourceVersion: "0"})
+			if err == nil {
+				read[i] = pods
+			}
+		})
+	}
+	wg.Wait()
 	counts := make(map[string]int, len(nodes))
 	lists := make(map[string][]PodView, len(nodes))
-	for _, name := range nodes {
-		pods, err := o.client.CoreV1().Pods(metav1.NamespaceAll).List(ctx, metav1.ListOptions{FieldSelector: podsOnNodeSelector(name)})
-		if err != nil {
+	for i, name := range nodes {
+		pods := read[i]
+		if pods == nil {
 			continue
 		}
 		counts[name] = 0

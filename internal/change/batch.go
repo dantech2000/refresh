@@ -200,15 +200,7 @@ func (r *runner) submitRoll(cp *ClusterPlan, s Step) StepResult {
 func (r *runner) sendRoll(cp *ClusterPlan, res StepResult, s Step, version string) StepResult {
 	res.StartedAt = r.d.now()
 	id, err := StartNodegroupRoll(r.readCtx, r.d.AWS.Clients(cp.Region), cp.Target, s.Ref.Name, version, s.Force)
-	switch {
-	case err != nil:
-		return r.unanswered(cp, res, err)
-	case id == "":
-		res.Status = StepInProgress
-		res.Failure = r.stepFailure(cp, res, apidoc.ReasonNotMonitored, "EKS accepted the roll of nodegroup "+s.Ref.Name+" and returned no update ID; it cannot be followed, and it may still be running")
-		return res
-	}
-	res.Status, res.UpdateID = StepStarted, id
+	res, _ = r.submitted(cp, res, id, err)
 	return res
 }
 

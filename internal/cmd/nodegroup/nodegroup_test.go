@@ -2,6 +2,7 @@ package nodegroup_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"path/filepath"
@@ -494,5 +495,101 @@ func TestDescribe_ShowWorkloads(t *testing.T) {
 	validate(t, apidoc.KindNodegroupDescription, "json", e)
 	if !strings.Contains(e.Out.String(), `"workloads": {`) {
 		t.Errorf("stdout:\n%s", e.Out.String())
+	}
+}
+
+// A Kubernetes read that fails marks the rows that it covers incomplete,
+// next to its failure and exit 4. The failure is kept next to a failure of
+// another read of the same nodegroup.
+func TestKubeReadFails(t *testing.T) {
+	all := []string{"api", "batch", "empty", "gpu", "old", "web"}
+	tests := []struct {
+		name     string
+		ops      []fleettest.Operation
+		kind     apidoc.Kind
+		args     []string
+		want     []string // the incomplete rows
+		failures []string // the name and the read of each failure
+	}{
+		{
+			name:     "readiness",
+			ops:      []fleettest.Operation{fleettest.KubeListNodes},
+			kind:     apidoc.KindNodegroupList,
+			args:     []string{"nodegroup", "list", "-c", "prod", "--check-readiness", "-o", "json"},
+			want:     all,
+			failures: []string{"api listing nodes", "batch listing nodes", "empty listing nodes", "gpu listing nodes", "old listing nodes", "web listing nodes"},
+		},
+		{
+			name:     "workloads, the node list",
+			ops:      []fleettest.Operation{fleettest.KubeListNodes},
+			kind:     apidoc.KindNodegroupDescription,
+			args:     []string{"nodegroup", "describe", "web", "-c", "prod", "--show-workloads", "-o", "json"},
+			want:     []string{"web"},
+			failures: []string{"web listing nodes"},
+		},
+		{
+			name:     "workloads, the pod list",
+			ops:      []fleettest.Operation{fleettest.KubeListPods},
+			kind:     apidoc.KindNodegroupDescription,
+			args:     []string{"nodegroup", "describe", "web", "-c", "prod", "--show-workloads", "-o", "json"},
+			want:     []string{"web"},
+			failures: []string{"web listing pods"},
+		},
+		{
+			name:     "workloads and the AMI",
+			ops:      []fleettest.Operation{fleettest.KubeListNodes, fleettest.SSMGetParameter},
+			kind:     apidoc.KindNodegroupDescription,
+			args:     []string{"nodegroup", "describe", "web", "-c", "prod", "--show-workloads", "-o", "json"},
+			want:     []string{"web"},
+			failures: []string{"web listing nodes", "web ssm:GetParameter"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newFake(t)
+			withKube(t, e)
+			for _, op := range tt.ops {
+				e.World.SetFault(op, fleettest.Fault{Deny: true})
+			}
+			err := e.Run(cmdutiltest.Context(t), tt.args...)
+			if got := cmdutil.ExitCode(err); got != cmdutil.ExitIncomplete {
+				t.Errorf("exit code = %d (%v), want %d", got, err, cmdutil.ExitIncomplete)
+			}
+			validate(t, tt.kind, "json", e)
+			var doc struct {
+				Nodegroups []apidoc.Nodegroup `json:"nodegroups"`
+				Nodegroup  *apidoc.Nodegroup  `json:"nodegroup"`
+				Failures   []apidoc.Failure   `json:"failures"`
+			}
+			if err := json.Unmarshal(e.Out.Bytes(), &doc); err != nil {
+				t.Fatal(err)
+			}
+			rows := doc.Nodegroups
+			if doc.Nodegroup != nil {
+				rows = append(rows, *doc.Nodegroup)
+			}
+			var incomplete []string
+			for _, n := range rows {
+				if n.Incomplete {
+					incomplete = append(incomplete, n.Name)
+				}
+			}
+			if diff := cmp.Diff(tt.want, incomplete); diff != "" {
+				t.Errorf("incomplete rows (-want +got):\n%s", diff)
+			}
+			// A Kubernetes failure has no IAM action: its read is the start
+			// of its error.
+			var failures []string
+			for _, f := range doc.Failures {
+				read, _, _ := strings.Cut(f.Error, ":")
+				if f.Operation != "" {
+					read = f.Operation
+				}
+				failures = append(failures, f.Name+" "+read)
+			}
+			if diff := cmp.Diff(tt.failures, failures); diff != "" {
+				t.Errorf("failures (-want +got):\n%s", diff)
+			}
+		})
 	}
 }

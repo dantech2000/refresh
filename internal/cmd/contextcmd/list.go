@@ -2,6 +2,7 @@ package contextcmd
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/spf13/cobra"
 
@@ -12,8 +13,6 @@ import (
 type listOptions struct {
 	ios   *cmdutil.IOStreams
 	store func() (*contexts.Store, error)
-
-	envContext string
 }
 
 func newCmdList(f *cmdutil.Factory) *cobra.Command {
@@ -30,23 +29,9 @@ Exit codes:
   1  An error.`,
 		Example: `  refresh context list`,
 		Args:    cobra.NoArgs,
-		RunE: func(*cobra.Command, []string) error {
-			o.complete()
-			if err := o.validate(); err != nil {
-				return err
-			}
-			return o.run()
-		},
+		RunE:    func(*cobra.Command, []string) error { return o.run() },
 	}
 }
-
-func (o *listOptions) complete() {
-	o.envContext = envContext()
-}
-
-// validate has nothing to reject: the command takes no argument and no flag
-// of its own.
-func (o *listOptions) validate() error { return nil }
 
 func (o *listOptions) run() error {
 	_, file, err := loadFile(o.store)
@@ -60,7 +45,7 @@ func (o *listOptions) run() error {
 	}
 	// The list is how a user finds the right name, so an unknown
 	// REFRESH_CONTEXT is a warning here and not an error.
-	active, _, _, err := file.Active(o.envContext)
+	active, _, _, err := file.Active(os.Getenv(contexts.EnvContext))
 	if err != nil {
 		if _, err := fmt.Fprintf(o.ios.ErrOut, "warning: %v\n", err); err != nil {
 			return err

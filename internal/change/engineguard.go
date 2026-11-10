@@ -28,16 +28,17 @@ import (
 //     control plane that someone else started refuses the request.
 //  4. What the step itself needs, on that read: see guardControlPlane,
 //     guardAddon, and guardNodegroup.
-//  5. After a person answered a question of the gate, and after the gate
-//     waited for an insights refresh, everything runs once more: both
-//     took time. After the health checks of a nodegroup passed, the read
-//     and every rule but the checks run once more for the same reason.
+//  5. After a person answered a question of the gate, and after an
+//     insights refresh for the gate of the control plane waited (see
+//     gateInsights), everything runs once more: both took time. After the
+//     health checks of a nodegroup passed, the read and every rule but
+//     the checks run once more for the same reason.
 //
 // It returns false with the result of the step when nothing must be sent:
 // Blocked or Failed, Skipped when the target met its goal in the meantime,
 // and NotAttempted when the run ended.
 func (r *runner) guardSubmit(cp *ClusterPlan, s Step, res StepResult) (StepResult, bool) {
-	steps := slices.Clone(r.steps)
+	steps := slices.Clone(r.step.steps)
 	for i := range steps {
 		if steps[i].Ref == s.Ref {
 			steps[i].Action = Submit
@@ -48,7 +49,7 @@ func (r *runner) guardSubmit(cp *ClusterPlan, s Step, res StepResult) (StepResul
 		if err := r.readCtx.Err(); err != nil {
 			return r.unsent(cp, res, err), false
 		}
-		snap, err := r.guardRead(cp)
+		snap, err := r.guardRead(cp, s.Ref.Kind == StepNodegroup && !gated && !r.common.Policy.Skip)
 		if err != nil {
 			return r.unsent(cp, res, err), false
 		}
@@ -61,12 +62,13 @@ func (r *runner) guardSubmit(cp *ClusterPlan, s Step, res StepResult) (StepResul
 		out, ok, answered := res, true, false
 		switch s.Ref.Kind {
 		case StepControlPlane:
-			// The gate of an upgrade may start an insights refresh and
-			// wait for it, which takes minutes: everything is then read
-			// and judged once more, and the refresh is reused.
-			refreshes := r.refreshes()
-			out, ok = r.guardControlPlane(cp, res, s, snap)
-			answered = r.refreshes() != refreshes
+			// An insights refresh takes minutes: after one, everything is
+			// read and judged once more, and the gate reuses the refresh.
+			insights, waited := r.gateInsights(cp, s, snap)
+			if waited {
+				continue
+			}
+			out, ok = r.guardControlPlane(cp, res, s, snap, insights)
 		case StepAddon:
 			out, ok = r.guardAddon(cp, res, s, snap)
 		case StepNodegroup:
@@ -93,19 +95,32 @@ func (r *runner) guardSubmit(cp *ClusterPlan, s Step, res StepResult) (StepResul
 	}
 }
 
-// refreshes returns how many insights refreshes the run has started or
-// waited for.
-func (r *runner) refreshes() int {
-	if r.refresh == nil {
-		return 0
+// gateInsights returns the insights read of the gate of a control-plane
+// step on snap. It decides with hopReadsInsights whether the gate reads
+// the insights, and when it does and no refresh is current, it refreshes
+// them first and says that it waited: the caller reads the cluster again,
+// and the gate on that read reuses the refresh. A refresh that failed is
+// the read: the gate blocks on it, and nothing is tried again.
+func (r *runner) gateInsights(cp *ClusterPlan, s Step, snap *fleet.Snapshot) (insights func(fleet.Version) InsightsRead, waited bool) {
+	live := snap.Cluster.Version.String()
+	insights = upgradeInsights(r.readCtx, r.d.AWS.Clients(cp.Region), cp.Target, live, r.refresh)
+	req, ok := r.req.(UpgradeRequest)
+	hop, err := fleet.ParseVersion(s.To)
+	if !ok || r.refresh == nil || err != nil || !hopReadsInsights(snap, hop, req.SkipInsights) || r.refresh.current(cp.Target, live) {
+		return insights, false
 	}
-	return r.refresh.ran
+	if err := r.refresh.refresh(r.readCtx, cp.Target, live); err != nil {
+		return func(fleet.Version) InsightsRead { return InsightsRead{Refreshed: true, RefreshErr: err} }, false
+	}
+	return insights, true
 }
 
-// guardRead reads the whole cluster for guardSubmit.
-func (r *runner) guardRead(cp *ClusterPlan) (*fleet.Snapshot, error) {
+// guardRead reads the whole cluster for guardSubmit. checks says that the
+// health checks of a nodegroup run on the read: only then are the
+// instance IDs read.
+func (r *runner) guardRead(cp *ClusterPlan, checks bool) (*fleet.Snapshot, error) {
 	fetch := r.d.fetcher()
-	return fetch.Fresh().Fetch(r.readCtx, r.d.AWS.Clients(cp.Region), cp.Cluster, engineNeed(r.req.kind() == ClusterRollback))
+	return fetch.Fresh().Fetch(r.readCtx, r.d.AWS.Clients(cp.Region), cp.Cluster, engineNeed(r.req.kind() == ClusterRollback, checks))
 }
 
 // blockStep returns the result of a step that guardSubmit refuses.
@@ -125,7 +140,7 @@ func (r *runner) guardRollback(cp *ClusterPlan, res StepResult, snap *fleet.Snap
 	if !ok {
 		return res, true
 	}
-	blockers, failures, err := RollbackStillEligible(snap, req, rollbackInputs(r.readCtx, r.d, r.d.AWS.Clients(cp.Region), cp.Cluster), cp.To)
+	blockers, failures, err := RollbackStillEligible(snap, req, rollbackInputs(r.readCtx, r.d, r.d.AWS.Clients(cp.Region), cp.Cluster, nil), cp.To)
 	if ended := r.readCtx.Err(); ended != nil {
 		return r.unsent(cp, res, ended), false
 	}
@@ -164,7 +179,7 @@ func blockerMessages(blockers []Blocker) string {
 //     from the minor version before its goal, and a rollback only from
 //     the one after it.
 //  3. The gate of the phase refuses: Blocked. See controlPlaneGate.
-func (r *runner) guardControlPlane(cp *ClusterPlan, res StepResult, s Step, snap *fleet.Snapshot) (StepResult, bool) {
+func (r *runner) guardControlPlane(cp *ClusterPlan, res StepResult, s Step, snap *fleet.Snapshot, insights func(fleet.Version) InsightsRead) (StepResult, bool) {
 	kind, live := r.req.kind(), snap.Cluster.Version.String()
 	switch {
 	case versionDone(kind, live, s.To):
@@ -175,7 +190,7 @@ func (r *runner) guardControlPlane(cp *ClusterPlan, res StepResult, s Step, snap
 		return r.blockStep(cp, res, StepFailed, apidoc.ReasonUnknown,
 			fmt.Sprintf("the control plane of %s runs %s now, and the plan moves it from %s to %s; nothing was sent. Run the command again", cp.Cluster, orUnknown(live), s.From, s.To)), false
 	}
-	return r.controlPlaneGate(cp, res, s, snap)
+	return r.controlPlaneGate(cp, res, s, snap, insights)
 }
 
 // guardAddon is what the request of an add-on step needs, on the read of

@@ -159,6 +159,7 @@ func (r *runner) runEngineSteps(cp *ClusterPlan, ph Phase, results []StepResult)
 			return false
 		}
 		steps := rederive(r.req.kind(), ph, snap)
+		r.startStep(steps, i)
 		if first && !slices.ContainsFunc(steps, Step.work) {
 			// Everything of the phase was done since the plan.
 			r.notice(nothingLeft(ph))
@@ -179,13 +180,12 @@ func (r *runner) runEngineSteps(cp *ClusterPlan, ph Phase, results []StepResult)
 			r.reportStep(results[i])
 			continue
 		}
-		r.steps, r.remaining, r.unverified = steps, steps[i:], false
 		reported := false
 		results[i], reported = r.runEngineStep(cp, ph, s, snap)
 		if !reported {
 			r.reportStep(results[i])
 		}
-		if !cleanStep(results[i]) || r.unverified || r.stop != nil || r.interrupted {
+		if !cleanStep(results[i]) || r.step.unverified || r.stop != nil || r.interrupted {
 			return false
 		}
 	}
@@ -218,9 +218,12 @@ func cleanStep(res StepResult) bool {
 }
 
 // phaseRead reads the whole cluster for a phase or a step of an engine.
+// Its snapshot goes to rederive, the busy rule, and the gate of the
+// control plane, and none of them counts instances, so it reads no
+// instance IDs.
 func (r *runner) phaseRead(cp *ClusterPlan) (*fleet.Snapshot, error) {
 	fetch := r.d.fetcher()
-	return fetch.Fresh().Fetch(r.readCtx, r.d.AWS.Clients(cp.Region), cp.Cluster, engineNeed(false))
+	return fetch.Fresh().Fetch(r.readCtx, r.d.AWS.Clients(cp.Region), cp.Cluster, engineNeed(false, false))
 }
 
 // phaseBusy applies the busy rule to the read of a phase, with the steps
@@ -231,13 +234,9 @@ func (r *runner) phaseRead(cp *ClusterPlan) (*fleet.Snapshot, error) {
 func (r *runner) phaseBusy(cp *ClusterPlan, res StepResult, snap *fleet.Snapshot, steps []Step) (StepResult, bool) {
 	refuse, notices := Busy(snap, r.req.kind(), steps)
 	for _, n := range notices {
-		// The read of a step and the read before its request find the
-		// same thing: it is said once for the step.
-		if r.busySaid.step != res.Ref {
-			r.busySaid.step, r.busySaid.notices = res.Ref, nil
-		}
-		if !slices.Contains(r.busySaid.notices, n) {
-			r.busySaid.notices = append(r.busySaid.notices, n)
+		// It is said once for the step.
+		if !slices.Contains(r.step.busySaid, n) {
+			r.step.busySaid = append(r.step.busySaid, n)
 			r.notice(n)
 		}
 	}
@@ -259,10 +258,13 @@ func (r *runner) phaseBusy(cp *ClusterPlan, res StepResult, snap *fleet.Snapshot
 }
 
 // busyStepMessage is the message of a blocker of the busy rule for the
-// step that it stopped: the rule says that nothing was started, and the
-// step names itself.
+// step that it stopped: the step names itself where the plan says that
+// nothing was started.
 func busyStepMessage(b Blocker, ref StepRef) string {
-	return strings.Replace(b.Message, "nothing was started", stepName(ref)+" was not changed", 1)
+	if b.Cause == "" {
+		return b.Message
+	}
+	return b.Cause + "; " + stepName(ref) + " was not changed" + busyAgain
 }
 
 // rederive derives the steps of a phase again from a read of the cluster.
@@ -389,7 +391,7 @@ func (r *runner) confirmPhase(cp *ClusterPlan, ph Phase) bool {
 	if r.engineEnded(cp, phaseTitle(ph)) {
 		return false
 	}
-	q := Question{Kind: ConfirmPhase, Step: StepRef{Phase: ph.Ref}, Text: phaseQuestion(cp, ph)}
+	q := Question{Kind: ConfirmPhase, Step: StepRef{Phase: ph.Ref}, Text: phaseText(cp, ph) + "?"}
 	if r.hooks.Ask == nil {
 		r.stop = &stop{status: Failed, err: phaseUnanswered(ph)}
 		return false
@@ -458,23 +460,24 @@ func phaseTitle(ph Phase) string {
 	return "the add-on updates for " + ph.Ref.Hop.String()
 }
 
-// phaseQuestion is the question before one phase of an upgrade.
-func phaseQuestion(cp *ClusterPlan, ph Phase) string {
+// phaseText is the question before one phase of an upgrade, without its
+// question mark: the first question of a run adds the gate warnings.
+func phaseText(cp *ClusterPlan, ph Phase) string {
 	names := workNames(ph.Steps)
 	list := strings.Join(names, ", ")
 	switch ph.Ref.Kind {
 	case PhaseControlPlane:
 		// The phase has one step.
 		if s := ph.Steps[0]; s.Action == Attach {
-			return fmt.Sprintf("Wait for the control-plane update of %s to %s that is running?", cp.Cluster, s.To)
+			return fmt.Sprintf("Wait for the control-plane update of %s to %s that is running", cp.Cluster, s.To)
 		}
-		return fmt.Sprintf("Upgrade the control plane of %s from %s to %s?", cp.Cluster, ph.Steps[0].From, ph.Steps[0].To)
+		return fmt.Sprintf("Upgrade the control plane of %s from %s to %s", cp.Cluster, ph.Steps[0].From, ph.Steps[0].To)
 	case PhaseAddonsBefore:
-		return fmt.Sprintf("Update %d add-on(s) of %s that Kubernetes %s cannot run as they are (%s)?", len(names), cp.Cluster, ph.Ref.Hop, list)
+		return fmt.Sprintf("Update %d add-on(s) of %s that Kubernetes %s cannot run as they are (%s)", len(names), cp.Cluster, ph.Ref.Hop, list)
 	case PhaseNodegroups:
-		return fmt.Sprintf("Roll %d nodegroup(s) of %s to Kubernetes %s (%s)?", len(names), cp.Cluster, ph.Ref.Hop, list)
+		return fmt.Sprintf("Roll %d nodegroup(s) of %s to Kubernetes %s (%s)", len(names), cp.Cluster, ph.Ref.Hop, list)
 	}
-	return fmt.Sprintf("Update %d add-on(s) of %s for Kubernetes %s (%s)?", len(names), cp.Cluster, ph.Ref.Hop, list)
+	return fmt.Sprintf("Update %d add-on(s) of %s for Kubernetes %s (%s)", len(names), cp.Cluster, ph.Ref.Hop, list)
 }
 
 // engineQuestion is the question before the first change of an upgrade
@@ -496,7 +499,7 @@ func (r *runner) engineQuestion(p *Plan) *Question {
 		for _, ph := range cp.Phases {
 			if slices.ContainsFunc(ph.Steps, Step.work) {
 				q.Kind, q.Step = ConfirmPhase, StepRef{Phase: ph.Ref}
-				text = strings.TrimSuffix(phaseQuestion(cp, ph), "?")
+				text = phaseText(cp, ph)
 				break
 			}
 		}
@@ -586,7 +589,7 @@ func (r *runner) resumeHint(res Result) string {
 	if len(done) > 0 {
 		completed = "completed: " + strings.Join(done, ", ")
 	}
-	return completed + "; to go on from the live state of the cluster, run: " + engineCommand(r.d.FollowUp, r.req)
+	return completed + "; to go on from the live state of the cluster, run: " + Command(r.d.FollowUp, r.req)
 }
 
 // clusterSettled is the done function of a wait for a control plane:

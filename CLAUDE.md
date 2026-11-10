@@ -253,11 +253,13 @@ leave package state behind. A test that sets env vars cannot use
 `t.Parallel()`.
 
 **The parity suite (`test/parity`).** A scenario is a command line on a seeded
-world. The suite runs the binary as a subprocess, records which facts it had
-read before each changing request, and compares that evidence, the changing
-requests, and the exit code with the recorded trace of the same scenario from
-the last release of the old CLI (`testdata/legacy/*.json`). An intended
-difference has an entry with a reason in `testdata/allowlist.json`.
+world. The suite runs the binary as a subprocess, with signals and a
+pseudo-terminal, records which facts it had read before each changing
+request, and compares that evidence, the changing requests, the final world,
+and the exit code with the recorded trace of the scenario
+(`testdata/traces/*.json`). An intended change of behaviour records the traces
+again (`go test ./test/parity/ -run TestScenarios -update`); read the diff
+before you commit it. A fake that gets closer to AWS can change a trace too.
 `test/parity/README.md` has the rules. A new safety behaviour gets a scenario.
 
 ## Gotchas

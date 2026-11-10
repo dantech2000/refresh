@@ -154,6 +154,18 @@ type Blocker struct {
 	// Step is nil when the blocker is about the cluster.
 	Step    *StepRef
 	Message string
+	// Cause is what a Busy blocker found, such as "prod is busy (cluster
+	// UPDATING)": the Message without what the run did about it, for a
+	// caller that says that in its own words. It is "" for other kinds.
+	Cause string
+}
+
+// busyAgain is the ending of every message of the busy rule.
+const busyAgain = ". Run it again once that finishes"
+
+// busyBlocker returns the Busy blocker of a cause: nothing was started.
+func busyBlocker(cause string, step *StepRef) Blocker {
+	return Blocker{Kind: BlockerBusy, Step: step, Message: cause + "; nothing was started" + busyAgain, Cause: cause}
 }
 
 // Phase is a group of steps. A step that does not succeed does not stop
@@ -200,6 +212,7 @@ const (
 	AlreadyAtTarget = apidoc.ReasonAlreadyAtTarget
 	NewerThanLatest = apidoc.ReasonNewerThanLatest
 	CustomAMI       = apidoc.ReasonCustomAMI
+	AMITypeUnknown  = apidoc.ReasonAMITypeUnknown
 	SkippedByFlag   = apidoc.ReasonSkippedByFlag
 	OutOfScope      = apidoc.ReasonOutOfScope
 	NoChange        = apidoc.ReasonNoChange
@@ -416,4 +429,15 @@ func (p *Plan) allFailures() []apidoc.Failure {
 		out = append(out, p.Clusters[i].Gate.Failures...)
 	}
 	return out
+}
+
+// skipGate gives the plan the verdict of --skip-health-check, with its
+// notice, and reports whether it did: no check runs then.
+func (cp *ClusterPlan) skipGate(policy health.Policy) bool {
+	if !policy.Skip {
+		return false
+	}
+	cp.Gate = health.Gate(nil, policy)
+	cp.Notices = append(cp.Notices, "the health checks were skipped (--skip-health-check)")
+	return true
 }

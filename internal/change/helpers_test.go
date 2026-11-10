@@ -21,9 +21,11 @@ const east = "us-east-1"
 
 // The versions of the test world: vpc-cni and coredns are one version
 // behind, and kube-proxy is at the latest. cniNext is a version that only
-// Kubernetes 1.34 can run.
+// Kubernetes 1.34 can run. cniOther is a version between them that another
+// process may install: EKS takes only a version of its catalog.
 const (
 	cniOld, cniNew, cniNext = "v1.19.0-eksbuild.1", "v1.20.0-eksbuild.1", "v1.21.0-eksbuild.1"
+	cniOther                = "v1.19.5-eksbuild.1"
 	dnsOld, dnsNew          = "v1.11.3-eksbuild.2", "v1.11.4-eksbuild.2"
 	proxyNow                = "v1.33.0-eksbuild.2"
 )
@@ -49,6 +51,7 @@ func newWorld(edit func(c *fleettest.Cluster)) *fleettest.World {
 		s.AddonVersions = []fleettest.AddonVersion{
 			{Addon: "vpc-cni", Version: cniNext, ClusterVersions: []string{"1.34"}},
 			{Addon: "vpc-cni", Version: cniNew, ClusterVersions: []string{"1.33", "1.34"}},
+			{Addon: "vpc-cni", Version: cniOther, ClusterVersions: []string{"1.32", "1.33"}},
 			{Addon: "vpc-cni", Version: cniOld, ClusterVersions: []string{"1.32", "1.33"}},
 			{Addon: "coredns", Version: dnsNew, ClusterVersions: []string{"1.33"}},
 			{Addon: "coredns", Version: dnsOld, ClusterVersions: []string{"1.32", "1.33"}},

@@ -37,19 +37,56 @@ type Readiness struct {
 // It is ready, with no check, when the control plane is at the hop
 // already.
 //
-// insights is called only when the hop is the minor version after the
-// live one and skipInsights is false, and only after the kubelet skew
-// passed: a real run refreshes the insights in it, and a hop that the
-// skew blocks sends no refresh.
+// insights is called only when hopReadsInsights says so.
 func HopReadiness(snap *fleet.Snapshot, hop fleet.Version, skipInsights bool, insights func(hop fleet.Version) InsightsRead) Readiness {
 	if atLeast(snap.Cluster.Version, hop) {
 		return Readiness{}
 	}
+	return hopReadiness(snap, hop, liveVersions(snap), skipInsights, insights)
+}
+
+// hopReadsInsights reports whether HopReadiness reads the insights for
+// the hop: a real run refreshes them first. A run decides it on the read
+// before the control plane of the hop moves.
+func hopReadsInsights(snap *fleet.Snapshot, hop fleet.Version, skipInsights bool) bool {
+	return !atLeast(snap.Cluster.Version, hop) && readsInsights(snap, hop, liveVersions(snap), skipInsights)
+}
+
+// liveVersions returns the version of each nodegroup of the snapshot.
+func liveVersions(snap *fleet.Snapshot) map[string]fleet.Version {
 	versions := make(map[string]fleet.Version, len(snap.Nodegroups))
 	for _, n := range snap.Nodegroups {
 		versions[n.Name] = n.Version
 	}
-	return hopReadiness(snap, hop, versions, skipInsights, insights)
+	return versions
+}
+
+// readsInsights is the one rule that decides whether the readiness of a
+// hop reads the upgrade insights, and so whether a real run refreshes
+// them. It is true when the hop is the minor version after the live one,
+// skipInsights is false, and the kubelet skew lets the hop through:
+// versions has the version that each nodegroup runs when the hop starts.
+// A hop that the skew blocks sends no refresh.
+func readsInsights(snap *fleet.Snapshot, hop fleet.Version, versions map[string]fleet.Version, skipInsights bool) bool {
+	return !skipInsights && evaluatedHop(snap.Cluster.Version, hop) && len(skewBlocked(snap, hop, versions)) == 0
+}
+
+// evaluatedHop reports whether EKS evaluates the upgrade insights for the
+// hop: the minor version after the live one.
+func evaluatedHop(live, hop fleet.Version) bool {
+	return hop.Compare(live) > 0 && hop.Compare(nextMinor(live)) <= 0
+}
+
+// skewBlocked returns a line for each nodegroup that would exceed the
+// kubelet skew against the hop, at its version in versions.
+func skewBlocked(snap *fleet.Snapshot, hop fleet.Version, versions map[string]fleet.Version) []string {
+	var skew []string
+	for _, n := range snap.Nodegroups {
+		if v := versions[n.Name]; beyondKubeletSkew(v, hop) {
+			skew = append(skew, fmt.Sprintf("nodegroup %s at %s would exceed the kubelet skew limit (%d minors) against %s", n.Name, v, kubeletSkew, hop))
+		}
+	}
+	return skew
 }
 
 // hopReadiness is the readiness gate of one hop: the kubelet skew of
@@ -65,24 +102,17 @@ func hopReadiness(snap *fleet.Snapshot, hop fleet.Version, versions map[string]f
 	ref := StepRef{Phase: PhaseRef{Target: target, Kind: PhaseControlPlane, Hop: hop}, Kind: StepControlPlane}
 	blocked := func(kind BlockerKind, msg string) *Blocker { return &Blocker{Kind: kind, Step: &ref, Message: msg} }
 
-	var skew []string
-	for _, n := range snap.Nodegroups {
-		if v := versions[n.Name]; beyondKubeletSkew(v, hop) {
-			skew = append(skew, fmt.Sprintf("nodegroup %s at %s would exceed the kubelet skew limit (%d minors) against %s", n.Name, v, kubeletSkew, hop))
-		}
-	}
-	if len(skew) > 0 {
+	if skew := skewBlocked(snap, hop, versions); len(skew) > 0 {
 		return Readiness{Blocker: blocked(BlockerNotReady, strings.Join(skew, "; "))}
 	}
-	live := snap.Cluster.Version
-	switch {
-	case hop.Compare(live) <= 0, hop.Compare(nextMinor(live)) > 0:
+	if !readsInsights(snap, hop, versions, skipInsights) {
+		if skipInsights && evaluatedHop(snap.Cluster.Version, hop) {
+			return Readiness{Notices: []string{fmt.Sprintf(
+				"cluster insights for %s were not checked (--skip-insights-check): deprecated APIs and kubelet skew of nodes outside managed nodegroups (Fargate, Karpenter, self-managed, hybrid) are unverified", hop)}}
+		}
 		// The control plane does not move in this hop, or the hop is one
 		// that EKS has no insight for yet.
 		return Readiness{}
-	case skipInsights:
-		return Readiness{Notices: []string{fmt.Sprintf(
-			"cluster insights for %s were not checked (--skip-insights-check): deprecated APIs and kubelet skew of nodes outside managed nodegroups (Fargate, Karpenter, self-managed, hybrid) are unverified", hop)}}
 	}
 	read := insights(hop)
 	fail := func(what string, err error) Readiness {

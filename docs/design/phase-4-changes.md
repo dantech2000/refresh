@@ -758,7 +758,7 @@ Fleet mode ignores `REFRESH_CLUSTER` and the active context. A kubeconfig contex
 | `--all` | One step per installed add-on, less `--skip-addon`, in dependency order |
 | `--version` | Only with exactly one name |
 
-The phase is `Serial`, without `StopOnFailure`: a failed add-on does not stop the rest. Since the owner decision of 2026-11-09 (CONTRACT.md change 7), with `--all` its dependents are not attempted: an add-on whose dependency did not end `Succeeded` or `Skipped` is `NotAttempted`, with a failure that names the dependency. The old command attempted them (`service.go:549-562`; trace `addon-update-all-partial-failure`, both updates sent).
+The phase is `Serial`, without `StopOnFailure`: a failed add-on does not stop the rest. Since the owner decision of 2026-11-09 (CONTRACT.md change 7), its dependents are not attempted: an add-on whose dependency ran before it and did not end clean (`Succeeded` with no verification issue, or `Skipped`) is `NotAttempted`, with a failure that names the dependency and says why. This holds for `--all` and for named add-ons, which keep the order given. The old command attempted them (`service.go:549-562`; trace `addon-update-all-partial-failure`, both updates sent).
 
 Dependency order is always on for `--all`. The table and the sort are ported from `addon_dependencies.go:13-101`.
 
@@ -781,7 +781,7 @@ An attached add-on (row 4) waits with `WaitSettled`. A failed wait fails the ste
 
 The request is `UpdateAddon` with the version and the token, and nothing else (`service.go:353-363`).
 
-With `--no-wait` every add-on is submitted in dependency order with no wait between. Since the owner decision of 2026-11-09, `--all --no-wait` is refused when one add-on to update depends on another: without a wait the order means nothing. `--wait-timeout` bounds each add-on on its own.
+With `--no-wait` every add-on is submitted in dependency order with no wait between. Since the owner decision of 2026-11-09, `--no-wait` is refused when an add-on to update depends on one that comes before it (with `--all`, any dependent pair): without a wait the order means nothing. `--wait-timeout` bounds each add-on on its own.
 
 ### `nodegroup scale`
 
@@ -811,7 +811,7 @@ The request is `UpdateNodegroupConfig` with a `scalingConfig` of only the sizes 
 |---|---|
 | Hop expansion, the `maxHops` cap, the same-version catch-up hop | `types.go:184-211`, `plan.go:101-107,163-187` |
 | Step derivation for the control plane, add-ons, and nodegroups; the output is `Step` values | `plan.go:542-679` |
-| The kubelet skew rule: 3 minors, every nodegroup counts, also skipped ones | `plan.go:393-417`. The planner keeps it as it was: a nodegroup blocks a hop when it would trail the hop target by more than 3 minors, on the versions that the plan predicts. `health.VersionSkew` is another rule on other input: 3 or more minors behind the live control plane. The gate of a control-plane step runs both (section 14). |
+| The kubelet skew rule: 3 minors, every nodegroup counts, also skipped ones | `plan.go:393-417`. The planner keeps it as it was: a nodegroup blocks a hop when it would trail the hop target by more than 3 minors, on the versions that the plan predicts. `health.VersionSkew` is another rule on other input: 3 or more minors behind the live control plane. For the hop that a control-plane step is sent from, the two are one condition, so the gate of the step runs the rule of the planner alone (section 14). |
 | "Before" and "after" add-ons by compatibility with the hop target | `plan.go:571-629` |
 | `--only` and `-n` rules and errors | `scope.go` |
 | The insights refresh: reuse within 10 minutes, a 5 minute wait, the start-failure cases | `insights.go:24-150` |
@@ -839,7 +839,7 @@ An upgrade, for each hop:
 
 | Phase | Steps | Before the submit |
 |---|---|---|
-| `ControlPlane` | One | The readiness of the hop: the insights refresh (unless `--skip-insights-check`), the `Insights` and `VersionSkew` checks |
+| `ControlPlane` | One | The readiness of the hop: the insights refresh (unless `--skip-insights-check`), the kubelet skew rule of the planner, and the `Insights` check |
 | `AddonsBefore`: the add-ons the new control plane cannot run | Serial, dependency order, `StopOnFailure` | |
 | `Nodegroups` | Serial, listing order, `StopOnFailure` | Per step: the gate and the baseline |
 | `AddonsAfter` | Serial, dependency order, `StopOnFailure` | |
@@ -1717,7 +1717,7 @@ Built: the wiring of the two planners, the insights refresh, the phase loop, the
 | 4 | The submit table: "the target in flight, in an engine: the step becomes `Attach`" | True for what the read of the step finds. A nodegroup that starts to change between its gate and the last read before its roll is `Blocked`, with the reason `Busy`, and the next run attaches to it. |
 | 4 | Verification of a nodegroup step | The rows of the result are named with the nodegroup and the hop, `NodegroupActive/ng-a@1.33`, and an add-on row of an upgrade has its hop: one FIELD of the plain output is never on two rows. In a view, a step of an upgrade is named `ng-a@1.33` for the same reason. |
 | 4 | A verification that could not read | It stops an engine like an issue does: the next step does not run. The exit code is 4. |
-| 6 | The gate of a control-plane step | `health.VersionSkew` on the read of the phase, then `HopReadiness`, which is the skew rule of the planner and then the insights. Either one blocks. The skew is judged before the insights by both, so a hop that the skew blocks sends no refresh. See "The two skew rules" below. |
+| 6 | The gate of a control-plane step | `HopReadiness` on the read before the request: the skew rule of the planner, and then the insights. The skew is judged first, so a hop that the skew blocks sends no refresh. See "The two skew rules" below. |
 | 6 | The control plane is sent whenever it is not at the goal | It is sent only from the minor version before the goal of an upgrade, and from the one after the goal of a rollback. Any other version fails the step: the cluster changed since the plan. An upgrade therefore never sends a version below the live one. |
 | 6 | An add-on that an engine updates and that is not healthy after it | The step succeeded with a verification issue, exit 5, as in `addon update`. The old engine called it a gate error. |
 | 7 | `Checkpoint func(ctx, next PhaseRef)`, called before each phase after the first | `Checkpoint func(ctx, next StepRef)`, as the phase 5 note asks (its section 14). It runs before every phase that has work, the first included, after consent and before the first submit; before each step with work of a phase after its first; and before every cluster of a fleet, the first included. A zero `Kind` and `Name` mean the phase. `Waited` is not read: the run reads again after every checkpoint. |
@@ -1732,7 +1732,7 @@ Built: the wiring of the two planners, the insights refresh, the phase loop, the
 
 #### The two skew rules
 
-The planner blocks a hop when a nodegroup would trail the hop target by more than 3 minor versions (`beyondKubeletSkew`). `health.VersionSkew` fails a nodegroup that trails the live control plane by 3 or more. They read different pairs of versions, and for a hop that the plan only predicts they can differ. They cannot differ where a request is sent: a control-plane step is sent only from the minor version before its target, and there "more than 3 behind the target" and "3 or more behind the live control plane" are one condition. `TestSkewRulesAgree` holds them to each other on every distance from 0 to 5. The gate of the step runs both and blocks when either one does, so a later change of one rule cannot let a hop through.
+The planner blocks a hop when a nodegroup would trail the hop target by more than 3 minor versions (`beyondKubeletSkew`). `health.VersionSkew` fails a nodegroup that trails the live control plane by 3 or more. They read different pairs of versions, and for a hop that the plan only predicts they can differ. They cannot differ where a request is sent: a control-plane step is sent only from the minor version before its target, and there "more than 3 behind the target" and "3 or more behind the live control plane" are one condition. `TestSkewRulesAgree` holds them to each other on every distance from 0 to 5. The gate of the step runs the rule of the planner alone. `TestSkewRulesAgree` keeps `cluster upgrade-check`, which runs `health.VersionSkew`, in agreement with it.
 
 #### Parity
 

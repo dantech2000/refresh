@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
+
 	"github.com/dantech2000/refresh/internal/apidoc"
 	"github.com/dantech2000/refresh/internal/fleet"
 )
@@ -37,6 +39,39 @@ func TestClusterDoc_CollectedAndEmptyEncodes(t *testing.T) {
 				t.Errorf("the document has no %s:\n%s", want, buf.String())
 			}
 		}
+	}
+}
+
+// A nodegroup is incomplete when the read of any of its groups failed, and
+// sizes that EKS did not return are left out, not printed as 0.
+func TestNodegroupDoc(t *testing.T) {
+	sizes := &apidoc.Scaling{Desired: 2, Min: 1, Max: 3}
+	tests := []struct {
+		name           string
+		n              fleet.Nodegroup
+		wantIncomplete bool
+		wantScaling    *apidoc.Scaling
+	}{
+		{name: "read", n: fleet.Nodegroup{Desired: 2, Min: 1, Max: 3, SizesKnown: true}, wantScaling: sizes},
+		{name: "sizes not known", n: fleet.Nodegroup{}},
+		{name: "AMI failed", n: fleet.Nodegroup{AMI: fleet.AMI{State: fleet.Failed}}, wantIncomplete: true},
+		{name: "instances not attempted", n: fleet.Nodegroup{InstancesState: fleet.NotAttempted}, wantIncomplete: true},
+		{name: "ready nodes failed", n: fleet.Nodegroup{ReadyState: fleet.Failed}, wantIncomplete: true},
+		{name: "workloads failed", n: fleet.Nodegroup{WorkloadsState: fleet.Failed}, wantIncomplete: true},
+		{name: "workloads not requested", n: fleet.Nodegroup{WorkloadsState: fleet.NotRequested, ReadyState: fleet.Collected}},
+	}
+	snap := &fleet.Snapshot{Have: fleet.Have{Cluster: fleet.Collected}}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.n.Name, tt.n.State, tt.n.Status = "web", fleet.Collected, "ACTIVE"
+			doc := snap.NodegroupDoc(tt.n)
+			if doc.Incomplete != tt.wantIncomplete {
+				t.Errorf("incomplete = %v, want %v", doc.Incomplete, tt.wantIncomplete)
+			}
+			if diff := cmp.Diff(tt.wantScaling, doc.Scaling); diff != "" {
+				t.Errorf("scaling (-want +got):\n%s", diff)
+			}
+		})
 	}
 }
 

@@ -1,7 +1,9 @@
 package cmdutil
 
 import (
+	"context"
 	"errors"
+	"fmt"
 
 	"github.com/dantech2000/refresh/internal/exitcode"
 )
@@ -16,6 +18,12 @@ const (
 	ExitIncomplete     = exitcode.Incomplete     // incomplete data or a partial failure
 	ExitVerifyFailed   = exitcode.VerifyFailed   // the change was applied and the check after it found issues
 )
+
+// ErrInterrupted is the error of a run that the user interrupted, after it
+// printed what it had: a result that Ctrl+C cut short is not a partial
+// result, and the run fails. It wraps context.Canceled; main says
+// "interrupted" for it.
+var ErrInterrupted = fmt.Errorf("interrupted: %w", context.Canceled)
 
 // ExitError is an error that sets the exit code of the process. main prints
 // Err, when there is one, and exits with Code. A command that already

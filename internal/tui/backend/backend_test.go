@@ -11,6 +11,7 @@ import (
 
 	"github.com/dantech2000/refresh/internal/apidoc"
 	"github.com/dantech2000/refresh/internal/awsx/awsxtest"
+	"github.com/dantech2000/refresh/internal/change"
 	"github.com/dantech2000/refresh/internal/cmdutil/cmdutiltest"
 	"github.com/dantech2000/refresh/internal/fleet"
 	"github.com/dantech2000/refresh/internal/fleet/fleettest"
@@ -182,7 +183,7 @@ func TestSecondSweepReportsChanges(t *testing.T) {
 	})
 	r := newRig(t, world, fleet.Regions{Names: []string{east}}, nil)
 	st := r.wait(t, 0, swept(1))
-	if got := st.Clusters[1].InFlight; !slices.Equal(got, []string{"nodegroup ng UPDATING"}) || st.Clusters[1].Status != view.Progress {
+	if got := st.Clusters[1].InFlight; !slices.Equal(got, []state.InFlight{{Kind: apidoc.StepNodegroup, Name: "ng", Status: "UPDATING"}}) || st.Clusters[1].Status != view.Progress {
 		t.Fatalf("prod in flight: %v, status %v", got, st.Clusters[1].Status)
 	}
 	world.Edit(func(s *fleettest.State) {
@@ -291,7 +292,7 @@ func TestStartIsRefusedWithoutAllowChanges(t *testing.T) {
 		t.Fatal("a backend without --allow-changes reads as writable")
 	}
 	key := state.Key{Region: east, Name: "prod"}
-	p, err := r.b.Plan(t.Context(), state.Action{Kind: state.ActionAddons, Cluster: key})
+	p, err := r.b.Plan(t.Context(), state.Action{Kind: change.AddonUpdate, Cluster: key})
 	if err != nil {
 		t.Fatalf("Plan read-only: %v", err)
 	}

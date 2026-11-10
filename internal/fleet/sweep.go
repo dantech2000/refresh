@@ -55,7 +55,6 @@ type SweepResult struct {
 
 // regionOutcome is what one region of a sweep returned.
 type regionOutcome struct {
-	ran   bool // false when the context ended before the region started
 	snaps []*Snapshot
 	err   error // the error of the cluster list
 }
@@ -71,7 +70,7 @@ type regionOutcome struct {
 // is closed to the credentials is skipped. A named region is never skipped.
 func (f *Fetcher) Sweep(ctx context.Context, p *awsx.Provider, r Regions, opts SweepOptions) *SweepResult {
 	var report sync.Mutex
-	outcomes := fanout.ForEach(ctx, r.Names, max(len(r.Names), 1), func(ctx context.Context, region string) regionOutcome {
+	outcomes, started := fanout.ForEachIn(ctx, nil, r.Names, func(ctx context.Context, region string) regionOutcome {
 		// Only a default sweep gives up on a region after one failed
 		// dial. A region that the user named gets the full retries.
 		clients := p.Clients(region)
@@ -84,14 +83,14 @@ func (f *Fetcher) Sweep(ctx context.Context, p *awsx.Provider, r Regions, opts S
 			opts.OnRegion(region, snaps)
 			report.Unlock()
 		}
-		return regionOutcome{ran: true, snaps: snaps, err: err}
+		return regionOutcome{snaps: snaps, err: err}
 	})
 
 	res := &SweepResult{Regions: r}
 	for i, region := range r.Names {
 		o := outcomes[i]
 		switch {
-		case !o.ran:
+		case i >= started:
 			res.Failures = append(res.Failures, notAttempted(ctx, apidoc.FailureRegion, region))
 			res.Errs = append(res.Errs, ctx.Err())
 		case o.err == nil:

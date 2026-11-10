@@ -166,11 +166,22 @@ minutes.
 
 | Case | Outcome |
 |---|---|
-| etcd database at 95 percent or more of 8 GiB | `Fail` |
+| etcd database at 95 percent or more of its limit | `Fail` |
 | etcd database at 80 percent or more | `Warn` |
 | 1,000 or more API requests, with 2 percent or more 5xx or 1 percent or more 429 | `Warn` |
 | The cluster emits no control-plane metrics | `Skipped` |
 | The read fails | `Unreadable`; the gate asks |
+
+The etcd limit depends on the mode of the control plane. It is 8 GB in
+Standard mode, and 16 GB on a tier of the
+[Provisioned Control Plane](https://docs.aws.amazon.com/eks/latest/userguide/eks-provisioned-control-plane.html)
+(XL, 2XL, 4XL, 8XL). The check reads the tier from `DescribeCluster`. If the
+tier is not known or the cluster could not be read, the check uses 8 GB
+and says so in its details.
+
+AWS does not say whether a GB is 10^9 or 2^30 bytes. The check uses 10^9
+bytes (8,000,000,000 and 16,000,000,000), the smaller limit, so that it
+blocks early rather than late.
 
 ## Workloads
 
@@ -191,9 +202,33 @@ A drain evicts pods. The eviction API refuses an eviction that would take a
 PodDisruptionBudget (PDB) below what it allows. The roll then stalls. This
 check finds those cases before the roll starts.
 
-A PDB is a blocker when it allows zero disruptions and it covers a pod on a
-node that the change would drain. A pod that more than one PDB selects is also
-a blocker, because the eviction API refuses it.
+A PDB is a blocker when the eviction API would refuse a pod that it covers on
+a node that the change would drain. The check uses the rules of the eviction
+API. The API refuses every eviction under a PDB in these cases:
+
+- The PDB changed, and the disruption controller has not processed the change
+  yet. The status then has an older generation than the spec
+  (`status.observedGeneration` is lower than `metadata.generation`). The count
+  of allowed disruptions in that status does not matter.
+- The PDB allows zero disruptions, or a negative number.
+- The PDB has more than 2000 evictions that the disruption controller has not
+  confirmed (`status.disruptedPods`).
+
+A PDB whose `DisruptionAllowed` condition has the reason `SyncFailed` is also
+a blocker. The disruption controller could not compute its status, so the
+check does not trust the counts.
+
+The eviction API does not look at a PDB for a pod that is `Pending`,
+`Succeeded`, or `Failed`, or that is already being deleted. For a pod that is
+not ready, the API looks at the PDB only when the PDB does not have the
+`AlwaysAllow` unhealthy pod eviction policy, and either has fewer healthy pods
+than it needs or needs zero healthy pods (`status.desiredHealthy` is 0). A pod that more than one PDB selects is also a blocker, because the
+eviction API refuses it.
+
+Without target nodegroups, the check reads no pods. Then a PDB that allows
+zero disruptions is a blocker only when its status counts at least one pod. A
+PDB in one of the other cases above is always a blocker, even when its status
+counts no pod.
 
 | Case | Outcome |
 |---|---|
@@ -205,7 +240,9 @@ a blocker, because the eviction API refuses it.
 If the check blocks:
 
 1. Read the blockers in the `CHECKS` section.
-2. Fix the PDB or scale the workload so that the PDB allows a disruption.
+2. Fix the PDB or scale the workload so that the PDB allows a disruption. If
+   the PDB is not processed since its last change, wait for the disruption
+   controller to process it.
 3. Run the command again.
 
 To go past the blockers, pass `--force`. The command prints a warning and
@@ -259,13 +296,12 @@ when the sum passes the quota, because the result is then `Fail`. The details
 then give the sum as "at least".
 
 CloudWatch publishes the metric late. Right after a roll, its newest data
-point can still count a surge node that has stopped. So when the newest data
-point is more than two minutes old, the check also sums the instance list, in
-the same way, and uses the smaller of the two numbers. The metric only lags:
-it never counts fewer vCPUs than the instances that run. The list stops when
-its sum passes the metric, because the metric then decides. The details name
-the source that decided. If the instance list cannot be read, the metric
-decides, and the details say so.
+point can still count a surge node that has stopped. After an autoscaler or
+another roll started nodes, it can count too few. So when the newest data
+point is more than two minutes old, the check sums the instance list, in the
+same way, and uses that sum, whether it is above or below the metric. The
+details name the source that decided. If the instance list cannot be read,
+the metric decides, and the details say so.
 
 For a roll, EKS raises the Auto Scaling group of each nodegroup by the larger
 of two numbers: the number of its Availability Zones, and `maxUnavailable`. It
@@ -331,11 +367,28 @@ After a roll, the command verifies the result. `--skip-verify` leaves this out.
 |---|---|---|
 | `NodegroupActive` | A rolled nodegroup is not `ACTIVE` | The nodegroup could not be read |
 | `NodesReady` | A new node is not `Ready` after the wait | The node list fails |
-| `NewPendingPods` | A pod is `Pending` that was not `Pending` before the roll | The pod list fails |
+| `NewPendingPods` | A pod that was not `Pending` before the roll is `Pending` and stuck: the scheduler cannot place it, or a container cannot pull its image or read its configuration | The pod list fails |
 
 `NodesReady` waits for the new nodes: at most 2 minutes, and never past the
-time left of `--wait-timeout`. Without Kubernetes access, `NodesReady` and
-`NewPendingPods` are `Skipped`.
+time left of `--wait-timeout`.
+
+A `Pending` pod is stuck in two cases:
+
+- Its `PodScheduled` condition is `False` with the reason `Unschedulable`:
+  the scheduler tried and found no node for it.
+- A container or an init container is
+  [`Waiting`](https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/#container-state-waiting)
+  with the reason `ImagePullBackOff`, `ErrImagePull`, or
+  `CreateContainerConfigError`. These do not pass without a change, and a
+  bad AMI can cause them.
+
+Any other `Pending` pod is progressing. A pod that is bound to a node and
+pulls its images is also `Pending`
+([Pod phase](https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/#pod-phase)).
+Every pod that a roll moves goes through that state, so it is not an issue.
+
+Without Kubernetes access, `NodesReady` and `NewPendingPods` are
+`Skipped`.
 
 ```text
 VERIFICATION  3

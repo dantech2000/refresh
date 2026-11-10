@@ -88,3 +88,74 @@ func TestForEach_CancelMidRunJoinsWorkers(t *testing.T) {
 		t.Errorf("items run = %d, want 2 (only the in-flight pair)", ran)
 	}
 }
+
+// ForEachIn reports how many items it started, and the items that it did
+// not start are the suffix of the list, with the zero value.
+func TestForEachIn_Started(t *testing.T) {
+	cancelled, cancel := context.WithCancel(t.Context())
+	cancel()
+	tests := []struct {
+		name        string
+		ctx         context.Context
+		sem         chan struct{}
+		wantStarted int
+	}{
+		{name: "no limit", ctx: t.Context(), sem: nil, wantStarted: 5},
+		{name: "a shared limit", ctx: t.Context(), sem: make(chan struct{}, 2), wantStarted: 5},
+		{name: "cancelled before the start", ctx: cancelled, sem: nil, wantStarted: 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, started := ForEachIn(tt.ctx, tt.sem, []int{1, 2, 3, 4, 5}, func(_ context.Context, n int) int { return n })
+			if started != tt.wantStarted {
+				t.Fatalf("started = %d, want %d", started, tt.wantStarted)
+			}
+			for i, r := range got {
+				want := 0
+				if i < started {
+					want = i + 1
+				}
+				if r != want {
+					t.Errorf("result[%d] = %d, want %d", i, r, want)
+				}
+			}
+		})
+	}
+}
+
+// When ctx ends while the first items hold every slot, the count is the
+// number of items in flight, and nothing after them started.
+func TestForEachIn_StartedAfterCancelMidRun(t *testing.T) {
+	defer goleak.VerifyNone(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	inFlight := make(chan struct{}, 2)
+	type out struct {
+		results []int
+		started int
+	}
+	done := make(chan out, 1)
+	go func() {
+		r, n := ForEachIn(ctx, make(chan struct{}, 2), make([]int, 10), func(ctx context.Context, _ int) int {
+			inFlight <- struct{}{}
+			<-ctx.Done()
+			return 1
+		})
+		done <- out{r, n}
+	}()
+	<-inFlight
+	<-inFlight
+	cancel()
+	got := <-done
+	if got.started != 2 {
+		t.Fatalf("started = %d, want 2", got.started)
+	}
+	for i, r := range got.results {
+		want := 0
+		if i < 2 {
+			want = 1
+		}
+		if r != want {
+			t.Errorf("result[%d] = %d, want %d", i, r, want)
+		}
+	}
+}

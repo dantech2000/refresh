@@ -85,7 +85,7 @@ var situations = []situation{
 		}
 	}},
 	{name: "insight-error", what: "an upgrade-readiness insight is ERROR (deprecated APIs in use)", apply: func(g *generator, c *fleettest.Cluster) {
-		next := fmt.Sprintf("1.%d", minorOf(c.Version)+1)
+		next := c.NextMinor()
 		c.Insights = []fleettest.Insight{{
 			// An ID as EKS gives one: "cluster upgrade-check" shows its
 			// first characters, and --insight takes them.
@@ -283,13 +283,6 @@ func generate(rng *rand.Rand, n int, regions []string, now time.Time, d duration
 // oldImage is the AMI that a nodegroup with an outdated AMI runs.
 func oldImage(version string) string {
 	return "ami-old" + strings.ReplaceAll(version, ".", "")
-}
-
-// minorOf returns the minor of a "1.N" version.
-func minorOf(version string) int {
-	var major, minor int
-	_, _ = fmt.Sscanf(version, "%d.%d", &major, &minor)
-	return minor
 }
 
 // region adds what a region holds once: a VPC with two subnets, the

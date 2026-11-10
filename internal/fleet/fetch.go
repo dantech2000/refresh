@@ -297,11 +297,10 @@ func compute(ctx context.Context, c *awsx.Clients, snap *Snapshot) (apidoc.Compu
 		{Name: aws.String("tag:eks:eks-cluster-name"), Values: []string{snap.Cluster.Name}},
 	}
 	type answer struct {
-		ran   bool
 		found bool
 		err   error
 	}
-	answers := fanout.ForEach(ctx, owners, len(owners), func(ctx context.Context, owner ec2types.Filter) answer {
+	answers, started := fanout.ForEachIn(ctx, nil, owners, func(ctx context.Context, owner ec2types.Filter) answer {
 		out, err := c.EC2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
 			MaxResults: aws.Int32(5),
 			Filters: []ec2types.Filter{
@@ -311,21 +310,24 @@ func compute(ctx context.Context, c *awsx.Clients, snap *Snapshot) (apidoc.Compu
 			},
 		})
 		if err != nil {
-			return answer{ran: true, err: err}
+			return answer{err: err}
 		}
 		for _, r := range out.Reservations {
 			if len(r.Instances) > 0 {
-				return answer{ran: true, found: true}
+				return answer{found: true}
 			}
 		}
-		return answer{ran: true}
+		return answer{}
 	})
 	var firstErr error
-	for _, a := range answers {
+	for _, a := range answers[:started] {
 		if a.found {
 			return apidoc.ComputeKarpenter, Collected
 		}
-		firstErr = cmp.Or(firstErr, chunkError(ctx, a.ran, a.err))
+		firstErr = cmp.Or(firstErr, a.err)
+	}
+	if started < len(answers) {
+		firstErr = cmp.Or(firstErr, notSent(ctx))
 	}
 	if firstErr != nil {
 		slog.DebugContext(ctx, "could not look for Karpenter instances", "cluster", snap.Cluster.Name, "operation", awsx.Operation(firstErr), "class", awsx.Classify(firstErr))
@@ -362,6 +364,9 @@ func fillCluster(c *Cluster, in *ekstypes.Cluster) {
 		c.UpgradePolicy = string(in.UpgradePolicy.SupportType)
 	}
 	c.AutoMode = in.ComputeConfig != nil && aws.ToBool(in.ComputeConfig.Enabled)
+	if in.ControlPlaneScalingConfig != nil {
+		c.ControlPlaneTier = string(in.ControlPlaneScalingConfig.Tier)
+	}
 	if in.Health != nil {
 		for _, issue := range in.Health.Issues {
 			c.HealthIssues = append(c.HealthIssues, Issue{

@@ -22,6 +22,33 @@ func HealthStatus(o apidoc.HealthOutcome) Status {
 	return NoStatus
 }
 
+// ReadinessStatus returns the status that draws a readiness verdict.
+func ReadinessStatus(r apidoc.Readiness) Status {
+	switch r {
+	case apidoc.ReadinessReady:
+		return Healthy
+	case apidoc.ReadinessReview:
+		return Warn
+	case apidoc.ReadinessBlocked:
+		return Fail
+	}
+	return Unknown
+}
+
+// InsightStatus returns the status that draws the status of an EKS
+// insight: PASSING, WARNING, ERROR, or another value, which is unknown.
+func InsightStatus(status string) Status {
+	switch status {
+	case "PASSING":
+		return Healthy
+	case "WARNING":
+		return Warn
+	case "ERROR":
+		return Fail
+	}
+	return Unknown
+}
+
 // HealthLines draws one line per result: the glyph of its outcome, the
 // name padded to the widest, and the message. A Skipped result is dim,
 // with no glyph.

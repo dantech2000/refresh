@@ -163,6 +163,8 @@ func (r *reads) access() (Result, bool) {
 	res := Result{Name: AccessCheck}
 	attempted, answered, refused := r.attempted.Load(), r.answered.Load(), r.refused.Load()
 	switch {
+	case r.in.Kube == nil && r.in.KubeNotRequested:
+		res.Outcome, res.Message = Skipped, r.in.NoKube
 	case r.in.Kube == nil:
 		res.Outcome = Warn
 		res.Message = "no Kubernetes access: " + r.in.NoKube + "; the Kubernetes checks did not run"

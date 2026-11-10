@@ -72,6 +72,11 @@ type Input struct {
 	// words of a message to the user.
 	Kube   kubernetes.Interface
 	NoKube string
+	// KubeNotRequested says that the user did not ask for the Kubernetes
+	// checks, such as "cluster describe" without --check-readiness. With
+	// no client, the result about the access is then Skipped with NoKube
+	// as its message, and not a warning.
+	KubeNotRequested bool
 	// Metrics is nil without a metrics.k8s.io client.
 	Metrics metricsv1beta1.NodeMetricsInterface
 	// Now is the time of the run.
@@ -122,10 +127,37 @@ type Result struct {
 	// Blocking: the quota check blocks on a surge, and only asks about the
 	// current use. The runner then clears Blocking.
 	advisory bool
-	// unreachable is the result of a check that needs no client, for when
-	// its Kubernetes read failed and the run finds the API unreachable:
-	// the Nodes check then estimates, as it does without a client.
-	unreachable *Result
+	// whenUnreachable is the result of a check that needs no client, for
+	// when its Kubernetes read failed and the run finds the API
+	// unreachable: the Nodes check then estimates, as it does without a
+	// client.
+	whenUnreachable *Result
+}
+
+// finding is one named thing behind a Warn or a Fail, with the words that
+// the message shows for it, such as "kube-system/coredns-1" and
+// "kube-system/coredns-1 (Pending)". A check builds its Findings from the
+// names and its message from the texts, so it never cuts a name out of a
+// text.
+type finding struct{ name, text string }
+
+// findingNames returns the names of fs, sorted, or nil for none.
+func findingNames(fs []finding) []string {
+	var out []string
+	for _, f := range fs {
+		out = append(out, f.name)
+	}
+	slices.Sort(out)
+	return out
+}
+
+// findingTexts returns the texts of fs, in their order.
+func findingTexts(fs []finding) []string {
+	out := make([]string, len(fs))
+	for i, f := range fs {
+		out[i] = f.text
+	}
+	return out
 }
 
 // AccessCheck is the name of the result that the runner adds about the
@@ -178,8 +210,8 @@ func Run(ctx context.Context, checks []Check, in *Input) []Result {
 		for i, c := range checks {
 			switch r := results[i]; {
 			case r.Outcome != Unreadable:
-			case r.unreachable != nil:
-				results[i] = *r.unreachable
+			case r.whenUnreachable != nil:
+				results[i] = *r.whenUnreachable
 				results[i].Name, results[i].Blocking, results[i].FailClosed, results[i].Forceable = c.Name, c.Blocking, c.FailClosed, c.Forceable
 			case c.Needs.Kube:
 				results[i] = Result{
