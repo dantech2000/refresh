@@ -211,7 +211,7 @@ func TestChangeScreensFillTheTerminalExactly(t *testing.T) {
 			st.Clusters[0].Change = 0
 			st.Clusters[0] = stale(st.Clusters[0])
 			st.Clusters[0].Snapshot.Nodegroups[1].AMI.Current = "ami-0"
-			st.Clusters[0].Stale.AMIs = 2
+			st.Clusters[0].Findings = st.Clusters[0].Snapshot.Findings()
 			h.state(st)
 			for _, k := range []string{"p", "down", "enter", "y"} {
 				h.keys(k)
@@ -358,7 +358,7 @@ func TestPatchPicksTheNodegroup(t *testing.T) {
 	}
 	h.keys("esc")
 	st.Clusters[1].Snapshot.Nodegroups[1].Version = v("1.32")
-	st.Clusters[1].Stale.Behind = 1
+	st.Clusters[1].Findings = st.Clusters[1].Snapshot.Findings()
 	h.state(st)
 	h.keys("p")
 	if h.m.pick == nil {

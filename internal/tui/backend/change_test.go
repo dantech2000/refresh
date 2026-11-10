@@ -368,7 +368,7 @@ func TestAddonUpdateRunsToTheEnd(t *testing.T) {
 	// The claim is released, the feed says how it ended, and the cluster
 	// is read again on its own, without a sweep.
 	after := r.wait(t, 0, func(st state.State) bool {
-		return st.Clusters[0].Change == 0 && st.Clusters[0].Stale.Addons == 0 && strings.Contains(feedText(st), "prod ended: succeeded")
+		return st.Clusters[0].Change == 0 && len(st.Clusters[0].Findings.BehindAddons) == 0 && strings.Contains(feedText(st), "prod ended: succeeded")
 	})
 	if after.Sweep.Count != 1 {
 		t.Fatalf("the end of a change swept the fleet (%d sweeps)", after.Sweep.Count)
@@ -596,8 +596,8 @@ func TestRollShowsTheNodes(t *testing.T) {
 	})
 	r := pacedRig(t, world, true, newPacer(t, world))
 	first := r.wait(t, 0, swept(1))
-	if first.Clusters[0].Stale.AMIs != 1 {
-		t.Fatalf("web is not stale: %+v", first.Clusters[0].Stale)
+	if first.Clusters[0].Findings.StaleAMIs != 1 {
+		t.Fatalf("web is not stale: %+v", first.Clusters[0].Findings)
 	}
 	p := r.propose(t, state.Action{Kind: state.ActionRoll, Cluster: prod, Nodegroup: "web"})
 	if p.Blocked || p.Doc.Clusters[0].Gate == nil {

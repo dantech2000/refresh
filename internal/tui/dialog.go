@@ -188,11 +188,11 @@ func (m *Model) planUpgrade() tea.Cmd {
 		{name: "Control plane and add-ons", why: hop, note: "nodegroups stay", status: view.Progress, action: up(next, change.PartControlPlane, change.PartAddons)},
 		{name: "Everything", why: hop, note: "then the add-ons and the nodegroup rolls", status: view.Progress, action: up(next)},
 	}
-	if c.Stale.Behind > 0 {
-		items = append(items, pickItem{name: "Catch up the nodegroups", why: "roll to " + c.Version.String(), note: plural(c.Stale.Behind, "nodegroup") + " behind", status: view.Warn, action: up(c.Version, change.PartNodegroups)})
+	if n := c.Findings.BehindNodegroups; n > 0 {
+		items = append(items, pickItem{name: "Catch up the nodegroups", why: "roll to " + c.Version.String(), note: plural(n, "nodegroup") + " behind", status: view.Warn, action: up(c.Version, change.PartNodegroups)})
 	}
-	if c.Stale.Addons > 0 {
-		items = append(items, pickItem{name: "Catch up the add-ons", why: "newest for " + c.Version.String(), note: plural(c.Stale.Addons, "add-on") + " behind", status: view.Warn, action: up(c.Version, change.PartAddons)})
+	if n := len(c.Findings.BehindAddons); n > 0 {
+		items = append(items, pickItem{name: "Catch up the add-ons", why: "newest for " + c.Version.String(), note: plural(n, "add-on") + " behind", status: view.Warn, action: up(c.Version, change.PartAddons)})
 	}
 	m.openPicker(&picker{title: "Upgrade " + c.Name + ": what?", items: items})
 	return nil
