@@ -193,56 +193,41 @@ func TestHangIsNotRetried(t *testing.T) {
 }
 
 // TestMutateRetryStartsOneUpdate: the answer to an update call is lost after
-// the update started. The retry carries the same client request token, so
-// the world has one update.
+// the update started. The retry carries the client request token that the
+// SDK filled, so the world has one update.
 func TestMutateRetryStartsOneUpdate(t *testing.T) {
-	tests := []struct {
-		name  string
-		token *string // nil lets the SDK fill the token
-	}{
-		{name: "token from the SDK"},
-		{name: "token from the caller", token: aws.String(awsx.IdempotencyToken())},
+	world, srv, provider := newServer(t)
+	world.SetFault(fleettest.EKSUpdateNodegroupVersion, fleettest.Fault{LoseResponse: 1})
+
+	out, err := provider.Clients(region).EKS.UpdateNodegroupVersion(testContext(t), &eks.UpdateNodegroupVersionInput{
+		ClusterName:   aws.String("prod"),
+		NodegroupName: aws.String("ng-a"),
+	})
+	if err != nil {
+		t.Fatalf("UpdateNodegroupVersion: %v", err)
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			world, srv, provider := newServer(t)
-			world.SetFault(fleettest.EKSUpdateNodegroupVersion, fleettest.Fault{LoseResponse: 1})
 
-			out, err := provider.Clients(region).EKS.UpdateNodegroupVersion(testContext(t), &eks.UpdateNodegroupVersionInput{
-				ClusterName:        aws.String("prod"),
-				NodegroupName:      aws.String("ng-a"),
-				ClientRequestToken: tt.token,
-			})
-			if err != nil {
-				t.Fatalf("UpdateNodegroupVersion: %v", err)
-			}
-
-			var sent []awsxtest.Request
-			for _, r := range srv.Requests() {
-				if r.Operation == fleettest.EKSUpdateNodegroupVersion {
-					sent = append(sent, r)
-				}
-			}
-			if len(sent) != 2 {
-				t.Fatalf("requests = %d, want 2: the lost one and its retry", len(sent))
-			}
-			first, second := sent[0].Input["clientRequestToken"], sent[1].Input["clientRequestToken"]
-			if first == nil || first == "" || first != second {
-				t.Errorf("client request tokens = %v, %v; want one token twice", first, second)
-			}
-			if tt.token != nil && first != *tt.token {
-				t.Errorf("client request token = %v, want the caller's %q", first, *tt.token)
-			}
-			var ids []string
-			world.View(func(s *fleettest.State) {
-				for _, u := range s.Cluster(region, "prod").Updates {
-					ids = append(ids, u.ID)
-				}
-			})
-			if len(ids) != 1 || ids[0] != aws.ToString(out.Update.Id) {
-				t.Errorf("updates in the world = %v, want only %q", ids, aws.ToString(out.Update.Id))
-			}
-		})
+	var sent []awsxtest.Request
+	for _, r := range srv.Requests() {
+		if r.Operation == fleettest.EKSUpdateNodegroupVersion {
+			sent = append(sent, r)
+		}
+	}
+	if len(sent) != 2 {
+		t.Fatalf("requests = %d, want 2: the lost one and its retry", len(sent))
+	}
+	first, second := sent[0].Input["clientRequestToken"], sent[1].Input["clientRequestToken"]
+	if first == nil || first == "" || first != second {
+		t.Errorf("client request tokens = %v, %v; want one token twice", first, second)
+	}
+	var ids []string
+	world.View(func(s *fleettest.State) {
+		for _, u := range s.Cluster(region, "prod").Updates {
+			ids = append(ids, u.ID)
+		}
+	})
+	if len(ids) != 1 || ids[0] != aws.ToString(out.Update.Id) {
+		t.Errorf("updates in the world = %v, want only %q", ids, aws.ToString(out.Update.Id))
 	}
 }
 

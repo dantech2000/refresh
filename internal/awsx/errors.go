@@ -271,15 +271,6 @@ func formatted(err error, format string, args ...any) error {
 	return &formattedError{msg: fmt.Sprintf(strings.ReplaceAll(format, "%w", "%v"), args...), err: err}
 }
 
-// DefaultTimeoutFlag is the flag FormatAWSError's timeout hint names: the
-// global API timeout.
-const DefaultTimeoutFlag = "--timeout"
-
-// deadlineHint is the remediation text of a timed-out operation.
-func deadlineHint(flag string) string {
-	return fmt.Sprintf("(increase %s to allow more time)", flag)
-}
-
 // FormatAWSError provides user-friendly error messages for AWS errors. Every
 // returned error wraps err.
 //
@@ -331,7 +322,7 @@ func FormatAWSError(err error, operation string) error {
 		return formatNetworkError(err, operation)
 	}
 	if isContextDeadline(err) {
-		return &formattedError{msg: fmt.Sprintf("timed out while %s %s", operation, deadlineHint(DefaultTimeoutFlag)), err: err}
+		return &formattedError{msg: fmt.Sprintf("timed out while %s (increase --timeout to allow more time)", operation), err: err}
 	}
 
 	var ae smithy.APIError

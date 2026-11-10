@@ -2,8 +2,6 @@ package awsx
 
 import (
 	"context"
-	crand "crypto/rand"
-	"encoding/hex"
 	"errors"
 	"io"
 	"math/rand/v2"
@@ -27,7 +25,8 @@ const (
 	// Standard is for describe, list, and update calls: up to 5 attempts.
 	// For an update call the SDK fills a client request token once, so
 	// every attempt carries the same token and a retry after a lost answer
-	// starts nothing new.
+	// starts nothing new. The SDK writes that token into the input struct,
+	// so a request that must start something new needs a new input.
 	Standard Policy = iota
 	// Sweep is for every call inside the region callback of a default
 	// sweep. It is Standard with a short dial timeout, and a connection
@@ -225,25 +224,4 @@ func nameNotFound(err error) bool {
 func IsPermanentAPIError(err error) bool {
 	var ae smithy.APIError
 	return errors.As(err, &ae) && !IsRetryable(err)
-}
-
-// IdempotencyToken returns a random client request token. The SDK fills a
-// token by itself for one call. A caller sets this one when several calls
-// must count as the same request, such as a submit that it repeats after a
-// restart.
-//
-// The SDK writes the token that it generates into the input struct of the
-// call. A second call with the same input struct therefore sends the same
-// token, and AWS answers with the first update. Build a new input for each
-// request that must start something new.
-//
-// The token is 40 hex characters: EKS takes 33 to 126 characters for the
-// token of UpdateClusterVersion.
-func IdempotencyToken() string {
-	b := make([]byte, 20)
-	if _, err := crand.Read(b); err != nil {
-		// What matters is that the token is unique.
-		return "refresh-token-" + time.Now().UTC().Format("20060102T150405.000000000")
-	}
-	return hex.EncodeToString(b)
 }
