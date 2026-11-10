@@ -1,15 +1,20 @@
 name: Lint
 
-# PR-only. Lint already passed on the PR, so a merge to main does not re-run
-# it: the merge only drives release-please. A post-merge run once reported
-# false positives from a stale analysis cache, so it added noise, not safety.
+# Lint runs on PRs only. Lint already passed on the PR, so a merge to main does
+# not re-run it: the merge only drives release-please. A post-merge run once
+# reported false positives from a stale analysis cache, so it added noise, not
+# safety. A push to main runs only `linter-cache`, which builds the linter
+# binary once per version and saves it where every PR can restore it (a cache
+# that a PR saves serves that PR only).
 on:
   pull_request:
+    branches: ["main"]
+  push:
     branches: ["main"]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -17,6 +22,7 @@ permissions:
 jobs:
   golangci-lint:
     name: Run golangci-lint
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -24,20 +30,82 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Go
+        id: go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-          cache: true
+          # The caches are the explicit steps below.
+          cache: false
+
+      # The test job of test.yml saves this cache on main.
+      - name: Restore the module cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/go/pkg/mod
+          key: go-mod-${{ runner.os }}-${{ hashFiles('go.sum') }}
+          restore-keys: go-mod-${{ runner.os }}-
+
+      # The one pin is GOLANGCI_LINT_VERSION in Taskfile.yml.
+      - name: Read the golangci-lint version
+        id: lint-version
+        run: |
+          version="$(awk '$1 == "GOLANGCI_LINT_VERSION:" {print $2}' Taskfile.yml)"
+          echo "version=${version:?no GOLANGCI_LINT_VERSION in Taskfile.yml}" >> "$GITHUB_OUTPUT"
+
+      # The linter is built with the go.mod toolchain instead of downloaded as
+      # a release binary. The gofmt formatter uses the go/printer of the Go
+      # that built the binary, and v2.13+ release binaries are built with Go
+      # 1.27. A build from source keeps CI's gofmt equal to `task fmt` under the
+      # go.mod toolchain. The build takes about a minute, so the binary is
+      # cached by linter version and Go version.
+      - name: Restore the golangci-lint binary
+        id: lint-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/go/bin/golangci-lint
+          key: golangci-lint-${{ runner.os }}-${{ steps.lint-version.outputs.version }}-go${{ steps.go.outputs.go-version }}
+
+      - name: Build golangci-lint
+        if: steps.lint-cache.outputs.cache-hit != 'true'
+        run: go install "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${{ steps.lint-version.outputs.version }}"
 
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
-          # Keep in lockstep with GOLANGCI_LINT_VERSION in Taskfile.yml.
-          version: v2.13.2
-          # Build the linter with the go.mod toolchain (set up above) instead
-          # of downloading the release binary. The gofmt formatter uses the
-          # go/printer of the Go that built the binary, and v2.13+ release
-          # binaries are built with Go 1.27. goinstall keeps CI's gofmt equal
-          # to `task fmt` under the go.mod toolchain.
-          install-mode: goinstall
+          # The binary of the steps above, from PATH.
+          install-mode: none
           args: --timeout=5m
+
+  linter-cache:
+    name: Cache golangci-lint
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        id: go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Read the golangci-lint version
+        id: lint-version
+        run: |
+          version="$(awk '$1 == "GOLANGCI_LINT_VERSION:" {print $2}' Taskfile.yml)"
+          echo "version=${version:?no GOLANGCI_LINT_VERSION in Taskfile.yml}" >> "$GITHUB_OUTPUT"
+
+      # Same path and key as in golangci-lint. On a hit nothing is saved.
+      - name: Restore the golangci-lint binary
+        id: lint-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/go/bin/golangci-lint
+          key: golangci-lint-${{ runner.os }}-${{ steps.lint-version.outputs.version }}-go${{ steps.go.outputs.go-version }}
+
+      - name: Build golangci-lint
+        if: steps.lint-cache.outputs.cache-hit != 'true'
+        run: go install "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${{ steps.lint-version.outputs.version }}"
