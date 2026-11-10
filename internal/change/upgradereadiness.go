@@ -20,9 +20,9 @@ const (
 // skipInsightsHint ends every insights blocker of an upgrade.
 const skipInsightsHint = "re-run shortly, or pass --skip-insights-check to upgrade without this check (not recommended)"
 
-// Readiness is the readiness of one hop of an upgrade: whether its
+// readiness is the readiness of one hop of an upgrade: whether its
 // control plane may move.
-type Readiness struct {
+type readiness struct {
 	// Blocker is nil when the control plane may move.
 	Blocker *Blocker
 	Notices []string
@@ -30,7 +30,7 @@ type Readiness struct {
 	Failures []apidoc.Failure
 }
 
-// HopReadiness judges the readiness of a hop against the snapshot, which
+// readinessForHop judges the readiness of a hop against the snapshot, which
 // a run reads again right before the control plane of that hop moves: the
 // plan judged later hops from versions that it only predicted, and EKS
 // evaluates the insights for the minor version after the live one only.
@@ -38,14 +38,14 @@ type Readiness struct {
 // already.
 //
 // insights is called only when hopReadsInsights says so.
-func HopReadiness(snap *fleet.Snapshot, hop fleet.Version, skipInsights bool, insights func(hop fleet.Version) InsightsRead) Readiness {
+func readinessForHop(snap *fleet.Snapshot, hop fleet.Version, skipInsights bool, insights func(hop fleet.Version) insightsRead) readiness {
 	if atLeast(snap.Cluster.Version, hop) {
-		return Readiness{}
+		return readiness{}
 	}
 	return hopReadiness(snap, hop, liveVersions(snap), skipInsights, insights)
 }
 
-// hopReadsInsights reports whether HopReadiness reads the insights for
+// hopReadsInsights reports whether readinessForHop reads the insights for
 // the hop: a real run refreshes them first. A run decides it on the read
 // before the control plane of the hop moves.
 func hopReadsInsights(snap *fleet.Snapshot, hop fleet.Version, skipInsights bool) bool {
@@ -96,29 +96,29 @@ func skewBlocked(snap *fleet.Snapshot, hop fleet.Version, versions map[string]fl
 //
 // EKS evaluates the upgrade insights for the minor version after the live
 // control plane only, so they are judged for that hop alone. A later hop
-// gets the skew check here, and the whole gate again from HopReadiness.
-func hopReadiness(snap *fleet.Snapshot, hop fleet.Version, versions map[string]fleet.Version, skipInsights bool, insights func(fleet.Version) InsightsRead) Readiness {
+// gets the skew check here, and the whole gate again from readinessForHop.
+func hopReadiness(snap *fleet.Snapshot, hop fleet.Version, versions map[string]fleet.Version, skipInsights bool, insights func(fleet.Version) insightsRead) readiness {
 	target := Target{Region: snap.Cluster.Region, Cluster: snap.Cluster.Name}
 	ref := StepRef{Phase: PhaseRef{Target: target, Kind: PhaseControlPlane, Hop: hop}, Kind: StepControlPlane}
 	blocked := func(kind BlockerKind, msg string) *Blocker { return &Blocker{Kind: kind, Step: &ref, Message: msg} }
 
 	if skew := skewBlocked(snap, hop, versions); len(skew) > 0 {
-		return Readiness{Blocker: blocked(BlockerNotReady, strings.Join(skew, "; "))}
+		return readiness{Blocker: blocked(BlockerNotReady, strings.Join(skew, "; "))}
 	}
 	if !readsInsights(snap, hop, versions, skipInsights) {
 		if skipInsights && evaluatedHop(snap.Cluster.Version, hop) {
-			return Readiness{Notices: []string{fmt.Sprintf(
+			return readiness{Notices: []string{fmt.Sprintf(
 				"cluster insights for %s were not checked (--skip-insights-check): deprecated APIs and kubelet skew of nodes outside managed nodegroups (Fargate, Karpenter, self-managed, hybrid) are unverified", hop)}}
 		}
 		// The control plane does not move in this hop, or the hop is one
 		// that EKS has no insight for yet.
-		return Readiness{}
+		return readiness{}
 	}
 	read := insights(hop)
-	fail := func(what string, err error) Readiness {
+	fail := func(what string, err error) readiness {
 		f := fleet.FailureFromError(apidoc.FailureCluster, target.Cluster, err)
 		f.Region = target.Region
-		return Readiness{
+		return readiness{
 			Blocker:  blocked(BlockerUnread, fmt.Sprintf("could not %s cluster insights for %s: %s; %s", what, hop, refreshSummary(err), skipInsightsHint)),
 			Failures: []apidoc.Failure{f},
 		}
@@ -131,7 +131,7 @@ func hopReadiness(snap *fleet.Snapshot, hop fleet.Version, versions map[string]f
 	case read.Err != nil:
 		// A dry run does not block on a read that a real run makes again.
 		r := fail("read", read.Err)
-		return Readiness{
+		return readiness{
 			Notices:  []string{fmt.Sprintf("could not read cluster insights for %s (%s); a real run will refresh them and block until EKS has evaluated %s", hop, awsx.Summary(read.Err), hop)},
 			Failures: r.Failures,
 		}
@@ -145,7 +145,7 @@ func hopReadiness(snap *fleet.Snapshot, hop fleet.Version, versions map[string]f
 // the checks for deprecated APIs and kubelet skew have not run. In the
 // preview of a dry run those two are notices, because a real run
 // refreshes the insights first. A WARNING insight is a notice.
-func judgeInsights(hop fleet.Version, read InsightsRead, blocked func(BlockerKind, string) *Blocker) Readiness {
+func judgeInsights(hop fleet.Version, read insightsRead, blocked func(BlockerKind, string) *Blocker) readiness {
 	var errs, unknown, warnings []string
 	total := 0
 	for _, in := range read.Insights {
@@ -163,7 +163,7 @@ func judgeInsights(hop fleet.Version, read InsightsRead, blocked func(BlockerKin
 			unknown = append(unknown, insightName(in))
 		}
 	}
-	var r Readiness
+	var r readiness
 	if len(warnings) > 0 {
 		r.Notices = append(r.Notices, fmt.Sprintf("insight warnings for %s: %s", hop, strings.Join(warnings, ", ")))
 	}

@@ -226,7 +226,7 @@ func TestPlanUpgrade_FollowUpsKeepExclusionsAndTarget(t *testing.T) {
 	w.addons = map[string]string{"vpc-cni": latestFor("1.31"), "kube-proxy": latestFor("1.31")}
 	in := w.upgradeInputs()
 	in.Command = FollowUp{Prefix: "refresh --profile 'prod admin' --region eu-west-1", Suffix: "--kube-context prod-ctx"}
-	p, err := PlanUpgrade(w.snapshot(), UpgradeRequest{
+	p, err := upgradePlan(w.snapshot(), UpgradeRequest{
 		Target: Target{Region: east, Cluster: w.name}, To: ver("1.32"),
 		Only: []Part{PartControlPlane}, SkipAddons: []string{"kube-proxy"}, SkipNodegroups: []string{"protected"},
 	}, in)

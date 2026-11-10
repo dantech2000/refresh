@@ -16,12 +16,12 @@ const kubeletSkew = 3
 // not allocate one hop for each minor version.
 const maxHops = 100
 
-// Hops returns the minor versions that an upgrade from one version to
+// hops returns the minor versions that an upgrade from one version to
 // another goes through, one after another: 1.31 to 1.33 gives 1.32 and
 // 1.33. Equal versions give no hop, which is how the upgrade of a cluster
 // that is at its target becomes a catch-up and not an error. EKS upgrades
 // one minor version at a time.
-func Hops(from, to fleet.Version) ([]fleet.Version, error) {
+func hops(from, to fleet.Version) ([]fleet.Version, error) {
 	switch {
 	case from.IsZero() || to.IsZero():
 		return nil, &RefusalError{Reason: RefusalVersionUnknown, Message: "the Kubernetes version to upgrade from or to is not known"}

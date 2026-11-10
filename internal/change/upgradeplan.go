@@ -9,21 +9,21 @@ import (
 	"github.com/dantech2000/refresh/internal/fleet"
 )
 
-// UpgradeInputs is what PlanUpgrade reads beside the snapshot. The
+// upgradeReads is what upgradePlan reads beside the snapshot. The
 // planner makes no call of its own: its caller reads from AWS inside the
-// three functions, and PlanUpgrade calls each one only for what the plan
+// three functions, and upgradePlan calls each one only for what the plan
 // needs, in the order of the plan.
 //
 // The planner has no context. A read that fails because the context of
 // the caller ended looks like any other failed read here, and blocks a
-// step: the caller checks its context after PlanUpgrade returns, and an
+// step: the caller checks its context after upgradePlan returns, and an
 // interrupted plan is an error, not a blocked upgrade.
-type UpgradeInputs struct {
+type upgradeReads struct {
 	// Now is the time of the plan.
 	Now time.Time
 	// Version says whether EKS offers a Kubernetes version: one
 	// DescribeClusterVersions call. It is called once, for the target.
-	Version func(v fleet.Version) VersionOffer
+	Version func(v fleet.Version) offer
 	// AddonVersions returns the versions of an add-on that a Kubernetes
 	// version can run, newest first, and none when EKS publishes none:
 	// fleet.Fetcher.AddonVersions. It is called for the live version and
@@ -35,12 +35,12 @@ type UpgradeInputs struct {
 	// It is called at most once, for the hop after the live version, and
 	// not at all with SkipInsights, when the control plane does not move,
 	// or when the kubelet skew blocks that hop: see readsInsights.
-	Insights func(hop fleet.Version) InsightsRead
+	Insights func(hop fleet.Version) insightsRead
 	// Command holds the words around the commands that a notice names.
 	Command FollowUp
 }
 
-// PlanUpgrade derives the plan of a cluster upgrade from a snapshot with
+// upgradePlan derives the plan of a cluster upgrade from a snapshot with
 // the nodegroups and the add-ons of the cluster. It is also how a run
 // resumes: a step whose goal the live cluster already meets is Skip, so
 // the same request after a stopped run, or after a finished one, plans
@@ -62,7 +62,7 @@ type UpgradeInputs struct {
 // The error is a RefusalError for a request that cannot be planned, and
 // a NotFoundError for a nodegroup or an add-on name that the cluster does
 // not have.
-func PlanUpgrade(snap *fleet.Snapshot, req UpgradeRequest, in UpgradeInputs) (*Plan, error) {
+func upgradePlan(snap *fleet.Snapshot, req UpgradeRequest, in upgradeReads) (*Plan, error) {
 	p, err := newUpgradePlanner(snap, req, in)
 	if err != nil {
 		return nil, err
@@ -70,18 +70,18 @@ func PlanUpgrade(snap *fleet.Snapshot, req UpgradeRequest, in UpgradeInputs) (*P
 	return p.finish(), nil
 }
 
-// newUpgradePlanner starts PlanUpgrade: the refusals, the target version,
+// newUpgradePlanner starts upgradePlan: the refusals, the target version,
 // the names of the request, and the catch-up hop. It reads no insights,
 // so a request that is refused is refused before an insights refresh.
 // readsInsights then says whether the plan reads the insights, and
 // finish plans the hops.
-func newUpgradePlanner(snap *fleet.Snapshot, req UpgradeRequest, in UpgradeInputs) (*upgradePlanner, error) {
+func newUpgradePlanner(snap *fleet.Snapshot, req UpgradeRequest, in upgradeReads) (*upgradePlanner, error) {
 	target := Target{Region: snap.Cluster.Region, Cluster: snap.Cluster.Name}
 	live := snap.Cluster.Version
 	if snap.Have.Cluster != fleet.Collected || live.IsZero() {
 		return nil, &RefusalError{Reason: RefusalVersionUnknown, Message: "the Kubernetes version of cluster " + target.Cluster + " is not known"}
 	}
-	hops, err := Hops(live, req.To)
+	hops, err := hops(live, req.To)
 	if err != nil {
 		return nil, err
 	}
@@ -135,11 +135,11 @@ func (p *upgradePlanner) finish() *Plan {
 	return &Plan{Kind: ClusterUpgrade, Request: p.req, Clusters: []ClusterPlan{*p.cp}, At: p.in.Now}
 }
 
-// upgradePlanner holds one run of PlanUpgrade.
+// upgradePlanner holds one run of upgradePlan.
 type upgradePlanner struct {
 	snap *fleet.Snapshot
 	req  UpgradeRequest
-	in   UpgradeInputs
+	in   upgradeReads
 	planWriter
 	// live is the version that the control plane runs.
 	live fleet.Version

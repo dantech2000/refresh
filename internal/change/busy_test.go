@@ -146,7 +146,7 @@ func TestBusy(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			refuse, notices := Busy(snapshot(tt.edit), tt.kind, tt.ours)
+			refuse, notices := busyRefusals(snapshot(tt.edit), tt.kind, tt.ours)
 			if diff := cmp.Diff(tt.refuse, refuse, cmp.AllowUnexported(Blocker{})); diff != "" {
 				t.Errorf("refusals (-want +got):\n%s", diff)
 			}

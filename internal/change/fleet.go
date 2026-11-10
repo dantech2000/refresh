@@ -219,7 +219,7 @@ func (r *runner) turn(p *Plan, i int) (outcome turnOutcome, why string) {
 			r.addFailures(unplannedCluster(prev.Target, err).Failures)
 			return turnUnread, ""
 		}
-		diff := Diff(single(p, &prev), single(p, cur))
+		diff := diffPlans(single(p, &prev), single(p, cur))
 		p.Clusters[i] = *cur
 		yes := r.common.Policy.Yes
 		for _, c := range diff {

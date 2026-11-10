@@ -572,7 +572,7 @@ func TestDiff_ForceIsWordedAsTheFlag(t *testing.T) {
 		{StepNodegroup, "ng-a", "with --force, not without it"},
 	}
 	for _, tt := range tests {
-		diff := Diff(plan(tt.kind, tt.name, false), plan(tt.kind, tt.name, true))
+		diff := diffPlans(plan(tt.kind, tt.name, false), plan(tt.kind, tt.name, true))
 		if len(diff) != 1 || !strings.Contains(diff[0].Message, tt.want) {
 			t.Errorf("%s: diff = %+v, want one change that says %q", tt.kind, diff, tt.want)
 		}

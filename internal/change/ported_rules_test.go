@@ -72,7 +72,7 @@ func TestWaitSettled_ClusterThatWillNotBecomeActive(t *testing.T) {
 		t.Run(string(status), func(t *testing.T) {
 			e := newEnv(t, newWorld(func(c *fleettest.Cluster) { c.Status = status }))
 			var rec recorder
-			got, err := WaitSettled(testContext(t), e.deps.AWS.PollClients(east), controlPlane, clusterSettled, rec.options(e))
+			got, err := waitSettled(testContext(t), e.deps.AWS.PollClients(east), controlPlane, clusterSettled, rec.options(e))
 			if err == nil || !strings.Contains(err.Error(), "the cluster is "+string(status)+"; it will not become ACTIVE") {
 				t.Fatalf("error = %v, want that the cluster will not become ACTIVE", err)
 			}
@@ -91,7 +91,7 @@ func TestWaitSettled_ClusterThatWillNotBecomeActive(t *testing.T) {
 				e.world.Edit(func(s *fleettest.State) { s.Cluster(east, "prod").Status = fleettest.StatusActive })
 			}
 		})
-		got, err := WaitSettled(testContext(t), e.deps.AWS.PollClients(east), controlPlane, clusterSettled, (&recorder{}).options(e))
+		got, err := waitSettled(testContext(t), e.deps.AWS.PollClients(east), controlPlane, clusterSettled, (&recorder{}).options(e))
 		if err != nil || got.Status != "ACTIVE" {
 			t.Errorf("settled %+v, error %v; want ACTIVE", got, err)
 		}
@@ -107,7 +107,7 @@ func TestWait_NetworkErrorsAndDeniedPolls(t *testing.T) {
 		name string
 		res  Resource
 		op   fleettest.Operation
-		done func(Settled) (bool, error)
+		done func(settled) (bool, error)
 		busy func(c *fleettest.Cluster, s fleettest.ResourceStatus)
 	}{
 		{"control plane", Resource{Target: prod, Kind: StepControlPlane}, fleettest.EKSDescribeCluster, clusterSettled,
@@ -128,7 +128,7 @@ func TestWait_NetworkErrorsAndDeniedPolls(t *testing.T) {
 				}
 			})
 			var rec recorder
-			got, err := WaitSettled(testContext(t), e.deps.AWS.PollClients(east), r.res, r.done, rec.options(e))
+			got, err := waitSettled(testContext(t), e.deps.AWS.PollClients(east), r.res, r.done, rec.options(e))
 			if err != nil || got.Status != "ACTIVE" {
 				t.Fatalf("settled %+v, error %v; want ACTIVE after the polls that failed", got, err)
 			}
@@ -143,7 +143,7 @@ func TestWait_NetworkErrorsAndDeniedPolls(t *testing.T) {
 					e.world.SetFault(r.op, fleettest.Fault{Deny: true})
 				}
 			})
-			_, err := WaitSettled(testContext(t), e.deps.AWS.PollClients(east), r.res, r.done, (&recorder{}).options(e))
+			_, err := waitSettled(testContext(t), e.deps.AWS.PollClients(east), r.res, r.done, (&recorder{}).options(e))
 			var unobserved *UnobservedError
 			if !errors.As(err, &unobserved) || unobserved.LastStatus != "UPDATING" {
 				t.Fatalf("error = %v, want an *UnobservedError after UPDATING", err)
@@ -163,7 +163,7 @@ func TestWait_NetworkErrorsAndDeniedPolls(t *testing.T) {
 			}
 		})
 		var rec recorder
-		if err := WaitUpdate(testContext(t), e.deps.AWS.PollClients(east), cni, id, rec.options(e)); err != nil {
+		if err := waitUpdate(testContext(t), e.deps.AWS.PollClients(east), cni, id, rec.options(e)); err != nil {
 			t.Fatalf("error = %v, want none", err)
 		}
 		if diff := cmp.Diff([]string{"error", "error", "error", "Successful"}, rec.statuses()); diff != "" {

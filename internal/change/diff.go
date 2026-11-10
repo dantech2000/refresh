@@ -76,7 +76,7 @@ type Change struct {
 	Message string
 }
 
-// Diff compares the plan that a person saw with the plan computed now and
+// diffPlans compares the plan that a person saw with the plan computed now and
 // returns the differences that matter, in the order of cur and then of
 // the steps that went away.
 //
@@ -91,10 +91,10 @@ type Change struct {
 // else on a target that the run leaves alone, so no change of it needs an
 // answer or a notice, and the row of the step says what it is now. It
 // also compares the blockers and the health
-// checks of each cluster. Diff does not compare the requests of the two
+// checks of each cluster. diffPlans does not compare the requests of the two
 // plans: Run checks that with sameRequest before it takes a reviewed plan
 // as consent.
-func Diff(prev, cur *Plan) []Change {
+func diffPlans(prev, cur *Plan) []Change {
 	var out []Change
 	before := map[StepRef]Step{}
 	blockers := map[string]bool{}

@@ -67,11 +67,11 @@ func (r *runner) runScaleStep(cp *ClusterPlan, s Step) StepResult {
 	defer wait.stop()
 	poll := r.d.AWS.PollClients(cp.Region)
 	opts := r.waitOptions(s, wait)
-	if err := WaitUpdate(ctx, poll, resource, id, opts); err != nil {
+	if err := waitUpdate(ctx, poll, resource, id, opts); err != nil {
 		return r.waitFailed(ctx, cp, res, err)
 	}
 	// After Successful the nodegroup has nearly always settled, so it is
-	// read at once, as WaitSettled reads it, and polled only while it is
+	// read at once, as waitSettled reads it, and polled only while it is
 	// still changing. A read that fails is left to the polls.
 	check := scaleSettled(s.Ref.Name, id, req)
 	settled, err := describe(ctx, poll.Clients, resource)
@@ -84,7 +84,7 @@ func (r *runner) runScaleStep(cp *ClusterPlan, s Step) StepResult {
 		}
 	}
 	if !done {
-		if settled, err = WaitSettled(ctx, poll, resource, check, opts); err != nil {
+		if settled, err = waitSettled(ctx, poll, resource, check, opts); err != nil {
 			return r.waitFailed(ctx, cp, res, err)
 		}
 	}
@@ -135,8 +135,8 @@ func submitScale(ctx context.Context, c *awsx.Clients, r Resource, req ScaleRequ
 //   - ACTIVE: done.
 //   - DEGRADED, a failed status, or DELETING: an error.
 //   - Anything else: the nodegroup is still changing.
-func scaleSettled(nodegroup, updateID string, req ScaleRequest) func(Settled) (bool, error) {
-	return func(s Settled) (bool, error) {
+func scaleSettled(nodegroup, updateID string, req ScaleRequest) func(settled) (bool, error) {
+	return func(s settled) (bool, error) {
 		for _, size := range []struct {
 			name string
 			want *int32

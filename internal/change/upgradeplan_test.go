@@ -132,7 +132,7 @@ func TestPlanUpgrade_Refusals(t *testing.T) {
 // goes on: EKS refuses a version that it does not offer.
 func TestPlanUpgrade_VersionCheckFailed(t *testing.T) {
 	w := twoHopWorld()
-	w.offer = func(fleet.Version) VersionOffer { return VersionOffer{Err: accessDenied()} }
+	w.offer = func(fleet.Version) offer { return offer{Err: accessDenied()} }
 	cp := w.upgrade(t, "1.32", UpgradeRequest{})
 	if len(cp.Blockers) > 0 || workSteps(cp) == 0 {
 		t.Fatalf("plan = %v, blockers %q; want a plan that runs", stepLines(cp), blockerText(cp))
@@ -425,7 +425,7 @@ func TestPlanUpgrade_StepsPassTheBusyRule(t *testing.T) {
 		if s := findStep(t, cp, "1.32", StepControlPlane, ""); s.Action != Attach || s.Reason != InFlight {
 			t.Fatalf("control-plane step = %s %s, want Attach InFlight", s.Action, s.Reason)
 		}
-		if refuse, _ := Busy(w.snapshot(), ClusterUpgrade, cp.Steps()); len(refuse) != 0 {
+		if refuse, _ := busyRefusals(w.snapshot(), ClusterUpgrade, cp.Steps()); len(refuse) != 0 {
 			t.Fatalf("the busy rule refused the plan: %+v", refuse)
 		}
 	})
@@ -439,7 +439,7 @@ func TestPlanUpgrade_StepsPassTheBusyRule(t *testing.T) {
 		if s := findStep(t, cp, "1.33", StepNodegroup, "ng-b"); s.Action != Submit {
 			t.Fatalf("ng-b step = %s, want Submit", s.Action)
 		}
-		if refuse, _ := Busy(w.snapshot(), ClusterUpgrade, cp.Steps()); len(refuse) != 0 {
+		if refuse, _ := busyRefusals(w.snapshot(), ClusterUpgrade, cp.Steps()); len(refuse) != 0 {
 			t.Fatalf("the busy rule refused the plan: %+v", refuse)
 		}
 	})

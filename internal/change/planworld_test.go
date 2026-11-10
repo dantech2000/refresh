@@ -54,7 +54,7 @@ type planWorld struct {
 	catalogue func(addon string, k fleet.Version) ([]string, error)
 	// offer replaces the answer about a version: offered, in standard
 	// support, up to 1.35.
-	offer func(v fleet.Version) VersionOffer
+	offer func(v fleet.Version) offer
 	// insights are the insights that the cluster has. Without strict, a
 	// hop with none gets a passing one, as EKS has after a refresh.
 	insights    []apidoc.Insight
@@ -138,17 +138,17 @@ func (w *planWorld) builds(addon string, k fleet.Version) []string {
 	return out
 }
 
-func (w *planWorld) offered(v fleet.Version) VersionOffer {
+func (w *planWorld) offered(v fleet.Version) offer {
 	w.offerCalls = append(w.offerCalls, v.String())
 	if w.offer != nil {
 		return w.offer(v)
 	}
-	return VersionOffer{Offered: v.Major == 1 && v.Minor >= 28 && v.Minor <= 35, Tier: apidoc.SupportStandard}
+	return offer{Offered: v.Major == 1 && v.Minor >= 28 && v.Minor <= 35, Tier: apidoc.SupportStandard}
 }
 
-func (w *planWorld) upgradeInsights(hop fleet.Version) InsightsRead {
+func (w *planWorld) upgradeInsights(hop fleet.Version) insightsRead {
 	w.insightCalls++
-	read := InsightsRead{Insights: slices.Clone(w.insights), Err: w.insightsErr, RefreshErr: w.refreshErr, Refreshed: !w.preview}
+	read := insightsRead{Insights: slices.Clone(w.insights), Err: w.insightsErr, RefreshErr: w.refreshErr, Refreshed: !w.preview}
 	has := slices.ContainsFunc(w.insights, func(i apidoc.Insight) bool { return i.KubernetesVersion == hop.String() })
 	if !w.strict && !has {
 		read.Insights = append(read.Insights, insightFor("Kubelet version skew", insightPassing, hop.String()))
@@ -195,8 +195,8 @@ func (w *planWorld) snapshot() *fleet.Snapshot {
 	return snap
 }
 
-func (w *planWorld) upgradeInputs() UpgradeInputs {
-	return UpgradeInputs{Now: w.now, Version: w.offered, AddonVersions: w.versions, Insights: w.upgradeInsights}
+func (w *planWorld) upgradeInputs() upgradeReads {
+	return upgradeReads{Now: w.now, Version: w.offered, AddonVersions: w.versions, Insights: w.upgradeInsights}
 }
 
 // upgrade plans an upgrade of the world to a version and returns the
@@ -204,9 +204,9 @@ func (w *planWorld) upgradeInputs() UpgradeInputs {
 func (w *planWorld) upgrade(t *testing.T, to string, req UpgradeRequest) *ClusterPlan {
 	t.Helper()
 	req.Target, req.To = Target{Region: east, Cluster: w.name}, ver(to)
-	p, err := PlanUpgrade(w.snapshot(), req, w.upgradeInputs())
+	p, err := upgradePlan(w.snapshot(), req, w.upgradeInputs())
 	if err != nil {
-		t.Fatalf("PlanUpgrade to %s: %v", to, err)
+		t.Fatalf("upgradePlan to %s: %v", to, err)
 	}
 	if p.Kind != ClusterUpgrade || len(p.Clusters) != 1 || !p.At.Equal(w.now) {
 		t.Fatalf("plan = kind %s, %d clusters, at %s", p.Kind, len(p.Clusters), p.At)
@@ -245,9 +245,9 @@ func checkRefs(t *testing.T, cp *ClusterPlan) {
 func (w *planWorld) upgradeErr(t *testing.T, to string, req UpgradeRequest) error {
 	t.Helper()
 	req.Target, req.To = Target{Region: east, Cluster: w.name}, ver(to)
-	p, err := PlanUpgrade(w.snapshot(), req, w.upgradeInputs())
+	p, err := upgradePlan(w.snapshot(), req, w.upgradeInputs())
 	if err == nil {
-		t.Fatalf("PlanUpgrade to %s returned a plan: %v", to, stepLines(&p.Clusters[0]))
+		t.Fatalf("upgradePlan to %s returned a plan: %v", to, stepLines(&p.Clusters[0]))
 	}
 	return err
 }

@@ -285,7 +285,7 @@ func TestDiff(t *testing.T) {
 			if tt.edit != nil {
 				tt.edit(&prev.Clusters[0], &cur.Clusters[0])
 			}
-			got := Diff(prev, cur)
+			got := diffPlans(prev, cur)
 			if diff := cmp.Diff(tt.want, got); diff != "" {
 				t.Errorf("Diff (-want +got):\n%s", diff)
 			}

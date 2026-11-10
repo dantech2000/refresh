@@ -261,7 +261,7 @@ type Step struct {
 	// InFlight is the type of the update that makes a busy target busy,
 	// such as VersionUpdate. It is "" for every other step, and when the
 	// update was not found. The run submits nothing for such a step, so
-	// Diff does not compare the field.
+	// diffPlans does not compare the field.
 	InFlight string
 }
 

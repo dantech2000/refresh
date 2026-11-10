@@ -21,7 +21,7 @@ import (
 //     too.
 //  2. A rollback is judged again against the target of the plan: the
 //     rollback window, the offer of the target version, and the rollback
-//     insights. See RollbackStillEligible. A target that changed refuses,
+//     insights. See rollbackStillEligible. A target that changed refuses,
 //     and no answer accepts it.
 //  3. The busy rule on that read, with the steps of the phase as the
 //     steps of the run, and this step as a Submit: an update of the
@@ -101,7 +101,7 @@ func (r *runner) guardSubmit(cp *ClusterPlan, s Step, res StepResult) (StepResul
 // them first and says that it waited: the caller reads the cluster again,
 // and the gate on that read reuses the refresh. A refresh that failed is
 // the read: the gate blocks on it, and nothing is tried again.
-func (r *runner) gateInsights(cp *ClusterPlan, s Step, snap *fleet.Snapshot) (insights func(fleet.Version) InsightsRead, waited bool) {
+func (r *runner) gateInsights(cp *ClusterPlan, s Step, snap *fleet.Snapshot) (insights func(fleet.Version) insightsRead, waited bool) {
 	live := snap.Cluster.Version.String()
 	insights = upgradeInsights(r.readCtx, r.d.AWS.Clients(cp.Region), cp.Target, live, r.refresh)
 	req, ok := r.req.(UpgradeRequest)
@@ -110,7 +110,7 @@ func (r *runner) gateInsights(cp *ClusterPlan, s Step, snap *fleet.Snapshot) (in
 		return insights, false
 	}
 	if err := r.refresh.refresh(r.readCtx, cp.Target, live); err != nil {
-		return func(fleet.Version) InsightsRead { return InsightsRead{Refreshed: true, RefreshErr: err} }, false
+		return func(fleet.Version) insightsRead { return insightsRead{Refreshed: true, RefreshErr: err} }, false
 	}
 	return insights, true
 }
@@ -140,7 +140,7 @@ func (r *runner) guardRollback(cp *ClusterPlan, res StepResult, snap *fleet.Snap
 	if !ok {
 		return res, true
 	}
-	blockers, failures, err := RollbackStillEligible(snap, req, rollbackInputs(r.readCtx, r.d, r.d.AWS.Clients(cp.Region), cp.Cluster, nil), cp.To)
+	blockers, failures, err := rollbackStillEligible(snap, req, rollbackInputs(r.readCtx, r.d, r.d.AWS.Clients(cp.Region), cp.Cluster, nil), cp.To)
 	if ended := r.readCtx.Err(); ended != nil {
 		return r.unsent(cp, res, ended), false
 	}
@@ -179,7 +179,7 @@ func blockerMessages(blockers []Blocker) string {
 //     from the minor version before its goal, and a rollback only from
 //     the one after it.
 //  3. The gate of the phase refuses: Blocked. See controlPlaneGate.
-func (r *runner) guardControlPlane(cp *ClusterPlan, res StepResult, s Step, snap *fleet.Snapshot, insights func(fleet.Version) InsightsRead) (StepResult, bool) {
+func (r *runner) guardControlPlane(cp *ClusterPlan, res StepResult, s Step, snap *fleet.Snapshot, insights func(fleet.Version) insightsRead) (StepResult, bool) {
 	kind, live := r.req.kind(), snap.Cluster.Version.String()
 	switch {
 	case versionDone(kind, live, s.To):

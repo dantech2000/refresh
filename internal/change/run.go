@@ -257,8 +257,8 @@ func (r *runner) releaseWait(wait *budget) {
 // that the budget has left and checks the budget after each answer, on
 // the clock of the run: the last poll is due at the deadline, and none
 // comes after it. See budget for the answer of that poll.
-func (r *runner) waitOptions(s Step, wait *budget) WaitOptions {
-	return WaitOptions{
+func (r *runner) waitOptions(s Step, wait *budget) waitOptions {
+	return waitOptions{
 		Interval: r.common.Limits.Poll,
 		After:    r.d.after,
 		Progress: func(p UpdateProgress) {

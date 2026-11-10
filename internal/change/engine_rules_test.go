@@ -771,7 +771,7 @@ func TestSkewRulesAgree(t *testing.T) {
 					{Name: "ng", State: fleet.Collected, Status: "ACTIVE", Version: fleet.Version{Major: 1, Minor: live.Minor - behind}},
 				},
 			}
-			planner := HopReadiness(snap, hop, true, nil).Blocker != nil
+			planner := readinessForHop(snap, hop, true, nil).Blocker != nil
 			check := health.Run(t.Context(), []health.Check{health.VersionSkew()}, &health.Input{Snapshot: snap})
 			gate := check[0].Outcome == health.Fail
 			if planner != gate {

@@ -227,7 +227,7 @@ func (r *runner) phaseRead(cp *ClusterPlan) (*fleet.Snapshot, error) {
 // too: nothing then shows that no change is running. It returns true
 // with the result when the run must stop.
 func (r *runner) phaseBusy(cp *ClusterPlan, res StepResult, snap *fleet.Snapshot, steps []Step) (StepResult, bool) {
-	refuse, notices := Busy(snap, r.req.kind(), steps)
+	refuse, notices := busyRefusals(snap, r.req.kind(), steps)
 	for _, n := range notices {
 		// It is said once for the step.
 		if !slices.Contains(r.step.busySaid, n) {
@@ -590,7 +590,7 @@ func (r *runner) resumeHint(res Result) string {
 // clusterSettled is the done function of a wait for a control plane:
 // ACTIVE is done, and a cluster that is FAILED or DELETING never becomes
 // ACTIVE.
-func clusterSettled(s Settled) (bool, error) {
+func clusterSettled(s settled) (bool, error) {
 	switch s.Status {
 	case string(ekstypes.ClusterStatusActive):
 		return true, nil
@@ -603,6 +603,6 @@ func clusterSettled(s Settled) (bool, error) {
 // nodegroupSettled is the done function of a wait for a nodegroup that is
 // changing: any status but UPDATING and CREATING ends it, and the caller
 // judges the version first and the status second.
-func nodegroupSettled(s Settled) (bool, error) {
+func nodegroupSettled(s settled) (bool, error) {
 	return s.Status != string(ekstypes.NodegroupStatusUpdating) && s.Status != string(ekstypes.NodegroupStatusCreating), nil
 }

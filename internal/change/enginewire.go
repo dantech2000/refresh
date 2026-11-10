@@ -31,7 +31,7 @@ func engineNeed(history, instances bool) fleet.Need {
 }
 
 // planUpgrade builds the plan of a cluster upgrade. It reads the cluster,
-// hands the snapshot to PlanUpgrade with the reads that the planner asks
+// hands the snapshot to upgradePlan with the reads that the planner asks
 // for one by one, and then applies the busy rule and the health gate to
 // the steps.
 //
@@ -72,7 +72,7 @@ func planUpgrade(ctx context.Context, d Deps, req UpgradeRequest, refresh *insig
 		t, live := p.cp.Target, p.live.String()
 		if !refresh.current(t, live) {
 			if err := refresh.refresh(ctx, t, live); err != nil {
-				p.in.Insights = func(fleet.Version) InsightsRead { return InsightsRead{Refreshed: true, RefreshErr: err} }
+				p.in.Insights = func(fleet.Version) insightsRead { return insightsRead{Refreshed: true, RefreshErr: err} }
 			} else {
 				d.Fetch = d.Fetch.Fresh()
 				if p, err = start(); err != nil {
@@ -100,11 +100,11 @@ func planEnded(ctx context.Context, err error) error {
 	return err
 }
 
-// upgradeInputs returns the reads of PlanUpgrade and of HopReadiness
+// upgradeInputs returns the reads of upgradePlan and of readinessForHop
 // against live AWS. The add-on catalogue is read through cat.
-func upgradeInputs(ctx context.Context, d Deps, clients *awsx.Clients, snap *fleet.Snapshot, req UpgradeRequest, refresh *insightsRefresher, cat *catalogue) UpgradeInputs {
+func upgradeInputs(ctx context.Context, d Deps, clients *awsx.Clients, snap *fleet.Snapshot, req UpgradeRequest, refresh *insightsRefresher, cat *catalogue) upgradeReads {
 	t := Target{Region: snap.Cluster.Region, Cluster: snap.Cluster.Name}
-	return UpgradeInputs{
+	return upgradeReads{
 		Now:           d.now(),
 		Version:       versionOffer(ctx, clients),
 		AddonVersions: cat.lookup(ctx, upgradeCatalogueKeys(snap, req)),
@@ -181,14 +181,14 @@ func (c *catalogue) read(ctx context.Context, keys []catalogueKey) {
 	}
 }
 
-// upgradeCatalogueKeys returns the catalogue reads that PlanUpgrade asks
+// upgradeCatalogueKeys returns the catalogue reads that upgradePlan asks
 // for: each installed add-on that was read and that the request does not
 // skip, at the live version when the plan has a catch-up hop, and at each
 // hop.
 func upgradeCatalogueKeys(snap *fleet.Snapshot, req UpgradeRequest) func(fleet.Version) []catalogueKey {
 	return func(fleet.Version) []catalogueKey {
 		live := snap.Cluster.Version
-		hops, _ := Hops(live, req.To)
+		hops, _ := hops(live, req.To)
 		if len(hops) == 0 {
 			hops = []fleet.Version{req.To}
 		}
@@ -208,7 +208,7 @@ func upgradeCatalogueKeys(snap *fleet.Snapshot, req UpgradeRequest) func(fleet.V
 	}
 }
 
-// rollbackCatalogueKeys returns the catalogue reads that PlanRollback
+// rollbackCatalogueKeys returns the catalogue reads that rollbackPlan
 // asks for: each installed add-on that was read, at the target of the
 // rollback, which is the version of the first ask.
 func rollbackCatalogueKeys(addons []fleet.Addon) func(fleet.Version) []catalogueKey {
@@ -228,9 +228,9 @@ func rollbackCatalogueKeys(addons []fleet.Addon) func(fleet.Version) []catalogue
 // refreshed them already, so refresh sends nothing and does not wait,
 // unless the control plane moved since that refresh. live is the version
 // that the control plane runs.
-func upgradeInsights(ctx context.Context, clients *awsx.Clients, t Target, live string, refresh *insightsRefresher) func(fleet.Version) InsightsRead {
-	return func(fleet.Version) InsightsRead {
-		read := InsightsRead{Refreshed: refresh != nil}
+func upgradeInsights(ctx context.Context, clients *awsx.Clients, t Target, live string, refresh *insightsRefresher) func(fleet.Version) insightsRead {
+	return func(fleet.Version) insightsRead {
+		read := insightsRead{Refreshed: refresh != nil}
 		if refresh != nil {
 			if err := refresh.refresh(ctx, t, live); err != nil {
 				read.RefreshErr = err
@@ -244,17 +244,17 @@ func upgradeInsights(ctx context.Context, clients *awsx.Clients, t Target, live 
 
 // versionOffer returns the read of what EKS says about one Kubernetes
 // version: one DescribeClusterVersions call for that version.
-func versionOffer(ctx context.Context, clients *awsx.Clients) func(fleet.Version) VersionOffer {
-	return func(v fleet.Version) VersionOffer {
+func versionOffer(ctx context.Context, clients *awsx.Clients) func(fleet.Version) offer {
+	return func(v fleet.Version) offer {
 		out, err := clients.EKS.DescribeClusterVersions(ctx, &eks.DescribeClusterVersionsInput{ClusterVersions: []string{v.String()}})
 		if err != nil {
-			return VersionOffer{Err: err}
+			return offer{Err: err}
 		}
 		for _, info := range out.ClusterVersions {
 			if aws.ToString(info.ClusterVersion) != v.String() {
 				continue
 			}
-			offer := VersionOffer{Offered: true, Tier: apidoc.SupportStandard}
+			offer := offer{Offered: true, Tier: apidoc.SupportStandard}
 			switch {
 			case info.VersionStatus == ekstypes.VersionStatusUnsupported || info.Status == ekstypes.ClusterVersionStatusUnsupported:
 				offer.Tier = apidoc.SupportUnsupported
@@ -263,12 +263,12 @@ func versionOffer(ctx context.Context, clients *awsx.Clients) func(fleet.Version
 			}
 			return offer
 		}
-		return VersionOffer{}
+		return offer{}
 	}
 }
 
 // planRollback builds the plan of a cluster rollback: one read of the
-// cluster with its update history, PlanRollback with the reads that it
+// cluster with its update history, rollbackPlan with the reads that it
 // asks for, and then the busy rule and the health gate. A rollback starts
 // no insights refresh: EKS evaluates the rollback insights when the
 // rollback starts.
@@ -284,7 +284,7 @@ func planRollback(ctx context.Context, d Deps, req RollbackRequest) (*Plan, erro
 	if err != nil {
 		return nil, &ClusterReadError{Target: Target{Region: clients.Region, Cluster: req.Cluster}, Err: err}
 	}
-	p, err := PlanRollback(snap, req, rollbackInputs(ctx, d, clients, snap.Cluster.Name, snap.Addons))
+	p, err := rollbackPlan(snap, req, rollbackInputs(ctx, d, clients, snap.Cluster.Name, snap.Addons))
 	if err := planEnded(ctx, err); err != nil {
 		return nil, err
 	}
@@ -298,17 +298,17 @@ func planRollback(ctx context.Context, d Deps, req RollbackRequest) (*Plan, erro
 	return p, planEnded(ctx, nil)
 }
 
-// rollbackInputs returns the reads of PlanRollback and of
-// RollbackStillEligible against live AWS. The first catalogue read reads
+// rollbackInputs returns the reads of rollbackPlan and of
+// rollbackStillEligible against live AWS. The first catalogue read reads
 // the catalogue of each of addons with it.
-func rollbackInputs(ctx context.Context, d Deps, clients *awsx.Clients, cluster string, addons []fleet.Addon) RollbackInputs {
-	return RollbackInputs{
+func rollbackInputs(ctx context.Context, d Deps, clients *awsx.Clients, cluster string, addons []fleet.Addon) rollbackReads {
+	return rollbackReads{
 		Now:           d.now(),
 		Version:       versionOffer(ctx, clients),
 		AddonVersions: newCatalogue(d.fetcher(), clients).lookup(ctx, rollbackCatalogueKeys(addons)),
-		Insights: func() InsightsRead {
+		Insights: func() insightsRead {
 			insights, err := health.ListInsights(ctx, clients, cluster, categoryRollbackReadiness)
-			return InsightsRead{Insights: insights, Err: err}
+			return insightsRead{Insights: insights, Err: err}
 		},
 	}
 }
@@ -353,9 +353,9 @@ func rollTargetsOf(steps []Step) []string {
 // right before its roll. A plan that the busy rule refuses, and a plan
 // that rolls no nodegroup, run no gate.
 func (cp *ClusterPlan) gateEngine(ctx context.Context, d Deps, kind Kind, policy health.Policy) {
-	refuse, notices := Busy(cp.snapshot, kind, cp.Steps())
+	refuse, notices := busyRefusals(cp.snapshot, kind, cp.Steps())
 	if i := slices.IndexFunc(cp.Phases, func(ph Phase) bool { return slices.ContainsFunc(ph.Steps, Step.work) }); i >= 0 {
-		first, _ := Busy(cp.snapshot, kind, cp.Phases[i].Steps)
+		first, _ := busyRefusals(cp.snapshot, kind, cp.Phases[i].Steps)
 		for _, b := range first {
 			if !slices.ContainsFunc(refuse, func(have Blocker) bool { return have.Message == b.Message }) {
 				refuse = append(refuse, b)
@@ -378,7 +378,7 @@ func (cp *ClusterPlan) gateEngine(ctx context.Context, d Deps, kind Kind, policy
 // a dry run refuses too.
 func (cp *ClusterPlan) foreignRolls(ctx context.Context, c *awsx.Clients, kind Kind) []Blocker {
 	type lookup struct {
-		u   InFlightUpdate
+		u   inFlight
 		err error
 	}
 	seen := map[string]lookup{}

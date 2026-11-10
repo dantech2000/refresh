@@ -20,8 +20,8 @@ import (
 // gives none.
 const DefaultPollInterval = 15 * time.Second
 
-// WaitOptions say how a wait polls.
-type WaitOptions struct {
+// waitOptions say how a wait polls.
+type waitOptions struct {
 	// Interval is the pause before each poll. Zero means
 	// DefaultPollInterval.
 	Interval time.Duration
@@ -35,7 +35,7 @@ type WaitOptions struct {
 	budget *budget
 }
 
-func (o WaitOptions) interval() time.Duration {
+func (o waitOptions) interval() time.Duration {
 	if o.Interval > 0 {
 		return o.Interval
 	}
@@ -51,7 +51,7 @@ const unseenLimit = time.Minute
 
 // maxUnseen returns how many not-found answers a wait takes for an update
 // that it never saw: the polls of unseenLimit, and at least 3.
-func (o WaitOptions) maxUnseen() int {
+func (o waitOptions) maxUnseen() int {
 	return max(3, int(unseenLimit/o.interval()))
 }
 
@@ -62,7 +62,7 @@ func (o WaitOptions) maxUnseen() int {
 // the last poll is due at the deadline and none comes after it. With no
 // time left there is no pause: the caller makes one poll, and over ends
 // the wait unless that poll ended it.
-func (o WaitOptions) pause(ctx context.Context) bool {
+func (o waitOptions) pause(ctx context.Context) bool {
 	d := o.interval()
 	if left, ok := o.budget.left(); ok {
 		d = min(d, left)
@@ -87,12 +87,12 @@ func (o WaitOptions) pause(ctx context.Context) bool {
 // it: the budget has run out on the clock of the run, or ctx ended. A
 // wait calls it after every such answer. An answer that ends the wait is
 // returned whatever the clock reads: the result of the change is known.
-func (o WaitOptions) over(ctx context.Context) bool {
+func (o waitOptions) over(ctx context.Context) bool {
 	o.budget.check()
 	return ctx.Err() != nil
 }
 
-func (o WaitOptions) progress(p UpdateProgress) {
+func (o waitOptions) progress(p UpdateProgress) {
 	if o.Progress != nil {
 		o.Progress(p)
 	}
@@ -252,7 +252,7 @@ func ended(ctx context.Context, what, last string) error {
 	return fmt.Errorf("waiting for %s: %w", what, ctx.Err())
 }
 
-// WaitUpdate polls DescribeUpdate for one update until it ends. It makes
+// waitUpdate polls DescribeUpdate for one update until it ends. It makes
 // the first poll after one interval, because a fresh update ID can answer
 // not-found for a moment.
 //
@@ -266,7 +266,7 @@ func ended(ctx context.Context, what, last string) error {
 // an answer with no update, and reports each through Progress. When ctx
 // ends, it returns the error of ctx, wrapped. It calls no other operation
 // and prints nothing.
-func WaitUpdate(ctx context.Context, c awsx.PollClients, r Resource, updateID string, o WaitOptions) error {
+func waitUpdate(ctx context.Context, c awsx.PollClients, r Resource, updateID string, o waitOptions) error {
 	if updateID == "" {
 		return &UnobservedError{Resource: r, Err: errors.New("EKS returned no update ID")}
 	}
@@ -284,13 +284,13 @@ type updateHooks struct {
 	// progress receives each poll that has something to show.
 	progress func(i int, p UpdateProgress)
 	// settled is called once for each update, with the result of its
-	// wait: the one that WaitUpdate documents.
+	// wait: the one that waitUpdate documents.
 	settled func(i int, err error)
 	// tick, when set, is called after the polls of each round.
 	tick func()
 }
 
-// waitUpdates is the one wait loop for EKS updates: WaitUpdate follows one
+// waitUpdates is the one wait loop for EKS updates: waitUpdate follows one
 // update with it, and the wait of a batch follows several. Each round is
 // one pause and then one poll of every update that has not ended, all at
 // once, with the answers reported in the order of polls.
@@ -300,7 +300,7 @@ type updateHooks struct {
 // ctx ends, or the budget of o runs out, each update that has not ended is
 // settled with the error of ctx. The answer of the last poll counts: an
 // update that it shows as finished is finished.
-func waitUpdates(ctx context.Context, c awsx.PollClients, polls []*updatePoll, o WaitOptions, h updateHooks) {
+func waitUpdates(ctx context.Context, c awsx.PollClients, polls []*updatePoll, o waitOptions, h updateHooks) {
 	type answer struct {
 		progress     UpdateProgress
 		report, done bool
@@ -413,15 +413,15 @@ func (p *updatePoll) poll(ctx context.Context, c awsx.PollClients) (progress Upd
 	return progress, true, false, nil
 }
 
-// Settled is the state that a poll of a resource saw.
-type Settled struct {
+// settled is the state that a poll of a resource saw.
+type settled struct {
 	// Status is the EKS status of the resource.
 	Status string
 	// Version is the Kubernetes version, or the add-on version.
 	Version string
 	// Release and AMIType are the AMI release version and the AMI type of
 	// a nodegroup. They are what the fresh read before a roll has of the
-	// input of DecideAMIUpdate.
+	// input of decideAMIUpdate.
 	Release, AMIType string
 	// Sizes are the scaling sizes of a nodegroup, each one as EKS returned
 	// it.
@@ -430,17 +430,17 @@ type Settled struct {
 	Issues []fleet.Issue
 }
 
-// WaitSettled polls the resource until done reports true, and returns the
+// waitSettled polls the resource until done reports true, and returns the
 // state that done accepted. done sees every answer and decides what it
 // means: it returns false to go on, and an error to end the wait as
 // failed. The first poll comes after one interval.
 //
 // The rules for a poll that fails, an empty answer, and a context that
-// ends are the ones of WaitUpdate. A resource that does not exist is an
-// error that another poll will not fix. WaitSettled calls the describe
+// ends are the ones of waitUpdate. A resource that does not exist is an
+// error that another poll will not fix. waitSettled calls the describe
 // operation of its resource and nothing else, and prints nothing.
-func WaitSettled(ctx context.Context, c awsx.PollClients, r Resource, done func(Settled) (bool, error), o WaitOptions) (Settled, error) {
-	var state Settled
+func waitSettled(ctx context.Context, c awsx.PollClients, r Resource, done func(settled) (bool, error), o waitOptions) (settled, error) {
+	var state settled
 	for {
 		if !o.pause(ctx) {
 			return state, ended(ctx, r.String(), state.Status)
@@ -479,17 +479,17 @@ func WaitSettled(ctx context.Context, c awsx.PollClients, r Resource, done func(
 // that says nothing, and the fresh read before a submit fails on it, so
 // nothing is sent. A roll reads no size, so StepNodegroup takes the sizes
 // that are there.
-func describe(ctx context.Context, c *awsx.Clients, r Resource) (Settled, error) {
+func describe(ctx context.Context, c *awsx.Clients, r Resource) (settled, error) {
 	switch r.Kind {
 	case StepAddon:
 		out, err := c.EKS.DescribeAddon(ctx, &eks.DescribeAddonInput{ClusterName: aws.String(r.Cluster), AddonName: aws.String(r.Name)})
 		if err != nil {
-			return Settled{}, err
+			return settled{}, err
 		}
 		if out.Addon == nil {
-			return Settled{}, errNoAnswer
+			return settled{}, errNoAnswer
 		}
-		s := Settled{Status: string(out.Addon.Status), Version: aws.ToString(out.Addon.AddonVersion)}
+		s := settled{Status: string(out.Addon.Status), Version: aws.ToString(out.Addon.AddonVersion)}
 		if out.Addon.Health != nil {
 			for _, issue := range out.Addon.Health.Issues {
 				s.Issues = append(s.Issues, fleet.Issue{Code: string(issue.Code), Message: aws.ToString(issue.Message), ResourceIDs: issue.ResourceIds})
@@ -499,12 +499,12 @@ func describe(ctx context.Context, c *awsx.Clients, r Resource) (Settled, error)
 	case StepNodegroup, StepScale:
 		out, err := c.EKS.DescribeNodegroup(ctx, &eks.DescribeNodegroupInput{ClusterName: aws.String(r.Cluster), NodegroupName: aws.String(r.Name)})
 		if err != nil {
-			return Settled{}, err
+			return settled{}, err
 		}
 		if out.Nodegroup == nil {
-			return Settled{}, errNoAnswer
+			return settled{}, errNoAnswer
 		}
-		s := Settled{
+		s := settled{
 			Status: string(out.Nodegroup.Status), Version: aws.ToString(out.Nodegroup.Version),
 			Release: aws.ToString(out.Nodegroup.ReleaseVersion), AMIType: string(out.Nodegroup.AmiType),
 		}
@@ -514,16 +514,16 @@ func describe(ctx context.Context, c *awsx.Clients, r Resource) (Settled, error)
 		case known:
 			s.Sizes = Sizes{Desired: *sc.DesiredSize, Min: *sc.MinSize, Max: *sc.MaxSize}
 		case r.Kind == StepScale:
-			return Settled{}, errNoSizes
+			return settled{}, errNoSizes
 		}
 		return s, nil
 	}
 	out, err := c.EKS.DescribeCluster(ctx, &eks.DescribeClusterInput{Name: aws.String(r.Cluster)})
 	if err != nil {
-		return Settled{}, err
+		return settled{}, err
 	}
 	if out.Cluster == nil {
-		return Settled{}, errNoAnswer
+		return settled{}, errNoAnswer
 	}
-	return Settled{Status: string(out.Cluster.Status), Version: aws.ToString(out.Cluster.Version)}, nil
+	return settled{Status: string(out.Cluster.Status), Version: aws.ToString(out.Cluster.Version)}, nil
 }

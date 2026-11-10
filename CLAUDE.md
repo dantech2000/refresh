@@ -176,8 +176,8 @@ confirm function. Gate policy does not live in a command.
 **Changes (`change`).** A changing command builds a plan (`change.NewPlan`),
 and `change.Run` executes it with three hooks: events, questions, and the
 checkpoint between phases. A dry run returns the plan and stops. The busy
-rule, the gate, plan revalidation, the waits (`WaitUpdate` follows an update
-ID, `WaitSettled` follows a resource to a postcondition), and the one rule for
+rule, the gate, plan revalidation, the waits (`waitUpdate` follows an update
+ID, `waitSettled` follows a resource to a postcondition), and the one rule for
 the exit code are all in `change`. The CLI and the TUI are front ends of the
 same `Run`. Do not assemble a roll in a command. `change` also builds the
 command line of a follow-up that a notice names: it writes flag names and
