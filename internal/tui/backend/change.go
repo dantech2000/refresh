@@ -42,15 +42,6 @@ const keptLog = 4096
 // the latest.
 const idleRetry = 10 * time.Minute
 
-// The default wait of each kind of change, from CONTRACT.md.
-var defaultWait = map[change.Kind]time.Duration{
-	change.NodegroupUpdate: 40 * time.Minute,
-	change.NodegroupScale:  5 * time.Minute,
-	change.AddonUpdate:     5 * time.Minute,
-	change.ClusterUpgrade:  4 * time.Hour,
-	change.ClusterRollback: 4 * time.Hour,
-}
-
 // entry is one handle the backend holds, with what the notifier read of it
 // last.
 type entry struct {
@@ -84,7 +75,7 @@ type proposal struct {
 // reads, --wait-timeout or the default of the kind's command for its
 // waits, and the default poll interval.
 func (b *Live) limits(kind change.Kind) change.Limits {
-	wait := defaultWait[kind]
+	wait := change.DefaultWait(kind)
 	if b.opts.WaitTimeoutSet {
 		wait = b.opts.WaitTimeout
 	}
@@ -100,91 +91,30 @@ func (b *Live) request(a state.Action) (change.Request, error) {
 		return change.Common{Policy: health.Policy{}, Nodes: true, Limits: b.limits(kind)}
 	}
 	switch a.Kind {
-	case state.ActionRoll:
+	case change.NodegroupUpdate:
 		if a.Nodegroup == "" {
 			return nil, errors.New("a roll names one nodegroup")
 		}
 		return change.RollRequest{Common: common(change.NodegroupUpdate), Target: target, Nodegroups: []string{a.Nodegroup}}, nil
-	case state.ActionAddons:
+	case change.AddonUpdate:
 		return change.AddonUpdateRequest{Common: common(change.AddonUpdate), Target: target, All: true}, nil
-	case state.ActionUpgrade:
+	case change.ClusterUpgrade:
 		req := change.UpgradeRequest{Common: common(change.ClusterUpgrade), Target: target, To: a.To, Only: a.Only}
 		if a.Nodegroup != "" {
 			req.Nodegroups = []string{a.Nodegroup}
 		}
 		return req, nil
-	case state.ActionRollback:
+	case change.ClusterRollback:
 		return change.RollbackRequest{Common: common(change.ClusterRollback), Target: target}, nil
 	}
 	return nil, fmt.Errorf("unknown action %q", a.Kind)
 }
 
-// withExpect returns req with the reviewed plan as its consent.
-func withExpect(req change.Request, plan *change.Plan) change.Request {
-	switch r := req.(type) {
-	case change.RollRequest:
-		r.Expect = plan
-		return r
-	case change.AddonUpdateRequest:
-		r.Expect = plan
-		return r
-	case change.UpgradeRequest:
-		r.Expect = plan
-		return r
-	case change.RollbackRequest:
-		r.Expect = plan
-		return r
-	}
-	return req
-}
-
-// command is the CLI command that makes the same change as the action,
-// with the profile and the Kubernetes access of this UI, so it runs
-// against the same account.
-func (b *Live) command(a state.Action) string {
-	parts := []string{"refresh"}
-	if b.opts.Profile != "" {
-		parts = append(parts, "--profile", shellWord(b.opts.Profile))
-	}
-	parts = append(parts, "--region", a.Cluster.Region)
-	kube := false
-	switch a.Kind {
-	case state.ActionRoll:
-		parts, kube = append(parts, "nodegroup", "update", a.Nodegroup, "-c", a.Cluster.Name), true
-	case state.ActionAddons:
-		parts = append(parts, "addon", "update", "--all", "-c", a.Cluster.Name)
-	case state.ActionUpgrade:
-		parts, kube = append(parts, "cluster", "upgrade", a.Cluster.Name, "--to", a.To.String()), true
-		if len(a.Only) > 0 {
-			names := make([]string, len(a.Only))
-			for i, p := range a.Only {
-				names[i] = string(p)
-			}
-			parts = append(parts, "--only", strings.Join(names, ","))
-		}
-		if a.Nodegroup != "" {
-			parts = append(parts, "-n", a.Nodegroup)
-		}
-	case state.ActionRollback:
-		parts, kube = append(parts, "cluster", "rollback", a.Cluster.Name), true
-	}
-	if kube {
-		if b.opts.Kubeconfig != "" {
-			parts = append(parts, "--kubeconfig", shellWord(b.opts.Kubeconfig))
-		}
-		if b.opts.KubeContext != "" {
-			parts = append(parts, "--kube-context", shellWord(b.opts.KubeContext))
-		}
-	}
-	return strings.Join(parts, " ")
-}
-
-// shellWord quotes s for a shell when it needs it.
-func shellWord(s string) string {
-	if s != "" && !strings.ContainsAny(s, " \t'\"$`\\!*?[]{}()<>|&;#~") {
-		return s
-	}
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+// command is the CLI command that makes the change of req, with the
+// profile and the Kubernetes access of this UI, so it runs against the
+// same account.
+func (b *Live) command(region string, req change.Request) string {
+	return change.Command(change.FollowUpFor(b.opts.Profile, region, b.opts.Kubeconfig, b.opts.KubeContext), req)
 }
 
 // Plan is the dry run of an action: the plan, its gate, and the CLI
@@ -215,7 +145,7 @@ func (b *Live) Plan(ctx context.Context, a state.Action) (state.Proposal, error)
 	b.mu.Lock()
 	b.nextProposal++
 	p := &proposal{Proposal: state.Proposal{
-		ID: b.nextProposal, Action: a, Plan: plan, Doc: plan.Document(), Command: b.command(a),
+		ID: b.nextProposal, Action: a, Plan: plan, Doc: plan.Document(), Command: b.command(a.Cluster.Region, req),
 		Blocked: plan.Decision() == change.DecisionBlocked,
 	}, request: req}
 	b.proposal = p
@@ -248,10 +178,10 @@ func (b *Live) Start(_ context.Context, id state.ProposalID) (state.ChangeID, er
 		return 0, ErrClosing
 	}
 	b.proposal = nil
-	h := change.Start(b.ctx, b.deps, withExpect(p.request, p.Plan))
+	h := change.Start(b.ctx, b.deps, change.WithExpect(p.request, p.Plan))
 	e := b.add(h, p.Action.Cluster, false, change.Resource{})
 	e.command = p.Command
-	b.say(p.Action.Cluster, view.Progress, "started "+describeAction(p.Action))
+	b.say(p.Action.Cluster, view.Progress, "started "+p.Action.Describe(false))
 	b.bumpLocked()
 	return e.id, nil
 }
@@ -582,19 +512,4 @@ func (b *Live) Stop(_ context.Context, id state.ChangeID) error {
 		return err
 	}
 	return e.handle.Stop()
-}
-
-// describeAction names an action in a feed line.
-func describeAction(a state.Action) string {
-	switch a.Kind {
-	case state.ActionRoll:
-		return "the roll of nodegroup " + a.Nodegroup
-	case state.ActionAddons:
-		return "the update of the add-ons"
-	case state.ActionUpgrade:
-		return "the upgrade to " + a.To.String()
-	case state.ActionRollback:
-		return "the rollback"
-	}
-	return string(a.Kind)
 }

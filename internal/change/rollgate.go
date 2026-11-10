@@ -58,9 +58,7 @@ func (cp *ClusterPlan) gateNodegroups(ctx context.Context, d Deps, policy health
 		wg.Wait()
 		cp.Notices = append(cp.Notices, offered...)
 	}()
-	if policy.Skip {
-		cp.Gate = health.Gate(nil, policy)
-		cp.Notices = append(cp.Notices, "the health checks were skipped (--skip-health-check)")
+	if cp.skipGate(policy) {
 		return
 	}
 	in := &health.Input{Snapshot: cp.snapshot, Targets: targets, RollTogether: together, Clients: clients, Now: cp.snapshot.FetchedAt}

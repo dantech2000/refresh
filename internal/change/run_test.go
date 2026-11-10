@@ -1231,6 +1231,8 @@ func (unbuiltRequest) kind() Kind { return ClusterUpgrade }
 
 func (unbuiltRequest) differs(Request) string { return "" }
 
+func (r unbuiltRequest) withExpect(p *Plan) Request { r.Expect = p; return r }
+
 // The errors of Run: a request that is invalid, a name that does not
 // exist, a cluster that does not exist, and a kind that is not built.
 func TestRun_Errors(t *testing.T) {

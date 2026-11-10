@@ -207,7 +207,7 @@ func (m Model) readinessPane(w, h int) Block {
 			if len(out) >= h {
 				break
 			}
-			l := Line{sp(1), m.mark(insightStatus(in.Status)), sp(1)}
+			l := Line{sp(1), m.mark(view.InsightStatus(in.Status)), sp(1)}
 			l = append(l, Line{tx(in.Name)}.Fit(min(40, w/2))...)
 			l = append(l, sp(1), sub(in.StatusReason))
 			out = append(out, l.Fit(w))
@@ -251,19 +251,6 @@ func outcomeStatus(o health.Outcome) view.Status {
 		return view.Fail
 	case health.Skipped:
 		return view.Neutral
-	}
-	return view.Unknown
-}
-
-// insightStatus maps an insight status to the status that paints it.
-func insightStatus(s string) view.Status {
-	switch s {
-	case "PASSING":
-		return view.Healthy
-	case "WARNING":
-		return view.Warn
-	case "ERROR":
-		return view.Fail
 	}
 	return view.Unknown
 }

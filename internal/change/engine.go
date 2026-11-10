@@ -589,7 +589,7 @@ func (r *runner) resumeHint(res Result) string {
 	if len(done) > 0 {
 		completed = "completed: " + strings.Join(done, ", ")
 	}
-	return completed + "; to go on from the live state of the cluster, run: " + engineCommand(r.d.FollowUp, r.req)
+	return completed + "; to go on from the live state of the cluster, run: " + Command(r.d.FollowUp, r.req)
 }
 
 // clusterSettled is the done function of a wait for a control plane:

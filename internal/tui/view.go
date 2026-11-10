@@ -147,7 +147,7 @@ func orDash(s string) string {
 // about the cluster on screen.
 func (m Model) logStrip(w int) Line {
 	if p := m.planning; p != nil {
-		return Line{sp(1), m.tok(view.Progress, "dry run of "+describeAction(p.action)), sp(2), chip("esc"), sp(1), dim("cancel")}.Fit(w)
+		return Line{sp(1), m.tok(view.Progress, "dry run of "+p.action.Describe(true)), sp(2), chip("esc"), sp(1), dim("cancel")}.Fit(w)
 	}
 	if m.noticeShows() {
 		return Line{sp(1), m.mark(m.noticeStatus), sp(1), tx(m.notice)}.Fit(w)

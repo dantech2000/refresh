@@ -61,7 +61,9 @@ type Cluster struct {
 	Status   view.Status
 	Version  fleet.Version
 	Support  apidoc.SupportTier
-	Stale    Stale
+	// Findings is the judgement of the snapshot: what is out of date,
+	// unhealthy, or unread. "refresh status" reads the same.
+	Findings fleet.Findings
 	// InFlight are the resources that the snapshot shows changing, sorted
 	// by their text.
 	InFlight   []InFlight
@@ -74,17 +76,6 @@ type Cluster struct {
 	// Rollback is the rollback window that the last readiness run found,
 	// or nil.
 	Rollback *fleet.Rollback
-}
-
-// Stale counts what is behind in a cluster.
-type Stale struct {
-	// AMIs counts the nodegroups whose AMI is not the latest, Behind the
-	// nodegroups on an older minor than the control plane, and Addons the
-	// add-ons with a newer compatible version.
-	AMIs, Behind, Addons int
-	// Unknown counts the nodegroups and add-ons whose state of staleness
-	// could not be read.
-	Unknown int
 }
 
 // Changing reports whether the snapshot shows something of the cluster in

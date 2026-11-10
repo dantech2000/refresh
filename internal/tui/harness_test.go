@@ -249,7 +249,7 @@ func cluster(name, region, version string) state.Cluster {
 		},
 		FetchedAt: now,
 	}
-	return state.Cluster{Key: state.Key{Region: region, Name: name}, Snapshot: snap, Status: view.Healthy, Version: v(version), Support: apidoc.SupportStandard}
+	return state.Cluster{Key: state.Key{Region: region, Name: name}, Snapshot: snap, Findings: snap.Findings(), Status: view.Healthy, Version: v(version), Support: apidoc.SupportStandard}
 }
 
 // stale makes a row need attention: one outdated AMI and one add-on
@@ -257,7 +257,7 @@ func cluster(name, region, version string) state.Cluster {
 func stale(c state.Cluster) state.Cluster {
 	c.Snapshot.Nodegroups[0].AMI.Current = "ami-0"
 	c.Snapshot.Addons[0].Version = "v1.11.1-eksbuild.1"
-	c.Stale = state.Stale{AMIs: 1, Addons: 1}
+	c.Findings = c.Snapshot.Findings()
 	c.Status = view.Warn
 	return c
 }
@@ -275,7 +275,7 @@ func incomplete(c state.Cluster) state.Cluster {
 	c.Snapshot.Nodegroups[1].State = fleet.Failed
 	c.Snapshot.Failures = []apidoc.Failure{{Kind: apidoc.FailureNodegroup, Name: "web", Reason: apidoc.ReasonThrottled, Error: "throttled"}}
 	c.Incomplete = true
-	c.Stale.Unknown = 1
+	c.Findings = c.Snapshot.Findings()
 	c.Status = view.Unknown
 	return c
 }
@@ -284,7 +284,8 @@ func incomplete(c state.Cluster) state.Cluster {
 func extended(c state.Cluster) state.Cluster {
 	c.Snapshot.Cluster.Support.Tier = apidoc.SupportExtended
 	c.Support = apidoc.SupportExtended
-	c.Status = view.Fail
+	c.Findings = c.Snapshot.Findings()
+	c.Status = view.Warn
 	return c
 }
 
@@ -337,7 +338,7 @@ func fleetState(n int) state.State {
 	}
 	st.Feed = []state.Line{
 		{At: now.Add(-3 * time.Second), Status: view.Neutral, Text: fmt.Sprintf("%d clusters: 2 need attention, 1 changing", n)},
-		{At: now.Add(-2 * time.Second), Cluster: state.Key{Region: "us-east-1", Name: "c-004"}, Status: view.Fail, Text: "extended support"},
+		{At: now.Add(-2 * time.Second), Cluster: state.Key{Region: "us-east-1", Name: "c-004"}, Status: view.Warn, Text: "extended support"},
 		{At: now, Cluster: state.Key{Region: "eu-west-1", Name: "c-005"}, Status: view.Warn, Text: "readiness: review"},
 	}
 	return st

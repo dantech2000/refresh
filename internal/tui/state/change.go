@@ -10,21 +10,12 @@ import (
 // ChangeID names one change that the UI started or watches.
 type ChangeID uint64
 
-// ActionKind names what a proposal would do.
-type ActionKind string
-
-// The actions a user can propose.
-const (
-	ActionRoll     ActionKind = "NodegroupRoll"
-	ActionAddons   ActionKind = "AddonUpdate"
-	ActionUpgrade  ActionKind = "ClusterUpgrade"
-	ActionRollback ActionKind = "ClusterRollback"
-)
-
 // Action is what a key proposes: the kind, the cluster, and the parts
-// that the kind takes.
+// that the kind takes. The kinds are change.NodegroupUpdate (a roll of one
+// nodegroup), change.AddonUpdate (every add-on), change.ClusterUpgrade,
+// and change.ClusterRollback.
 type Action struct {
-	Kind    ActionKind
+	Kind    change.Kind
 	Cluster Key
 	// Nodegroup is the one nodegroup of a roll.
 	Nodegroup string
@@ -34,6 +25,36 @@ type Action struct {
 	// Only limits an upgrade to these parts, as --only does. Empty means
 	// every part.
 	Only []change.Part
+}
+
+// Describe names the action for a notice, such as "the upgrade of prod to
+// 1.34". Without the cluster, for a line that names the cluster beside
+// it, it is "the upgrade to 1.34".
+func (a Action) Describe(withCluster bool) string {
+	c := a.Cluster.Name
+	switch a.Kind {
+	case change.NodegroupUpdate:
+		if withCluster {
+			return "the roll of " + a.Nodegroup + " in " + c
+		}
+		return "the roll of nodegroup " + a.Nodegroup
+	case change.AddonUpdate:
+		if withCluster {
+			return "the add-on update of " + c
+		}
+		return "the update of the add-ons"
+	case change.ClusterUpgrade:
+		if withCluster {
+			return "the upgrade of " + c + " to " + a.To.String()
+		}
+		return "the upgrade to " + a.To.String()
+	case change.ClusterRollback:
+		if withCluster {
+			return "the rollback of " + c
+		}
+		return "the rollback"
+	}
+	return string(a.Kind)
 }
 
 // Proposal is a dry run that the dialog shows. Starting it is consent to

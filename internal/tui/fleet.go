@@ -183,11 +183,11 @@ func (m Model) fleetCell(column string, c state.Cluster) Line {
 		switch {
 		case c.ChangingKind(apidoc.StepNodegroup):
 			return append(l, m.mark(view.Progress))
-		case c.Stale.AMIs+c.Stale.Behind > 0:
-			return append(l, m.tok(view.Warn, fmt.Sprintf("%d stale", c.Stale.AMIs+c.Stale.Behind)))
-		case c.Stale.Unknown > 0:
+		case c.Findings.StaleAMIs+c.Findings.BehindNodegroups > 0:
+			return append(l, m.tok(view.Warn, fmt.Sprintf("%d stale", c.Findings.StaleAMIs+c.Findings.BehindNodegroups)))
+		case c.Findings.UnreadAMIs+c.Findings.UnreadAddons > 0:
 			// An AMI that could not be read is not current: say so.
-			return append(l, dim(fmt.Sprintf("? %d unknown", c.Stale.Unknown)))
+			return append(l, dim(fmt.Sprintf("? %d unknown", c.Findings.UnreadAMIs+c.Findings.UnreadAddons)))
 		}
 		return append(l, m.mark(view.Healthy))
 	case "ADD-ONS":
@@ -196,8 +196,8 @@ func (m Model) fleetCell(column string, c state.Cluster) Line {
 			return Line{dim("?")}
 		case c.ChangingKind(apidoc.StepAddon):
 			return Line{m.tok(view.Progress, "updating")}
-		case c.Stale.Addons > 0:
-			return Line{m.tok(view.Warn, fmt.Sprintf("%d stale", c.Stale.Addons))}
+		case len(c.Findings.BehindAddons) > 0:
+			return Line{m.tok(view.Warn, fmt.Sprintf("%d stale", len(c.Findings.BehindAddons)))}
 		}
 		return Line{m.tok(view.Healthy, "current")}
 	default:
@@ -208,19 +208,18 @@ func (m Model) fleetCell(column string, c state.Cluster) Line {
 // statusText is the one phrase of the STATUS column.
 func statusText(c state.Cluster) string {
 	switch c.Status {
-	case view.Fail:
-		switch c.Support {
-		case apidoc.SupportExtended:
-			return "extended support"
-		case apidoc.SupportUnsupported:
+	case view.Fail, view.Warn:
+		switch {
+		case c.Findings.Support == apidoc.SupportUnsupported:
 			return "unsupported"
-		default:
+		case c.Findings.Support == apidoc.SupportExtended:
+			return "extended support"
+		case c.Findings.HealthIssues > 0:
 			return "issues"
 		}
+		return "needs attention"
 	case view.Progress:
 		return c.InFlight[0].String()
-	case view.Warn:
-		return "needs attention"
 	case view.Unknown:
 		if c.Incomplete {
 			return "incomplete"
@@ -348,20 +347,7 @@ func (m Model) readinessVerdict(r *state.Readiness) Line {
 	case r.Err != "":
 		return Line{m.tok(view.Fail, "could not read the cluster")}
 	}
-	return Line{m.tok(readinessStatus(r.Report.Readiness), strings.ToLower(string(r.Report.Readiness)))}
-}
-
-// readinessStatus maps a verdict to the status that paints it.
-func readinessStatus(r apidoc.Readiness) view.Status {
-	switch r {
-	case apidoc.ReadinessReady:
-		return view.Healthy
-	case apidoc.ReadinessReview:
-		return view.Warn
-	case apidoc.ReadinessBlocked:
-		return view.Fail
-	}
-	return view.Unknown
+	return Line{m.tok(view.ReadinessStatus(r.Report.Readiness), strings.ToLower(string(r.Report.Readiness)))}
 }
 
 // fleetFeed is the fleet feed, newest first.

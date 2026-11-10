@@ -99,7 +99,7 @@ context. It never comes from the kubeconfig.
 	cmd.Flags().BoolVar(&o.skipInsights, "skip-insights-check", false, "Roll back past blocking insights, and send force to EKS (not recommended)")
 	cmd.Flags().BoolVar(&o.skipVerify, "skip-verify", false, "Skip the verification after each nodegroup roll")
 	cmd.Flags().DurationVar(&o.rollbackTimeout, "rollback-timeout", 0, "Time that EKS gives the control-plane rollback: whole minutes from 2h to 168h; 0 leaves the default of EKS")
-	cmdutil.AddChangeFlags(cmd, &o.change, cmdutil.ChangeFlagOptions{Wait: engineWaitTimeout, WaitFor: "the whole rollback", Force: true})
+	cmdutil.AddChangeFlags(cmd, &o.change, cmdutil.ChangeFlagOptions{Wait: change.DefaultWait(change.ClusterRollback), WaitFor: "the whole rollback", Force: true})
 	cmdutil.AddOutputFlag(cmd, &o.output, cmdutil.FormatTable, cmdutil.FormatJSON, cmdutil.FormatYAML, cmdutil.FormatPlain)
 	return cmd
 }
@@ -144,7 +144,7 @@ func (o *rollbackOptions) run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	d.FollowUp.Resume = resumeFlags(&o.change)
+	d.FollowUp.Resume = resumeFlags(&o.change, change.ClusterRollback)
 	req := o.request()
 	if o.change.DryRun {
 		return changecmd.PrintPlan(ctx, o.ios, o.output, d, req, o.f.Global.Timeout, nil)

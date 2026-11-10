@@ -127,10 +127,22 @@ func (r *runner) verifyRoll(ctx context.Context, cp *ClusterPlan, ph Phase, star
 	if r.recordInterrupt() {
 		return
 	}
-	failures := slices.Concat(health.Failures(checks), snap.Failures)
+	var extra []apidoc.Failure
 	if unreached {
-		failures = append(failures, fleet.KubeFailure(apidoc.FailureCluster, cp.Cluster, "reaching the Kubernetes API after the roll", errUnreached))
+		extra = append(extra, fleet.KubeFailure(apidoc.FailureCluster, cp.Cluster, "reaching the Kubernetes API after the roll", errUnreached))
 	}
+	failures := verifyFailures(cp.Target, checks, snap, extra...)
+	r.addFailures(failures)
+	r.step.unverified = r.step.unverified || len(failures) > 0
+}
+
+// verifyFailures returns the failures of a verification of a roll in the
+// cluster t: of its checks and of the read of snap, and extra. A check
+// that could not read and named no failure of its own still adds one: a
+// verification that could not read is incomplete, exit code 4. A run and
+// a watch both read it.
+func verifyFailures(t Target, checks []health.Result, snap *fleet.Snapshot, extra ...apidoc.Failure) []apidoc.Failure {
+	failures := slices.Concat(health.Failures(checks), snap.Failures, extra)
 	if len(failures) == 0 && health.VerifyExit(checks) == exitcode.Incomplete {
 		var unread []string
 		for _, c := range checks {
@@ -138,12 +150,11 @@ func (r *runner) verifyRoll(ctx context.Context, cp *ClusterPlan, ph Phase, star
 				unread = append(unread, c.Name+": "+c.Message)
 			}
 		}
-		failures = append(failures, apidoc.NewFailure(apidoc.FailureCluster, cp.Cluster, apidoc.ReasonUnknown,
+		failures = append(failures, apidoc.NewFailure(apidoc.FailureCluster, t.Cluster, apidoc.ReasonUnknown,
 			"the verification after the roll could not read what it needs ("+strings.Join(unread, "; ")+")"))
 	}
-	health.Locate(failures, cp.Cluster, cp.Region)
-	r.addFailures(failures)
-	r.step.unverified = r.step.unverified || len(failures) > 0
+	health.Locate(failures, t.Cluster, t.Region)
+	return failures
 }
 
 // verificationRows returns the checks of one verification as rows of the

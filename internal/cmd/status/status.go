@@ -16,6 +16,7 @@ import (
 	"github.com/dantech2000/refresh/internal/cmd/fleetcmd"
 	"github.com/dantech2000/refresh/internal/cmdutil"
 	"github.com/dantech2000/refresh/internal/fleet"
+	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/view"
 )
 
@@ -66,8 +67,10 @@ Columns:
              the control plane
   ADDONS     the add-ons with a newer compatible version
   HEALTH     the health issues that EKS reports for the control plane,
-             the nodegroups, and the add-ons; an add-on that is DEGRADED
-             with no issue listed counts as one
+             the nodegroups, and the add-ons; a resource in a failed
+             status with no issue listed counts as one: a FAILED control
+             plane, a DEGRADED, CREATE_FAILED, or DELETE_FAILED
+             nodegroup, or a failed add-on
 
 Under the table, the totals line gives the extended support premium for the
 whole fleet per month, at 730 hours a month. The price is the one on the
@@ -131,11 +134,10 @@ func (o *options) run(ctx context.Context) error {
 	progress := fleetcmd.NewProgress(o.ios, o.output == cmdutil.FormatTable, len(regions.Names),
 		func(snaps []*fleet.Snapshot, answered int) []string {
 			width, _ := o.ios.Size()
-			partial := o.document(&fleet.SweepResult{Snapshots: snaps})
+			_, rows := o.document(&fleet.SweepResult{Snapshots: snaps})
 			// The failures of the rows are listed once, under the final
 			// table.
-			partial.Failures = nil
-			return o.view(partial, answered).Render(o.ios.Theme(), width)
+			return o.view(rows, nil, answered).Render(o.ios.Theme(), width)
 		})
 	fetcher := fleet.Fetcher{Now: o.f.Now}
 	res := fetcher.Sweep(ctx, provider, regions, fleet.SweepOptions{
@@ -156,21 +158,30 @@ func (o *options) run(ctx context.Context) error {
 	}
 	fleetcmd.ReportSkippedRegions(o.ios, res.Skipped)
 
-	doc := o.document(res)
-	if err := cmdutil.PrintResult(ctx, o.ios, o.output, doc, o.view(doc, len(res.Answered)), doc.Failures); err != nil {
+	doc, rows := o.document(res)
+	if err := cmdutil.PrintResult(ctx, o.ios, o.output, doc, o.view(rows, doc.Failures, len(res.Answered)), doc.Failures); err != nil {
 		return err
 	}
-	return exitError(doc)
+	return exitError(rows)
+}
+
+// row is one row of the table: a cluster as the document shows it, and
+// the findings of the snapshot it comes from.
+type row struct {
+	apidoc.Cluster
+	findings fleet.Findings
 }
 
 // document builds the document from the result of a sweep: the rows that
-// the filters select, sorted, and every failure of the run.
-func (o *options) document(res *fleet.SweepResult) apidoc.FleetStatus {
+// the filters select, sorted, and every failure of the run. rows are the
+// clusters of the document, in its order.
+func (o *options) document(res *fleet.SweepResult) (apidoc.FleetStatus, []row) {
 	late := o.filters.Only(keyVersion, keySupport)
 	doc := apidoc.FleetStatus{Clusters: []apidoc.Cluster{}, Failures: slices.Clone(res.Failures)}
 	if res.Regions.Default {
 		doc.SkippedRegions = append([]string{}, res.Skipped...)
 	}
+	var rows []row
 	for _, snap := range res.Snapshots {
 		doc.Failures = append(doc.Failures, snap.Failures...)
 		matches := late.Match(func(key string) []string {
@@ -180,10 +191,10 @@ func (o *options) document(res *fleet.SweepResult) apidoc.FleetStatus {
 			return []string{snap.Cluster.Version.String()}
 		})
 		if matches {
-			doc.Clusters = append(doc.Clusters, snap.ClusterDoc())
+			rows = append(rows, row{Cluster: snap.ClusterDoc(), findings: snap.Findings()})
 		}
 	}
-	slices.SortStableFunc(doc.Clusters, func(a, b apidoc.Cluster) int {
+	slices.SortStableFunc(rows, func(a, b row) int {
 		c := compareBy(o.sortKey, a, b)
 		if o.desc {
 			c = -c
@@ -191,12 +202,15 @@ func (o *options) document(res *fleet.SweepResult) apidoc.FleetStatus {
 		// Ties keep one order in both directions: name, then region.
 		return cmp.Or(c, cmp.Compare(a.Name, b.Name), cmp.Compare(a.Region, b.Region))
 	})
+	for _, r := range rows {
+		doc.Clusters = append(doc.Clusters, r.Cluster)
+	}
 	apidoc.SortFailures(doc.Failures)
-	return doc
+	return doc, rows
 }
 
 // compareBy orders two clusters by a sort key.
-func compareBy(key string, a, b apidoc.Cluster) int {
+func compareBy(key string, a, b row) int {
 	switch key {
 	case keyRegion:
 		return cmp.Compare(a.Region, b.Region)
@@ -209,7 +223,7 @@ func compareBy(key string, a, b apidoc.Cluster) int {
 	case keySupport:
 		return cmp.Compare(supportRank(a.Support), supportRank(b.Support))
 	case keyStale:
-		return cmp.Compare(findingsOf(a).total(), findingsOf(b).total())
+		return cmp.Compare(a.findings.Stale(), b.findings.Stale())
 	}
 	return cmp.Compare(a.Name, b.Name)
 }
@@ -230,112 +244,29 @@ func supportRank(s *apidoc.Support) int {
 	return 1
 }
 
-// findings counts what is out of date in one cluster.
-type findings struct {
-	nodegroups       int       // the nodegroups whose AMI was compared
-	staleAMIs        int       // the nodegroups with an outdated AMI
-	oldestAMI        time.Time // when the oldest outdated AMI was created
-	behindNodegroups int       // the nodegroups on an older version than the control plane
-	behindAddons     []string  // the add-ons with a newer compatible version
-	issues           int       // the health issues: see healthIssues
-}
-
-func findingsOf(c apidoc.Cluster) findings {
-	f := findings{issues: healthIssues(c)}
-	for _, n := range c.Nodegroups {
-		if n.VersionBehind != nil && *n.VersionBehind {
-			f.behindNodegroups++
-		}
-		if n.AMI == nil {
-			continue
-		}
-		f.nodegroups++
-		if n.AMI.Status == apidoc.AMIOutdated {
-			f.staleAMIs++
-			if t := n.AMI.CurrentCreatedAt; !t.IsZero() && (f.oldestAMI.IsZero() || t.Before(f.oldestAMI)) {
-				f.oldestAMI = t
-			}
-		}
-	}
-	for _, a := range c.Addons {
-		if a.Latest != nil && a.Latest.Behind != nil && *a.Latest.Behind {
-			f.behindAddons = append(f.behindAddons, a.Name)
-		}
-	}
-	return f
-}
-
-// healthIssues counts the health issues that EKS reports for the control
-// plane, the nodegroups, and the add-ons of a cluster. An add-on that is
-// DEGRADED with no issue listed counts as one.
-func healthIssues(c apidoc.Cluster) int {
-	n := len(c.HealthIssues)
-	for _, ng := range c.Nodegroups {
-		n += len(ng.HealthIssues)
-	}
-	for _, a := range c.Addons {
-		switch {
-		case len(a.Issues) > 0:
-			n += len(a.Issues)
-		case a.Status == "DEGRADED":
-			n++
-		}
-	}
-	return n
-}
-
-// total is the number of things to bring up to date, for --sort stale.
-func (f findings) total() int {
-	return f.staleAMIs + f.behindNodegroups + len(f.behindAddons)
-}
-
-// attention reports whether something in the cluster is out of date.
-func (f findings) attention() bool {
-	return f.total() > 0 || f.issues > 0
-}
-
-// supportRisk reports whether the cluster left standard support.
-func supportRisk(c apidoc.Cluster) bool {
-	return c.Support != nil && (c.Support.Tier == apidoc.SupportExtended || c.Support.Tier == apidoc.SupportUnsupported)
-}
-
 // exitError returns the error that sets the exit code of the run, after
-// the document is printed. The highest code wins: incomplete data (4), a
-// cluster out of standard support (3), something out of date (2).
-func exitError(doc apidoc.FleetStatus) error {
-	if err := cmdutil.IncompleteError(doc.Failures); err != nil {
-		return err
+// the document is printed: incomplete data (4), else the code of the fleet
+// policy of health.FleetExit.
+func exitError(rows []row) error {
+	findings := make([]fleet.Findings, len(rows))
+	for i, r := range rows {
+		findings[i] = r.findings
 	}
-	stale := false
-	for _, c := range doc.Clusters {
-		if supportRisk(c) {
-			return &cmdutil.ExitError{Code: cmdutil.ExitBlocked}
-		}
-		stale = stale || findingsOf(c).attention()
-	}
-	if stale {
-		return &cmdutil.ExitError{Code: cmdutil.ExitNeedsAttention}
+	if code := health.FleetExit(findings); code != cmdutil.ExitOK {
+		return &cmdutil.ExitError{Code: code}
 	}
 	return nil
 }
 
 // overall returns the status of a row: the glyph before the cluster name.
-func overall(c apidoc.Cluster) view.Status {
-	switch {
-	case c.Support != nil && c.Support.Tier == apidoc.SupportUnsupported:
-		return view.Fail
-	case supportRisk(c) || findingsOf(c).attention():
-		return view.Warn
-	case c.Incomplete:
-		return view.Unknown
-	}
-	return view.Healthy
+func overall(r row) view.Status {
+	return view.StandingStatus(r.findings.Standing())
 }
 
-// view returns the table and plain form of doc. regions is the number of
-// regions that answered.
-func (o *options) view(doc apidoc.FleetStatus, regions int) view.List[apidoc.Cluster] {
-	subtitle := strconv.Itoa(len(doc.Clusters))
+// view returns the table and plain form of the rows. regions is the number
+// of regions that answered.
+func (o *options) view(rows []row, failures []apidoc.Failure, regions int) view.List[row] {
+	subtitle := strconv.Itoa(len(rows))
 	if regions > 1 {
 		subtitle += " in " + strconv.Itoa(regions) + " regions"
 	}
@@ -344,23 +275,23 @@ func (o *options) view(doc apidoc.FleetStatus, regions int) view.List[apidoc.Clu
 		now = o.f.Now()
 	}
 	// A value that was not read shows as unknown, not as empty.
-	orUnknown := func(c apidoc.Cluster, value string) string { return view.OrUnknown(c.Incomplete, value) }
-	return view.List[apidoc.Cluster]{
+	orUnknown := func(r row, value string) string { return view.OrUnknown(r.Incomplete, value) }
+	return view.List[row]{
 		Title:    "FLEET",
 		Subtitle: subtitle,
 		Empty:    "No clusters found",
-		Rows:     doc.Clusters,
-		Notes:    notes(o.ios.Theme(), doc.Clusters),
-		Failures: doc.Failures,
-		Columns: []view.Column[apidoc.Cluster]{
-			{Title: "CLUSTER", MinWidth: 12, Value: func(c apidoc.Cluster) string { return c.Name }, Status: overall},
-			{Title: "REGION", Truncate: view.TruncateNever, Value: func(c apidoc.Cluster) string { return c.Region }},
-			{Title: "VERSION", Truncate: view.TruncateNever, Value: func(c apidoc.Cluster) string { return orUnknown(c, c.Version) }},
-			{Title: "SUPPORT", Truncate: view.TruncateNever, Value: func(c apidoc.Cluster) string { return orUnknown(c, view.SupportCell(c.Support)) }},
-			{Title: "COMPUTE", Truncate: view.TruncateNever, Value: func(c apidoc.Cluster) string { return orUnknown(c, computeText(c)) }},
-			{Title: "STALE AMI", MinWidth: 9, Value: func(c apidoc.Cluster) string { return orUnknown(c, staleText(c, now)) }},
-			{Title: "ADDONS", MinWidth: 6, MaxWidth: 32, Value: func(c apidoc.Cluster) string { return orUnknown(c, addonsText(c)) }},
-			{Title: "HEALTH", Truncate: view.TruncateNever, Value: func(c apidoc.Cluster) string { return orUnknown(c, healthText(c)) }},
+		Rows:     rows,
+		Notes:    notes(o.ios.Theme(), rows),
+		Failures: failures,
+		Columns: []view.Column[row]{
+			{Title: "CLUSTER", MinWidth: 12, Value: func(r row) string { return r.Name }, Status: overall},
+			{Title: "REGION", Truncate: view.TruncateNever, Value: func(r row) string { return r.Region }},
+			{Title: "VERSION", Truncate: view.TruncateNever, Value: func(r row) string { return orUnknown(r, r.Version) }},
+			{Title: "SUPPORT", Truncate: view.TruncateNever, Value: func(r row) string { return orUnknown(r, view.SupportCell(r.Support)) }},
+			{Title: "COMPUTE", Truncate: view.TruncateNever, Value: func(r row) string { return orUnknown(r, computeText(r.Cluster)) }},
+			{Title: "STALE AMI", MinWidth: 9, Value: func(r row) string { return orUnknown(r, staleText(r, now)) }},
+			{Title: "ADDONS", MinWidth: 6, MaxWidth: 32, Value: func(r row) string { return orUnknown(r, addonsText(r)) }},
+			{Title: "HEALTH", Truncate: view.TruncateNever, Value: func(r row) string { return orUnknown(r, healthText(r)) }},
 		},
 	}
 }
@@ -392,68 +323,50 @@ func computeText(c apidoc.Cluster) string {
 // staleText returns the stale AMIs of a cluster: how many of the
 // nodegroups, the age of the oldest, the nodegroups behind the control
 // plane, and the nodegroups with no AMI to compare. A cluster with no managed nodegroup has none to be stale.
-func staleText(c apidoc.Cluster, now time.Time) string {
-	if c.Nodegroups == nil {
+func staleText(r row, now time.Time) string {
+	if r.Nodegroups == nil {
 		return ""
 	}
-	f := findingsOf(c)
-	if len(c.Nodegroups) == 0 {
+	f := r.findings
+	if len(r.Nodegroups) == 0 {
 		return "n/a"
 	}
-	// The nodegroups whose AMI was not read, and those with nothing to
-	// compare: no instance, or an AMI type with no recommended AMI.
-	unread, notCompared := 0, 0
-	for _, n := range c.Nodegroups {
-		switch {
-		case n.AMI == nil && n.Incomplete:
-			unread++
-		case n.AMI != nil && n.AMI.Status == apidoc.AMIUnknown:
-			notCompared++
-		}
-	}
-	if unread == len(c.Nodegroups) {
+	if f.UnreadAMIs == len(r.Nodegroups) {
 		return view.UnknownCell
 	}
 	var parts []string
 	switch {
-	case f.staleAMIs > 0:
-		text := strconv.Itoa(f.staleAMIs) + "/" + strconv.Itoa(f.nodegroups)
-		if !f.oldestAMI.IsZero() {
-			text += " (" + strconv.Itoa(int(now.Sub(f.oldestAMI).Hours()/24)) + "d)"
+	case f.StaleAMIs > 0:
+		text := strconv.Itoa(f.StaleAMIs) + "/" + strconv.Itoa(f.AMIs)
+		if !f.OldestStaleAMI.IsZero() {
+			text += " (" + strconv.Itoa(int(now.Sub(f.OldestStaleAMI).Hours()/24)) + "d)"
 		}
 		parts = append(parts, text)
-	case notCompared == 0 || notCompared < f.nodegroups:
+	case f.UncomparedAMIs == 0 || f.UncomparedAMIs < f.AMIs:
 		// "0" is for a cluster where an AMI was compared.
 		parts = append(parts, "0")
 	}
-	if f.behindNodegroups > 0 {
-		parts = append(parts, strconv.Itoa(f.behindNodegroups)+" behind CP")
+	if f.BehindNodegroups > 0 {
+		parts = append(parts, strconv.Itoa(f.BehindNodegroups)+" behind CP")
 	}
-	if unread > 0 {
-		parts = append(parts, strconv.Itoa(unread)+" unknown")
+	if f.UnreadAMIs > 0 {
+		parts = append(parts, strconv.Itoa(f.UnreadAMIs)+" unknown")
 	}
-	if notCompared > 0 {
-		parts = append(parts, strconv.Itoa(notCompared)+" not compared")
+	if f.UncomparedAMIs > 0 {
+		parts = append(parts, strconv.Itoa(f.UncomparedAMIs)+" not compared")
 	}
 	return strings.Join(parts, ", ")
 }
 
 // addonsText returns the add-ons of a cluster that are behind: the count
 // and the first names.
-func addonsText(c apidoc.Cluster) string {
-	if c.Addons == nil {
+func addonsText(r row) string {
+	if r.Addons == nil {
 		return ""
 	}
-	// The add-ons whose newest version could not be read.
-	unread := 0
-	for _, a := range c.Addons {
-		if a.Latest == nil && a.Incomplete {
-			unread++
-		}
-	}
-	behind := findingsOf(c).behindAddons
+	unread, behind := r.findings.UnreadAddons, r.findings.BehindAddons
 	switch {
-	case unread > 0 && unread == len(c.Addons):
+	case unread > 0 && unread == len(r.Addons):
 		return view.UnknownCell
 	case unread > 0:
 		return strconv.Itoa(len(behind)) + ", " + strconv.Itoa(unread) + " unknown"
@@ -471,11 +384,11 @@ func addonsText(c apidoc.Cluster) string {
 
 // healthText returns the number of health issues of a cluster: of its
 // control plane, its nodegroups, and its add-ons.
-func healthText(c apidoc.Cluster) string {
-	if n := healthIssues(c); n > 0 {
+func healthText(r row) string {
+	if n := r.findings.HealthIssues; n > 0 {
 		return view.Plural(n, "issue")
 	}
-	if c.HealthIssues == nil {
+	if r.HealthIssues == nil {
 		return ""
 	}
 	return "ok"
@@ -484,7 +397,7 @@ func healthText(c apidoc.Cluster) string {
 // notes returns the lines under the table: the clusters counted by what
 // they need, the totals of what is out of date, and the command that
 // looks closer at the most urgent cluster.
-func notes(th view.Theme, clusters []apidoc.Cluster) []string {
+func notes(th view.Theme, clusters []row) []string {
 	if len(clusters) == 0 {
 		return nil
 	}
@@ -524,15 +437,15 @@ const hoursPerMonth = 730
 // add-ons behind, nodegroups behind their control plane, and clusters out
 // of standard support, with what extended support costs them a month on
 // top of standard support. It is "" when nothing is.
-func totals(clusters []apidoc.Cluster) string {
+func totals(clusters []row) string {
 	var stale, addons, behind, support int
 	var premium float64
 	for _, c := range clusters {
-		f := findingsOf(c)
-		stale += f.staleAMIs
-		addons += len(f.behindAddons)
-		behind += f.behindNodegroups
-		if supportRisk(c) {
+		f := c.findings
+		stale += f.StaleAMIs
+		addons += len(f.BehindAddons)
+		behind += f.BehindNodegroups
+		if f.OutOfStandardSupport() {
 			support++
 		}
 		if c.Support != nil {
@@ -565,27 +478,27 @@ func totals(clusters []apidoc.Cluster) string {
 // first, else the first one that needs attention. The command names the
 // region of the cluster, which a sweep of several regions may not have
 // as its default.
-func hint(th view.Theme, clusters []apidoc.Cluster) string {
-	i := slices.IndexFunc(clusters, func(c apidoc.Cluster) bool { return overall(c) == view.Fail })
+func hint(th view.Theme, clusters []row) string {
+	i := slices.IndexFunc(clusters, func(c row) bool { return overall(c) == view.Fail })
 	if i < 0 {
-		i = slices.IndexFunc(clusters, func(c apidoc.Cluster) bool { return overall(c) == view.Warn })
+		i = slices.IndexFunc(clusters, func(c row) bool { return overall(c) == view.Warn })
 	}
 	if i < 0 {
 		return ""
 	}
 	c := clusters[i]
-	f := findingsOf(c)
+	f := c.findings
 	reason := "needs attention"
 	switch {
 	case overall(c) == view.Fail:
 		reason = "is on a version that EKS no longer supports"
-	case f.issues > 0:
-		reason = "has " + view.Plural(f.issues, "health issue")
-	case f.behindNodegroups > 0:
-		reason = "has " + view.Plural(f.behindNodegroups, "nodegroup") + " behind the control plane"
-	case supportRisk(c):
+	case f.HealthIssues > 0:
+		reason = "has " + view.Plural(f.HealthIssues, "health issue")
+	case f.BehindNodegroups > 0:
+		reason = "has " + view.Plural(f.BehindNodegroups, "nodegroup") + " behind the control plane"
+	case f.OutOfStandardSupport():
 		reason = "is out of standard support"
-	case f.total() > 0:
+	case f.Stale() > 0:
 		reason = "has stale AMIs or add-ons"
 	}
 	command := "refresh cluster upgrade-check " + c.Name

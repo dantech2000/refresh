@@ -331,7 +331,7 @@ func TestAddonUpdateRunsToTheEnd(t *testing.T) {
 	if first.ReadOnly {
 		t.Fatal("a backend with --allow-changes reads as read-only")
 	}
-	p := r.propose(t, state.Action{Kind: state.ActionAddons, Cluster: prod})
+	p := r.propose(t, state.Action{Kind: change.AddonUpdate, Cluster: prod})
 	if p.Blocked || p.Doc.Operation != apidoc.OperationAddonUpdate || len(p.Doc.Clusters) != 1 || p.Doc.Clusters[0].Steps[0].Action != apidoc.ActionSubmit {
 		t.Fatalf("proposal = %+v", p.Doc)
 	}
@@ -368,7 +368,7 @@ func TestAddonUpdateRunsToTheEnd(t *testing.T) {
 	// The claim is released, the feed says how it ended, and the cluster
 	// is read again on its own, without a sweep.
 	after := r.wait(t, 0, func(st state.State) bool {
-		return st.Clusters[0].Change == 0 && st.Clusters[0].Stale.Addons == 0 && strings.Contains(feedText(st), "prod ended: succeeded")
+		return st.Clusters[0].Change == 0 && len(st.Clusters[0].Findings.BehindAddons) == 0 && strings.Contains(feedText(st), "prod ended: succeeded")
 	})
 	if after.Sweep.Count != 1 {
 		t.Fatalf("the end of a change swept the fleet (%d sweeps)", after.Sweep.Count)
@@ -382,7 +382,7 @@ func TestAddonUpdateRunsToTheEnd(t *testing.T) {
 func TestOneConfirmationStartsOneChange(t *testing.T) {
 	r := changeRig(t, changeWorld(nil), false)
 	r.wait(t, 0, swept(1))
-	p := r.propose(t, state.Action{Kind: state.ActionAddons, Cluster: prod})
+	p := r.propose(t, state.Action{Kind: change.AddonUpdate, Cluster: prod})
 	var wg sync.WaitGroup
 	results := make([]error, 32)
 	for i := range results {
@@ -421,15 +421,15 @@ func TestOneConfirmationStartsOneChange(t *testing.T) {
 func TestOnlyTheNewestProposalCanStart(t *testing.T) {
 	r := changeRig(t, changeWorld(nil), false)
 	r.wait(t, 0, swept(1))
-	first := r.propose(t, state.Action{Kind: state.ActionAddons, Cluster: prod})
-	second := r.propose(t, state.Action{Kind: state.ActionRoll, Cluster: prod, Nodegroup: "web"})
+	first := r.propose(t, state.Action{Kind: change.AddonUpdate, Cluster: prod})
+	second := r.propose(t, state.Action{Kind: change.NodegroupUpdate, Cluster: prod, Nodegroup: "web"})
 	if _, err := r.b.Start(t.Context(), first.ID); !errors.Is(err, backend.ErrStaleProposal) {
 		t.Fatalf("Start of the older proposal = %v, want ErrStaleProposal", err)
 	}
 	if second.Blocked || second.Doc.Operation != apidoc.OperationNodegroupUpdate {
 		t.Fatalf("roll proposal = %+v", second.Doc)
 	}
-	if _, err := r.b.Plan(t.Context(), state.Action{Kind: state.ActionAddons, Cluster: state.Key{Region: east, Name: "nope"}}); !errors.Is(err, backend.ErrUnknownCluster) {
+	if _, err := r.b.Plan(t.Context(), state.Action{Kind: change.AddonUpdate, Cluster: state.Key{Region: east, Name: "nope"}}); !errors.Is(err, backend.ErrUnknownCluster) {
 		t.Fatalf("Plan of an unknown cluster = %v", err)
 	}
 }
@@ -443,7 +443,7 @@ func TestBlockedProposalCannotStart(t *testing.T) {
 	})
 	r := changeRig(t, world, false)
 	r.wait(t, 0, swept(1))
-	p := r.propose(t, state.Action{Kind: state.ActionRollback, Cluster: prod})
+	p := r.propose(t, state.Action{Kind: change.ClusterRollback, Cluster: prod})
 	if !p.Blocked || len(p.Doc.Clusters[0].Blockers) == 0 {
 		t.Fatalf("rollback to an unoffered version is not blocked: %+v", p.Doc.Clusters[0])
 	}
@@ -471,7 +471,7 @@ func upgradeTo133() *fleettest.Update {
 func TestPlanChangedAsksAndOneChangePerCluster(t *testing.T) {
 	r := changeRig(t, changeWorld(nil), false)
 	r.wait(t, 0, swept(1))
-	p := r.propose(t, state.Action{Kind: state.ActionAddons, Cluster: prod})
+	p := r.propose(t, state.Action{Kind: change.AddonUpdate, Cluster: prod})
 	// A newer vpc-cni appears after the dry run: the plan's target moves.
 	r.world.Edit(func(s *fleettest.State) {
 		s.AddonVersions = append(s.AddonVersions, fleettest.AddonVersion{Addon: "vpc-cni", Version: "v1.21.0-eksbuild.1", ClusterVersions: []string{"1.33"}})
@@ -489,7 +489,7 @@ func TestPlanChangedAsksAndOneChangePerCluster(t *testing.T) {
 		t.Fatalf("question = %+v, controls %+v", c.Question, c.Controls)
 	}
 	// One change per cluster.
-	again := r.propose(t, state.Action{Kind: state.ActionRoll, Cluster: prod, Nodegroup: "web"})
+	again := r.propose(t, state.Action{Kind: change.NodegroupUpdate, Cluster: prod, Nodegroup: "web"})
 	if _, err := r.b.Start(t.Context(), again.ID); !errors.Is(err, backend.ErrClusterBusy) {
 		t.Fatalf("Start on a claimed cluster = %v, want ErrClusterBusy", err)
 	}
@@ -534,7 +534,7 @@ func TestPlanChangedAsksAndOneChangePerCluster(t *testing.T) {
 func TestFailedReadAfterAChangeKeepsTheRow(t *testing.T) {
 	r := changeRig(t, changeWorld(nil), false)
 	first := r.wait(t, 0, swept(1))
-	p := r.propose(t, state.Action{Kind: state.ActionAddons, Cluster: prod})
+	p := r.propose(t, state.Action{Kind: change.AddonUpdate, Cluster: prod})
 	// A newer vpc-cni after the dry run makes the change ask first.
 	r.world.Edit(func(s *fleettest.State) {
 		s.AddonVersions = append(s.AddonVersions, fleettest.AddonVersion{Addon: "vpc-cni", Version: "v1.21.0-eksbuild.1", ClusterVersions: []string{"1.33"}})
@@ -572,7 +572,7 @@ func TestFailedReadAfterAChangeKeepsTheRow(t *testing.T) {
 func TestNothingStartsAfterRunStops(t *testing.T) {
 	r := changeRig(t, changeWorld(nil), false)
 	r.wait(t, 0, swept(1))
-	p := r.propose(t, state.Action{Kind: state.ActionAddons, Cluster: prod})
+	p := r.propose(t, state.Action{Kind: change.AddonUpdate, Cluster: prod})
 	r.cancel()
 	<-r.done
 	if err := r.b.Readiness(t.Context(), prod); !errors.Is(err, backend.ErrClosing) {
@@ -596,10 +596,10 @@ func TestRollShowsTheNodes(t *testing.T) {
 	})
 	r := pacedRig(t, world, true, newPacer(t, world))
 	first := r.wait(t, 0, swept(1))
-	if first.Clusters[0].Stale.AMIs != 1 {
-		t.Fatalf("web is not stale: %+v", first.Clusters[0].Stale)
+	if first.Clusters[0].Findings.StaleAMIs != 1 {
+		t.Fatalf("web is not stale: %+v", first.Clusters[0].Findings)
 	}
-	p := r.propose(t, state.Action{Kind: state.ActionRoll, Cluster: prod, Nodegroup: "web"})
+	p := r.propose(t, state.Action{Kind: change.NodegroupUpdate, Cluster: prod, Nodegroup: "web"})
 	if p.Blocked || p.Doc.Clusters[0].Gate == nil {
 		t.Fatalf("proposal = %+v", p.Doc.Clusters[0])
 	}
@@ -644,7 +644,7 @@ func TestStuckDrainFailsTheRoll(t *testing.T) {
 	})
 	r := pacedRig(t, world, true, newPacer(t, world))
 	r.wait(t, 0, swept(1))
-	p := r.propose(t, state.Action{Kind: state.ActionRoll, Cluster: prod, Nodegroup: "web"})
+	p := r.propose(t, state.Action{Kind: change.NodegroupUpdate, Cluster: prod, Nodegroup: "web"})
 	id, err := r.b.Start(t.Context(), p.ID)
 	if err != nil {
 		t.Fatalf("Start: %v", err)
@@ -670,7 +670,7 @@ func TestUpgradePausesAndStops(t *testing.T) {
 	})
 	r := changeRig(t, world, true)
 	r.wait(t, 0, swept(1))
-	p := r.propose(t, state.Action{Kind: state.ActionUpgrade, Cluster: prod, To: fleet.Version{Major: 1, Minor: 34}})
+	p := r.propose(t, state.Action{Kind: change.ClusterUpgrade, Cluster: prod, To: fleet.Version{Major: 1, Minor: 34}})
 	if p.Blocked || p.Doc.Operation != apidoc.OperationClusterUpgrade || len(p.Doc.Clusters[0].Steps) < 3 {
 		t.Fatalf("proposal = %+v", p.Doc.Clusters[0])
 	}
@@ -753,7 +753,7 @@ func TestAStopDoesNotHideAFailure(t *testing.T) {
 	})
 	r := changeRig(t, world, true)
 	r.wait(t, 0, swept(1))
-	p := r.propose(t, state.Action{Kind: state.ActionUpgrade, Cluster: prod, To: fleet.Version{Major: 1, Minor: 34}})
+	p := r.propose(t, state.Action{Kind: change.ClusterUpgrade, Cluster: prod, To: fleet.Version{Major: 1, Minor: 34}})
 	id, err := r.b.Start(t.Context(), p.ID)
 	if err != nil {
 		t.Fatalf("Start: %v", err)
@@ -799,7 +799,7 @@ func TestPickedNodegroupIsTheOnlyOneRolled(t *testing.T) {
 	})
 	r := changeRig(t, world, false)
 	r.wait(t, 0, swept(1))
-	p := r.propose(t, state.Action{Kind: state.ActionUpgrade, Cluster: prod, To: fleet.Version{Major: 1, Minor: 33}, Nodegroup: "api", Only: []change.Part{change.PartNodegroups}})
+	p := r.propose(t, state.Action{Kind: change.ClusterUpgrade, Cluster: prod, To: fleet.Version{Major: 1, Minor: 33}, Nodegroup: "api", Only: []change.Part{change.PartNodegroups}})
 	if !strings.Contains(p.Command, "cluster upgrade prod --to 1.33 --only nodegroups -n api") {
 		t.Fatalf("command = %q", p.Command)
 	}
@@ -822,12 +822,12 @@ func TestCopiedCommandCarriesTheKubeAccess(t *testing.T) {
 		o.Kubeconfig, o.KubeContext = "/home/me/kube config", "prod-admin"
 	})
 	r.wait(t, 0, swept(1))
-	roll := r.propose(t, state.Action{Kind: state.ActionRoll, Cluster: prod, Nodegroup: "web"})
+	roll := r.propose(t, state.Action{Kind: change.NodegroupUpdate, Cluster: prod, Nodegroup: "web"})
 	want := "refresh --profile test --region us-east-1 nodegroup update web -c prod --kubeconfig '/home/me/kube config' --kube-context prod-admin"
 	if roll.Command != want {
 		t.Fatalf("roll command = %q, want %q", roll.Command, want)
 	}
-	addons := r.propose(t, state.Action{Kind: state.ActionAddons, Cluster: prod})
+	addons := r.propose(t, state.Action{Kind: change.AddonUpdate, Cluster: prod})
 	if strings.Contains(addons.Command, "kube") || !strings.HasPrefix(addons.Command, "refresh --profile test --region us-east-1 addon update") {
 		t.Fatalf("add-on command = %q", addons.Command)
 	}
@@ -912,7 +912,7 @@ func TestWatchEndKeepsOtherClaims(t *testing.T) {
 	r := changeRig(t, world, false)
 	first := r.wait(t, 0, swept(1))
 	prod2 := state.Key{Region: east, Name: "prod2"}
-	p := r.propose(t, state.Action{Kind: state.ActionAddons, Cluster: prod2})
+	p := r.propose(t, state.Action{Kind: change.AddonUpdate, Cluster: prod2})
 	world.Edit(func(s *fleettest.State) {
 		s.AddonVersions = append(s.AddonVersions, fleettest.AddonVersion{Addon: "vpc-cni", Version: "v1.21.0-eksbuild.1", ClusterVersions: []string{"1.33"}})
 	})
@@ -960,7 +960,7 @@ func TestStopBeforeTheFirstPhaseSendsNothing(t *testing.T) {
 	})
 	r := changeRig(t, world, true)
 	r.wait(t, 0, swept(1))
-	p := r.propose(t, state.Action{Kind: state.ActionUpgrade, Cluster: prod, To: fleet.Version{Major: 1, Minor: 34}, Only: []change.Part{change.PartControlPlane}})
+	p := r.propose(t, state.Action{Kind: change.ClusterUpgrade, Cluster: prod, To: fleet.Version{Major: 1, Minor: 34}, Only: []change.Part{change.PartControlPlane}})
 	id, err := r.b.Start(t.Context(), p.ID)
 	if err != nil {
 		t.Fatalf("Start: %v", err)
@@ -1010,7 +1010,7 @@ func TestRollbackOnTheWindow(t *testing.T) {
 	if ready.Clusters[0].Rollback == nil {
 		t.Fatalf("no rollback window: %+v", ready.Clusters[0].Readiness)
 	}
-	p := r.propose(t, state.Action{Kind: state.ActionRollback, Cluster: prod})
+	p := r.propose(t, state.Action{Kind: change.ClusterRollback, Cluster: prod})
 	if p.Blocked || p.Doc.Operation != apidoc.OperationClusterRollback || !strings.Contains(p.Command, "cluster rollback prod") {
 		t.Fatalf("proposal = %+v, command %q", p.Doc.Clusters[0], p.Command)
 	}

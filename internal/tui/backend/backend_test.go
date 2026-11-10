@@ -11,6 +11,7 @@ import (
 
 	"github.com/dantech2000/refresh/internal/apidoc"
 	"github.com/dantech2000/refresh/internal/awsx/awsxtest"
+	"github.com/dantech2000/refresh/internal/change"
 	"github.com/dantech2000/refresh/internal/cmdutil/cmdutiltest"
 	"github.com/dantech2000/refresh/internal/fleet"
 	"github.com/dantech2000/refresh/internal/fleet/fleettest"
@@ -291,7 +292,7 @@ func TestStartIsRefusedWithoutAllowChanges(t *testing.T) {
 		t.Fatal("a backend without --allow-changes reads as writable")
 	}
 	key := state.Key{Region: east, Name: "prod"}
-	p, err := r.b.Plan(t.Context(), state.Action{Kind: state.ActionAddons, Cluster: key})
+	p, err := r.b.Plan(t.Context(), state.Action{Kind: change.AddonUpdate, Cluster: key})
 	if err != nil {
 		t.Fatalf("Plan read-only: %v", err)
 	}
