@@ -9,6 +9,7 @@ import (
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 
 	"github.com/dantech2000/refresh/internal/awsx"
+	"github.com/dantech2000/refresh/internal/fanout"
 )
 
 // Update is one EKS update of the cluster itself, as far as the rollback
@@ -95,17 +96,16 @@ func (f *Fetcher) fetchUpdates(ctx context.Context, c *awsx.Clients, cluster str
 		return nil, stateOf(err), err
 	}
 	type described struct {
-		ran    bool
 		update Update
 		err    error
 	}
-	results := each(ctx, f.tickets(c), ids, func(ctx context.Context, id string) described {
+	results, started := fanout.ForEachIn(ctx, f.tickets(c), ids, func(ctx context.Context, id string) described {
 		out, err := c.EKS.DescribeUpdate(ctx, &eks.DescribeUpdateInput{Name: aws.String(cluster), UpdateId: aws.String(id)})
 		if err != nil {
-			return described{ran: true, err: err}
+			return described{err: err}
 		}
 		if out.Update == nil {
-			return described{ran: true}
+			return described{}
 		}
 		u := Update{ID: aws.ToString(out.Update.Id), Type: string(out.Update.Type), Status: string(out.Update.Status), CreatedAt: aws.ToTime(out.Update.CreatedAt)}
 		for _, p := range out.Update.Params {
@@ -113,19 +113,19 @@ func (f *Fetcher) fetchUpdates(ctx context.Context, c *awsx.Clients, cluster str
 				u.Version, _ = ParseVersion(aws.ToString(p.Value))
 			}
 		}
-		return described{ran: true, update: u}
+		return described{update: u}
 	})
 	updates := make([]Update, 0, len(ids))
-	for _, r := range results {
-		if !r.ran {
-			return nil, NotAttempted, nil
-		}
+	for _, r := range results[:started] {
 		if r.err != nil {
 			return nil, stateOf(r.err), r.err
 		}
 		if r.update.ID != "" {
 			updates = append(updates, r.update)
 		}
+	}
+	if started < len(results) {
+		return nil, NotAttempted, nil
 	}
 	return updates, Collected, nil
 }

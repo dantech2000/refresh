@@ -638,3 +638,38 @@ func TestInsightsRefresh_CredentialsFail(t *testing.T) {
 		t.Errorf("the refresh waited %s with credentials that cannot be resolved, want one poll interval", waited)
 	}
 }
+
+// The plan of a real upgrade decides whether it reads the insights, then
+// refreshes them, reads the cluster again, and plans once on that read:
+// no insight is read before the refresh, and the plan reads them once.
+// The gate of the control plane reuses the refresh and reads them once
+// more, right before its request.
+func TestInsightsRefresh_RefreshesBeforeThePlanReads(t *testing.T) {
+	e := newEnv(t, engineWorld(nil))
+	res := mustRun(t, e, upgradeTo("1.33"), Hooks{})
+	if res.Status != Succeeded {
+		t.Fatalf("status = %s, err %v; want Succeeded", res.Status, res.Err)
+	}
+	var got []string
+	for _, op := range e.operations(0) {
+		if op == string(fleettest.EKSUpdateClusterVersion) {
+			break
+		}
+		switch fleettest.Operation(op) {
+		case fleettest.EKSStartInsightsRefresh, fleettest.EKSListInsights, fleettest.EKSDescribeCluster:
+			if len(got) == 0 || got[len(got)-1] != op {
+				got = append(got, op)
+			}
+		}
+	}
+	want := []string{
+		string(fleettest.EKSDescribeCluster), string(fleettest.EKSStartInsightsRefresh),
+		// The plan, on a read after the refresh.
+		string(fleettest.EKSDescribeCluster), string(fleettest.EKSListInsights),
+		// The guard of the control-plane step.
+		string(fleettest.EKSDescribeCluster), string(fleettest.EKSListInsights),
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("reads before the control-plane request, repeats folded (-want +got):\n%s", diff)
+	}
+}
