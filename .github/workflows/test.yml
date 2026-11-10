@@ -66,6 +66,13 @@ jobs:
       - name: Test
         run: go test -race -coverprofile=coverage.out -covermode=atomic ./...
 
+      - name: Binary size is within the limit
+        # The same check as `task size:check`. It needs the one non-race
+        # build of this job: a -race binary says nothing about release size.
+        run: |
+          go build -trimpath -ldflags="-s -w" -o dist/refresh ./cmd/refresh
+          sh tools/sizecheck.sh dist/refresh
+
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:

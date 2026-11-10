@@ -47,6 +47,14 @@ tasks:
     generates:
       - "{{.BUILD_DIR}}/{{.BINARY_NAME}}"
 
+  size:check:
+    desc: Fail if the release-style binary is larger than the limit in tools/sizecheck.sh
+    # tools/sizecheck.sh explains the limit and how to raise it on purpose.
+    # The Test workflow runs the same script.
+    deps: [build:release]
+    cmds:
+      - sh tools/sizecheck.sh {{.BUILD_DIR}}/{{.BINARY_NAME}}
+
   # Development tasks
   dev:
     desc: Build and install locally for development
@@ -280,7 +288,7 @@ tasks:
       - echo "✅ Quick check passed!"
 
   dev:full:
-    desc: Full pre-push check that mirrors CI (fmt, vet, lint, tidy, deadcode, govulncheck, docs, race tests, build)
+    desc: Full pre-push check that mirrors CI (fmt, vet, lint, tidy, deadcode, govulncheck, docs, race tests, size, build)
     cmds:
       - task: fmt
       - task: vet
@@ -290,6 +298,7 @@ tasks:
       - task: vuln
       - task: docs:check
       - task: test:race
+      - task: size:check
       - task: build
       - task: run:version
       - task: run:help
