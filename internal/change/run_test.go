@@ -159,13 +159,14 @@ func TestRun_EventOrder(t *testing.T) {
 	}
 }
 
-// --no-wait submits every add-on, in dependency order, and waits for
-// nothing: no poll, and no read after a submit.
+// --no-wait submits every named add-on, in the order given, and waits for
+// nothing: no poll, and no read after a submit. With --all, it is refused
+// when one add-on to update depends on another: see TestRun_AllStopsDependents.
 func TestRun_NoWait(t *testing.T) {
 	e := newEnv(t, newWorld(nil))
 	s := &script{t: t}
-	req := yes(request())
-	req.Addons, req.All, req.NoWait = nil, true, true
+	req := yes(request("vpc-cni", "coredns", "kube-proxy"))
+	req.NoWait = true
 	res, err := Run(testContext(t), e.deps, req, s.hooks())
 	if err != nil {
 		t.Fatal(err)
@@ -669,15 +670,16 @@ func TestRun_BusyLookupOnlyWhenBusy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := map[string]StepStatus{"vpc-cni": StepBusy, "coredns": StepSucceeded, "kube-proxy": StepSkipped}
+	// coredns depends on vpc-cni, so --all does not update it.
+	want := map[string]StepStatus{"vpc-cni": StepBusy, "coredns": StepNotAttempted, "kube-proxy": StepSkipped}
 	if diff := cmp.Diff(want, statuses(res)); diff != "" {
 		t.Errorf("steps (-want +got):\n%s", diff)
 	}
 	if n := busy.count(fleettest.EKSListUpdates); n != 1 {
 		t.Errorf("%d ListUpdates requests, want 1", n)
 	}
-	if res.ExitCode() != 4 || res.Status != Incomplete {
-		t.Errorf("result = %s, exit %d; want Incomplete, 4", res.Status, res.ExitCode())
+	if res.ExitCode() != 3 || res.Status != RunBlocked {
+		t.Errorf("result = %s, exit %d; want Blocked, 3: nothing changed", res.Status, res.ExitCode())
 	}
 }
 
@@ -730,17 +732,16 @@ func TestRun_LostResponse(t *testing.T) {
 }
 
 // A request that EKS refuses fails its step, and the next add-on is
-// still attempted.
+// still attempted when it was named: --all would stop it, as it depends
+// on the first (TestRun_AllStopsDependents).
 func TestRun_SubmitRefused(t *testing.T) {
 	e := newEnv(t, newWorld(nil))
 	e.world.SetScopedFault(fleettest.Scope{Operation: fleettest.EKSUpdateAddon, Addon: "vpc-cni"}, fleettest.Fault{Code: "InvalidParameterException"})
-	req := yes(request())
-	req.Addons, req.All = nil, true
-	res, err := Run(testContext(t), e.deps, req, Hooks{})
+	res, err := Run(testContext(t), e.deps, yes(request("vpc-cni", "coredns")), Hooks{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := map[string]StepStatus{"vpc-cni": StepFailed, "coredns": StepSucceeded, "kube-proxy": StepSkipped}
+	want := map[string]StepStatus{"vpc-cni": StepFailed, "coredns": StepSucceeded}
 	if diff := cmp.Diff(want, statuses(res)); diff != "" {
 		t.Errorf("steps (-want +got):\n%s", diff)
 	}
@@ -752,6 +753,119 @@ func TestRun_SubmitRefused(t *testing.T) {
 	}
 }
 
+// --all keeps its dependency order when a dependency does not finish: the
+// add-ons that depend on it are NotAttempted, with a failure that names
+// it, and nothing is sent for them. An add-on that needs no change stays
+// Skipped, and one that depends on nothing goes on.
+func TestRun_AllStopsDependents(t *testing.T) {
+	const agent, agentOld, agentNew = "eks-pod-identity-agent", "v1.3.0-eksbuild.1", "v1.3.4-eksbuild.1"
+	tests := []struct {
+		name    string
+		seed    func(c *fleettest.Cluster)
+		prepare func(t *testing.T, e *env)
+		cni     StepStatus
+		updates []any
+	}{
+		{
+			name: "the request of the dependency is refused", cni: StepFailed, updates: []any{agent, "vpc-cni"},
+			prepare: func(_ *testing.T, e *env) {
+				e.world.SetScopedFault(fleettest.Scope{Operation: fleettest.EKSUpdateAddon, Addon: "vpc-cni"}, fleettest.Fault{Code: "InvalidParameterException"})
+			},
+		},
+		{
+			name: "the update of the dependency fails", cni: StepFailed, updates: []any{agent, "vpc-cni"},
+			seed: func(c *fleettest.Cluster) {
+				c.Addon("vpc-cni").UpdateScripts = []fleettest.UpdateScript{{After: 30 * time.Second, Result: fleettest.UpdateFailed}}
+			},
+		},
+		{
+			name: "the wait of the dependency times out", cni: StepInProgress, updates: []any{agent, "vpc-cni"},
+			seed: func(c *fleettest.Cluster) { c.Addon("vpc-cni").UpdateScripts = []fleettest.UpdateScript{{Never: true}} },
+		},
+		{
+			name: "the dependency is busy", cni: StepBusy, updates: []any{agent},
+			prepare: func(t *testing.T, e *env) {
+				t.Helper()
+				startElsewhere(t, e.world, "vpc-cni", "v1.19.5-eksbuild.1", fleettest.UpdateScript{Never: true})
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := newWorld(func(c *fleettest.Cluster) {
+				c.Addons = append(c.Addons, &fleettest.Addon{Name: agent, Version: agentOld})
+				if tt.seed != nil {
+					tt.seed(c)
+				}
+			})
+			w.Edit(func(s *fleettest.State) {
+				s.AddonVersions = append(s.AddonVersions,
+					fleettest.AddonVersion{Addon: agent, Version: agentNew, ClusterVersions: []string{"1.33"}},
+					fleettest.AddonVersion{Addon: agent, Version: agentOld, ClusterVersions: []string{"1.33"}})
+			})
+			e := newEnv(t, w)
+			if tt.prepare != nil {
+				tt.prepare(t, e)
+			}
+			res, err := Run(testContext(t), e.deps, all(health.Policy{Yes: true}), Hooks{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := map[string]StepStatus{"vpc-cni": tt.cni, "coredns": StepNotAttempted, "kube-proxy": StepSkipped, agent: StepSucceeded}
+			if diff := cmp.Diff(want, statuses(res)); diff != "" {
+				t.Errorf("steps (-want +got):\n%s", diff)
+			}
+			for _, s := range res.Clusters[0].Steps {
+				if s.Ref.Name != "coredns" {
+					continue
+				}
+				wantErr := "add-on coredns was not updated: its dependency vpc-cni did not finish (" + string(tt.cni) + "); nothing was sent"
+				if s.Failure == nil || s.Failure.Reason != apidoc.ReasonNotAttempted || s.Failure.Error != wantErr {
+					t.Errorf("coredns failure = %+v, want NotAttempted: %q", s.Failure, wantErr)
+				}
+			}
+			if diff := cmp.Diff(tt.updates, updated(e)); diff != "" {
+				t.Errorf("updates (-want +got):\n%s", diff)
+			}
+			// The exit-code rule is the same: a failed or unfinished add-on
+			// beside one that was updated is a partial failure.
+			if res.ExitCode() != 4 {
+				t.Errorf("exit = %d, want 4", res.ExitCode())
+			}
+		})
+	}
+
+	t.Run("--no-wait with a dependent pair is refused, and nothing is sent", func(t *testing.T) {
+		e := newEnv(t, newWorld(nil))
+		req := all(health.Policy{Yes: true})
+		req.NoWait = true
+		res, err := Run(testContext(t), e.deps, req, Hooks{})
+		want := "--no-wait cannot keep the dependency order of --all: add-on coredns waits for vpc-cni to finish"
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("error = %v, want %q", err, want)
+		}
+		if res.ExitCode() != 1 || len(e.mutations()) != 0 {
+			t.Errorf("exit %d, %d changing requests; want 1 and none", res.ExitCode(), len(e.mutations()))
+		}
+		if _, err := NewPlan(testContext(t), e.deps, req); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("NewPlan error = %v, want %q: a dry run refuses as the run does", err, want)
+		}
+	})
+	t.Run("--no-wait with no dependent pair goes on", func(t *testing.T) {
+		// coredns is at its target, so only vpc-cni changes.
+		e := newEnv(t, newWorld(func(c *fleettest.Cluster) { c.Addon("coredns").Version = dnsNew }))
+		req := all(health.Policy{Yes: true})
+		req.NoWait = true
+		res, err := Run(testContext(t), e.deps, req, Hooks{})
+		if err != nil || res.Status != Started {
+			t.Fatalf("result = %s, %v; want Started", res.Status, err)
+		}
+		if diff := cmp.Diff([]any{"vpc-cni"}, updated(e)); diff != "" {
+			t.Errorf("updates (-want +got):\n%s", diff)
+		}
+	})
+}
+
 // The wait deadline and an interrupt end a wait in different ways: the
 // first is incomplete, exit 4, and the second exits 1.
 func TestRun_DeadlineAndInterrupt(t *testing.T) {
@@ -759,14 +873,13 @@ func TestRun_DeadlineAndInterrupt(t *testing.T) {
 
 	t.Run("the wait deadline", func(t *testing.T) {
 		e := newEnv(t, newWorld(never))
-		req := yes(request())
-		req.Addons, req.All = nil, true
-		res, err := Run(testContext(t), e.deps, req, Hooks{})
+		res, err := Run(testContext(t), e.deps, yes(request("vpc-cni", "coredns")), Hooks{})
 		if err != nil {
 			t.Fatal(err)
 		}
 		// Each add-on has its own wait budget: coredns is still updated.
-		want := map[string]StepStatus{"vpc-cni": StepInProgress, "coredns": StepSucceeded, "kube-proxy": StepSkipped}
+		// With --all it would not be, as it depends on vpc-cni.
+		want := map[string]StepStatus{"vpc-cni": StepInProgress, "coredns": StepSucceeded}
 		if diff := cmp.Diff(want, statuses(res)); diff != "" {
 			t.Errorf("steps (-want +got):\n%s", diff)
 		}

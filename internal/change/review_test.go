@@ -1005,7 +1005,8 @@ func TestRun_RecheckAfterWait_GoesOn(t *testing.T) {
 	})
 	t.Run("an add-on of the run that timed out does not block the next one", func(t *testing.T) {
 		e := newEnv(t, newWorld(func(c *fleettest.Cluster) { c.Addon("vpc-cni").UpdateScripts = []fleettest.UpdateScript{{Never: true}} }))
-		res, err := Run(testContext(t), e.deps, all(health.Policy{Yes: true}), Hooks{})
+		// Named add-ons: with --all, coredns would wait for its dependency.
+		res, err := Run(testContext(t), e.deps, yes(request("vpc-cni", "coredns", "kube-proxy")), Hooks{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1016,7 +1017,7 @@ func TestRun_RecheckAfterWait_GoesOn(t *testing.T) {
 	})
 	t.Run("--no-wait reads the cluster once", func(t *testing.T) {
 		e := newEnv(t, newWorld(nil))
-		req := all(health.Policy{Yes: true})
+		req := yes(request("vpc-cni", "coredns", "kube-proxy"))
 		req.NoWait = true
 		if _, err := Run(testContext(t), e.deps, req, Hooks{}); err != nil {
 			t.Fatal(err)

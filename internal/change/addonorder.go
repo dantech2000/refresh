@@ -1,5 +1,12 @@
 package change
 
+import (
+	"fmt"
+	"slices"
+
+	"github.com/dantech2000/refresh/internal/apidoc"
+)
+
 // addonDependencies returns the add-ons that must be updated before an
 // add-on.
 func addonDependencies(name string) []string {
@@ -70,4 +77,53 @@ func sortByDependency(names []string) []string {
 		}
 	}
 	return ordered
+}
+
+// dependentPair returns an add-on of steps that has work and depends on
+// another add-on of steps that has work, and that dependency, or "" for
+// both. --no-wait cannot keep such a pair in order: it does not wait for
+// the dependency before it sends the request of the dependent.
+func dependentPair(steps []Step) (dependent, dependency string) {
+	for _, s := range steps {
+		if !s.work() {
+			continue
+		}
+		for _, dep := range addonDependencies(s.Ref.Name) {
+			if slices.ContainsFunc(steps, func(d Step) bool { return d.Ref.Name == dep && d.work() }) {
+				return s.Ref.Name, dep
+			}
+		}
+	}
+	return "", ""
+}
+
+// unfinishedDependency returns the result of the step of a dependency of
+// the add-on of s that did not end Succeeded or Skipped, among the steps
+// that ran before it. It returns false when s is no add-on step of --all
+// that has work, or when every dependency in done finished.
+//
+// --all updates the add-ons in dependency order, and the order means that
+// an add-on is not updated after its dependency failed, timed out, is
+// busy, or was not attempted.
+func (r *runner) unfinishedDependency(s Step, done []StepResult) (StepResult, bool) {
+	if req, ok := r.req.(AddonUpdateRequest); !ok || !req.All || s.Ref.Kind != StepAddon || !s.work() {
+		return StepResult{}, false
+	}
+	for _, dep := range addonDependencies(s.Ref.Name) {
+		i := slices.IndexFunc(done, func(d StepResult) bool { return d.Ref.Name == dep })
+		if i >= 0 && done[i].Status != StepSucceeded && done[i].Status != StepSkipped {
+			return done[i], true
+		}
+	}
+	return StepResult{}, false
+}
+
+// dependencyNotDone returns the result of step s, whose dependency dep did
+// not finish: NotAttempted, with a failure on the step. Nothing is sent
+// for it.
+func (r *runner) dependencyNotDone(cp *ClusterPlan, s Step, dep StepResult) StepResult {
+	res := StepResult{Ref: s.Ref, Status: StepNotAttempted}
+	res.Failure = r.stepFailure(cp, res, apidoc.ReasonNotAttempted,
+		fmt.Sprintf("%s was not updated: its dependency %s did not finish (%s); nothing was sent", stepName(s.Ref), dep.Ref.Name, dep.Status))
+	return res
 }

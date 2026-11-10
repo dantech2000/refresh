@@ -80,8 +80,15 @@ reason `VersionAhead`.
 
 `--all` updates every installed add-on, one after another, in dependency
 order: `vpc-cni` before `coredns` and `kube-proxy`, and those before the
-storage drivers. The order is not optional. A failed add-on does not stop the
-others. `--skip-addon` leaves an add-on out.
+storage drivers. The order is not optional. An add-on whose dependency did not
+finish is not updated: when `vpc-cni` fails, times out, or is already changing,
+`coredns` and `kube-proxy` are `NotAttempted`, with a failure that says "its
+dependency vpc-cni did not finish". The add-ons that do not depend on it go on.
+`--skip-addon` leaves an add-on out.
+
+`--all --no-wait` is refused, with no request, when one add-on to update
+depends on another: without a wait the order means nothing. Run without
+`--no-wait`, or update the add-ons one at a time.
 
 ```bash
 refresh addon update --all -c staging-checkout-16 --dry-run
@@ -113,7 +120,8 @@ HEALTH GATE
    update and sends none.
 5. It asks once. `--yes` skips the question.
 6. It sends each update and waits for it, for `--wait-timeout` each.
-   `--no-wait` returns once AWS accepts the updates.
+   `--no-wait` returns once AWS accepts the updates. With `--all`, an add-on
+   whose dependency did not finish is not updated.
 7. It checks that each updated add-on is `ACTIVE` at the new version.
 
 ```text
