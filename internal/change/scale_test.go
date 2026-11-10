@@ -604,6 +604,12 @@ func TestRunScale_EventsAndRequest(t *testing.T) {
 			if got := e.web(); got != tt.want {
 				t.Errorf("nodegroup = %s, want %s", got, tt.want)
 			}
+			// The update ends after 20 s, so the second poll at 30 s sees
+			// it Successful. The nodegroup is read at once after that,
+			// not one interval later.
+			if step := oneStep(t, res); step.FinishedAt.Sub(step.StartedAt) != 30*time.Second {
+				t.Errorf("the step took %s, want 30s", step.FinishedAt.Sub(step.StartedAt))
+			}
 		})
 	}
 }
