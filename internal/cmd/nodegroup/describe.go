@@ -235,6 +235,13 @@ func describeView(doc apidoc.NodegroupDescription) view.Description {
 			{Name: "min", Value: strconv.Itoa(int(s.Min))},
 			{Name: "max", Value: strconv.Itoa(int(s.Max))},
 		}})
+	} else {
+		// EKS did not return the sizes: unknown, not 0.
+		d.Sections = append(d.Sections, view.Section{Title: "SCALING", Fields: []view.Field{
+			{Name: "desired", Value: unknownCell, Status: view.Unknown},
+			{Name: "min", Value: unknownCell, Status: view.Unknown},
+			{Name: "max", Value: unknownCell, Status: view.Unknown},
+		}})
 	}
 
 	issues := view.Section{Title: "ISSUES"}
