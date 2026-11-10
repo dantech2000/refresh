@@ -81,7 +81,7 @@ refresh context. It never comes from the kubeconfig.
   # Move one add-on to a version, and do not wait for it
   refresh addon update coredns --version v1.11.4-eksbuild.2 -c prod --yes --no-wait`,
 		Args:              cobra.MatchAll(cobra.ArbitraryArgs, cmdutil.NoEmptyArgs),
-		ValidArgsFunction: fleetcmd.CompleteAddonNames(f, &o.cluster),
+		ValidArgsFunction: fleetcmd.CompleteAddons(f, &o.cluster, -1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := o.complete(args); err != nil {
 				return err
