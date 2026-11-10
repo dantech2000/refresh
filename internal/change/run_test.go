@@ -543,6 +543,8 @@ func TestRun_Expect(t *testing.T) {
 func TestRun_FreshReadBeforeSubmit(t *testing.T) {
 	tests := []struct {
 		name string
+		// version is --version, or "" for the latest.
+		version string
 		// change runs when the fresh read of vpc-cni arrives.
 		change  func(t *testing.T, e *env)
 		status  StepStatus
@@ -587,6 +589,27 @@ func TestRun_FreshReadBeforeSubmit(t *testing.T) {
 			},
 		},
 		{
+			// The same request from the newer version is a downgrade that the
+			// plan did not show.
+			name: "--version, and the add-on moved past it: failed, and nothing is sent", version: cniNew, status: StepFailed, exit: 1,
+			change: func(_ *testing.T, e *env) {
+				e.world.Edit(func(s *fleettest.State) { s.Cluster(east, "prod").Addon("vpc-cni").Version = "v1.20.5-eksbuild.1" })
+			},
+			check: func(t *testing.T, res Result) {
+				t.Helper()
+				want := "add-on vpc-cni changed to v1.20.5-eksbuild.1 since the plan, which read " + cniOld + "; nothing was sent. Run the command again"
+				if f := res.Clusters[0].Steps[0].Failure; f == nil || f.Error != want {
+					t.Errorf("failure = %+v, want %q", f, want)
+				}
+			},
+		},
+		{
+			name: "moved to another version below the target: failed, and nothing is sent", status: StepFailed, exit: 1,
+			change: func(_ *testing.T, e *env) {
+				e.world.Edit(func(s *fleettest.State) { s.Cluster(east, "prod").Addon("vpc-cni").Version = "v1.19.5-eksbuild.1" })
+			},
+		},
+		{
 			name: "the read is denied: failed, and nothing is sent", status: StepFailed, exit: 1,
 			change: func(_ *testing.T, e *env) {
 				e.world.SetFault(fleettest.EKSDescribeAddon, fleettest.Fault{Deny: true})
@@ -609,7 +632,9 @@ func TestRun_FreshReadBeforeSubmit(t *testing.T) {
 					tt.change(t, e)
 				}
 			})
-			res, err := Run(testContext(t), e.deps, yes(request("vpc-cni")), (&script{t: t}).hooks())
+			req := yes(request("vpc-cni"))
+			req.Version = tt.version
+			res, err := Run(testContext(t), e.deps, req, (&script{t: t}).hooks())
 			if err != nil {
 				t.Fatal(err)
 			}

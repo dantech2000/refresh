@@ -38,7 +38,7 @@ func (r *runner) runAddonStep(cp *ClusterPlan, s Step) StepResult {
 				return out
 			}
 		}
-		out, d, ok := r.freshAddon(cp, res, clients, resource)
+		out, d, ok := r.freshAddon(cp, res, s, clients, resource)
 		if !ok {
 			return out
 		}
@@ -104,11 +104,16 @@ func (r *runner) runAddonStep(cp *ClusterPlan, s Step) StepResult {
 // health that it reads: an add-on that was ACTIVE in the plan and is
 // DEGRADED now is a warning that nobody accepted. See regate.
 //
+// An add-on that still needs a request, at a version other than the one
+// that the plan read, fails the step and nothing is sent, as a roll and a
+// scale do: the person accepted a change from the version of the plan,
+// and the same request from another version can be a downgrade.
+//
 // After a person accepted such a warning it reads again, as Run does
 // after every answer. It asks at most maxQuestions times: a read after
 // that which is worse again fails the step, with no question. It returns false when the step ends here, with its
 // result. Otherwise the decision is Submit or Attach.
-func (r *runner) freshAddon(cp *ClusterPlan, res StepResult, clients *awsx.Clients, resource Resource) (StepResult, addonDecision, bool) {
+func (r *runner) freshAddon(cp *ClusterPlan, res StepResult, s Step, clients *awsx.Clients, resource Resource) (StepResult, addonDecision, bool) {
 	name := res.Ref.Name
 	for asked := 0; ; asked++ {
 		fresh, err := describe(r.readCtx, clients, resource)
@@ -126,6 +131,17 @@ func (r *runner) freshAddon(cp *ClusterPlan, res StepResult, clients *awsx.Clien
 		case d.Action == Attach:
 			r.notice(fmt.Sprintf("add-on %s is already %s to %s; waiting for that update", name, fresh.Status, d.To))
 			return res, d, true
+		case d.Action != Submit:
+			// The plan recorded no target that this read can be held to.
+			res.Status, res.FinishedAt = StepFailed, r.d.now()
+			res.Failure = r.stepFailure(cp, res, apidoc.ReasonUnknown,
+				fmt.Sprintf("add-on %s cannot be updated from what was read now (%s at %s); nothing was sent. Run the command again", name, fresh.Status, fresh.Version))
+			return res, d, false
+		case fleet.CompareAddonVersions(fresh.Version, s.From) != 0:
+			res.Status, res.FinishedAt = StepFailed, r.d.now()
+			res.Failure = r.stepFailure(cp, res, apidoc.ReasonUnknown,
+				fmt.Sprintf("add-on %s changed to %s since the plan, which read %s; nothing was sent. Run the command again", name, orUnknown(fresh.Version), orUnknown(s.From)))
+			return res, d, false
 		case r.common.Policy.Skip:
 			return res, d, true
 		}
