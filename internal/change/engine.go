@@ -159,6 +159,7 @@ func (r *runner) runEngineSteps(cp *ClusterPlan, ph Phase, results []StepResult)
 			return false
 		}
 		steps := rederive(r.req.kind(), ph, snap)
+		r.startStep(steps, i)
 		if first && !slices.ContainsFunc(steps, Step.work) {
 			// Everything of the phase was done since the plan.
 			r.notice(nothingLeft(ph))
@@ -179,13 +180,12 @@ func (r *runner) runEngineSteps(cp *ClusterPlan, ph Phase, results []StepResult)
 			r.reportStep(results[i])
 			continue
 		}
-		r.steps, r.remaining, r.unverified = steps, steps[i:], false
 		reported := false
 		results[i], reported = r.runEngineStep(cp, ph, s, snap)
 		if !reported {
 			r.reportStep(results[i])
 		}
-		if !cleanStep(results[i]) || r.unverified || r.stop != nil || r.interrupted {
+		if !cleanStep(results[i]) || r.step.unverified || r.stop != nil || r.interrupted {
 			return false
 		}
 	}
@@ -234,13 +234,9 @@ func (r *runner) phaseRead(cp *ClusterPlan) (*fleet.Snapshot, error) {
 func (r *runner) phaseBusy(cp *ClusterPlan, res StepResult, snap *fleet.Snapshot, steps []Step) (StepResult, bool) {
 	refuse, notices := Busy(snap, r.req.kind(), steps)
 	for _, n := range notices {
-		// The read of a step and the read before its request find the
-		// same thing: it is said once for the step.
-		if r.busySaid.step != res.Ref {
-			r.busySaid.step, r.busySaid.notices = res.Ref, nil
-		}
-		if !slices.Contains(r.busySaid.notices, n) {
-			r.busySaid.notices = append(r.busySaid.notices, n)
+		// It is said once for the step.
+		if !slices.Contains(r.step.busySaid, n) {
+			r.step.busySaid = append(r.step.busySaid, n)
 			r.notice(n)
 		}
 	}

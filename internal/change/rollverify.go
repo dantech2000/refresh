@@ -73,7 +73,7 @@ func (r *runner) verifyRoll(ctx context.Context, cp *ClusterPlan, ph Phase, star
 				"--wait-timeout passed before the verification of "+cp.Cluster+"; its rolls ended and were not verified")
 			f.Region = cp.Region
 			r.addFailures([]apidoc.Failure{f})
-			r.unverified = true
+			r.step.unverified = true
 		}
 		return
 	}
@@ -143,7 +143,7 @@ func (r *runner) verifyRoll(ctx context.Context, cp *ClusterPlan, ph Phase, star
 	}
 	health.Locate(failures, cp.Cluster, cp.Region)
 	r.addFailures(failures)
-	r.unverified = r.unverified || len(failures) > 0
+	r.step.unverified = r.step.unverified || len(failures) > 0
 }
 
 // verificationRows returns the checks of one verification as rows of the

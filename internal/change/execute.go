@@ -145,12 +145,12 @@ func (r *runner) runPhase(cp *ClusterPlan, ph Phase) []StepResult {
 		}
 		res := StepResult{Ref: s.Ref, Status: StepNotAttempted}
 		if !halted {
-			r.steps, r.remaining, r.unverified = ph.Steps, ph.Steps[i:], false
+			r.startStep(ph.Steps, i)
 			if dep, stop := r.unfinishedDependency(s, results, unverified); stop {
 				res = r.dependencyNotDone(cp, s, dep, unverified[dep.Ref])
 			} else {
 				res = r.runStep(cp, s)
-				unverified[s.Ref] = r.unverified
+				unverified[s.Ref] = r.step.unverified
 			}
 			r.stepEnded(ph.Ref, &res)
 		}
@@ -167,8 +167,8 @@ func (r *runner) runPhase(cp *ClusterPlan, ph Phase) []StepResult {
 // above the verification of that step.
 func (r *runner) stepEnded(ph PhaseRef, res *StepResult) {
 	r.emit(Event{Kind: StepChanged, Phase: ph, Step: res.Ref, Result: res})
-	held := r.afterStep
-	r.afterStep = nil
+	held := r.step.after
+	r.step.after = nil
 	for _, e := range held {
 		r.emit(e)
 	}

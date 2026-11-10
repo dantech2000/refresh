@@ -38,7 +38,7 @@ import (
 // Blocked or Failed, Skipped when the target met its goal in the meantime,
 // and NotAttempted when the run ended.
 func (r *runner) guardSubmit(cp *ClusterPlan, s Step, res StepResult) (StepResult, bool) {
-	steps := slices.Clone(r.steps)
+	steps := slices.Clone(r.step.steps)
 	for i := range steps {
 		if steps[i].Ref == s.Ref {
 			steps[i].Action = Submit

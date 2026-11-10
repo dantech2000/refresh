@@ -142,7 +142,7 @@ func (r *runner) recheck(cp *ClusterPlan, res StepResult, checks func(snap *flee
 	}
 	// A change of an independent kind gets no notice from the busy rule:
 	// what is in flight and is not a target refuses.
-	if blocked, stop := r.phaseBusy(cp, res, snap, r.steps); stop {
+	if blocked, stop := r.phaseBusy(cp, res, snap, r.step.steps); stop {
 		return blocked, false
 	}
 	if r.common.Policy.Skip {
@@ -164,7 +164,7 @@ func (r *runner) recheck(cp *ClusterPlan, res StepResult, checks func(snap *flee
 // own fresh read decides.
 func (r *runner) remainingAddons(snap *fleet.Snapshot) []health.Check {
 	var targets []string
-	for _, s := range r.remaining {
+	for _, s := range r.step.remaining {
 		i := slices.IndexFunc(snap.Addons, func(a fleet.Addon) bool { return a.Name == s.Ref.Name })
 		if s.Action == Submit && i >= 0 && snap.Addons[i].State == fleet.Collected && !addonInFlight(snap.Addons[i].Status) {
 			targets = append(targets, s.Ref.Name)
