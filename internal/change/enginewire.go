@@ -220,6 +220,12 @@ func rollTargetsOf(steps []Step) []string {
 // UPDATING is its own work only when the update in flight rolls it to
 // that goal (foreignRolls).
 //
+// The run applies the rule before each phase with the steps of that phase
+// alone (phaseBusy), so the plan applies it to the first phase with work
+// too: a cluster that is UPDATING is the work of a control-plane step that
+// attaches in a later phase, and it still blocks the phase before that
+// one. A dry run then reports the block that the real run would meet.
+//
 // The gate is health.Preflight over every nodegroup that the plan would
 // roll, in any hop, so a drain blocker of the last nodegroup is known
 // before the control plane moves. Each nodegroup step runs the gate again
@@ -227,6 +233,14 @@ func rollTargetsOf(steps []Step) []string {
 // that rolls no nodegroup, run no gate.
 func (cp *ClusterPlan) gateEngine(ctx context.Context, d Deps, kind Kind, policy health.Policy) {
 	refuse, notices := Busy(cp.snapshot, kind, cp.Steps())
+	if i := slices.IndexFunc(cp.Phases, func(ph Phase) bool { return slices.ContainsFunc(ph.Steps, Step.work) }); i >= 0 {
+		first, _ := Busy(cp.snapshot, kind, cp.Phases[i].Steps)
+		for _, b := range first {
+			if !slices.ContainsFunc(refuse, func(have Blocker) bool { return have.Message == b.Message }) {
+				refuse = append(refuse, b)
+			}
+		}
+	}
 	refuse = append(refuse, cp.foreignRolls(ctx, d.AWS.Clients(cp.Region), kind)...)
 	cp.Blockers = append(cp.Blockers, refuse...)
 	cp.Notices = append(cp.Notices, notices...)
