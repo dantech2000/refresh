@@ -353,6 +353,42 @@ func TestControlPlane(t *testing.T) {
 	})
 }
 
+// The etcd limit is 8 GB in Standard mode and 16 GB on a tier of the
+// Provisioned Control Plane. A tier that refresh does not know keeps the
+// smaller limit, and the details say so.
+func TestControlPlane_Tier(t *testing.T) {
+	tier := func(name string, etcd float64) edit {
+		return func(s *fleettest.State, c *fleettest.Cluster) {
+			c.ControlPlaneTier = name
+			s.Metrics = slices.DeleteFunc(s.Metrics, func(m fleettest.Metric) bool { return m.Namespace == "AWS/EKS" })
+			s.Metrics = append(s.Metrics, eksMetrics("prod", etcd, 100, 0, 0)...)
+		}
+	}
+	const unknown = "the control-plane tier \"tier-16xl\" is not known; the check uses the 8 GiB limit of Standard mode"
+	tests := []struct {
+		name   string
+		edit   edit
+		want   want
+		detail string
+	}{
+		{name: "no scaling config", edit: tier("", 7.7*(1<<30)), want: want{outcome: health.Fail, message: "near the 8 GiB read-only limit (96.2%)"}},
+		{name: "standard", edit: tier("standard", 7.7*(1<<30)), want: want{outcome: health.Fail, message: "near the 8 GiB read-only limit (96.2%)"}},
+		{name: "XL, past the limit of Standard mode", edit: tier("tier-xl", 7.7*(1<<30)), want: want{outcome: health.Pass, message: "etcd 48% of 16 GiB"}},
+		{name: "8XL, near its limit", edit: tier("tier-8xl", 15.4*(1<<30)), want: want{outcome: health.Fail, message: "near the 16 GiB read-only limit (96.2%)"}},
+		{name: "a tier refresh does not know", edit: tier("tier-16xl", 7.7*(1<<30)), want: want{outcome: health.Fail, message: "near the 8 GiB read-only limit"}, detail: unknown},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newHarness(t, tt.edit)
+			got := h.run(testContext(t), health.ControlPlane())
+			check(t, got, tt.want)
+			if has := slices.Contains(got.Details, unknown); has != (tt.detail != "") {
+				t.Errorf("details = %q; want the note on the tier: %v", got.Details, tt.detail != "")
+			}
+		})
+	}
+}
+
 func TestQuotas(t *testing.T) {
 	usage := func(values ...float64) edit {
 		return func(s *fleettest.State, _ *fleettest.Cluster) {

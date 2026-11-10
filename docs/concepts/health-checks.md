@@ -166,11 +166,18 @@ minutes.
 
 | Case | Outcome |
 |---|---|
-| etcd database at 95 percent or more of 8 GiB | `Fail` |
+| etcd database at 95 percent or more of its limit | `Fail` |
 | etcd database at 80 percent or more | `Warn` |
 | 1,000 or more API requests, with 2 percent or more 5xx or 1 percent or more 429 | `Warn` |
 | The cluster emits no control-plane metrics | `Skipped` |
 | The read fails | `Unreadable`; the gate asks |
+
+The etcd limit depends on the mode of the control plane. It is 8 GiB in
+Standard mode, and 16 GiB on a tier of the
+[Provisioned Control Plane](https://docs.aws.amazon.com/eks/latest/userguide/eks-provisioned-control-plane.html)
+(XL, 2XL, 4XL, 8XL). The check reads the tier from `DescribeCluster`. If the
+tier is not known or the cluster could not be read, the check uses 8 GiB
+and says so in its details.
 
 ## Workloads
 

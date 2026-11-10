@@ -135,10 +135,14 @@ type Cluster struct {
 	// UpgradePolicy is the EKS support type: STANDARD, EXTENDED, or "".
 	UpgradePolicy string
 	// AutoMode reports EKS Auto Mode compute.
-	AutoMode     bool
-	HealthIssues []Issue
-	Network      Network
-	Security     Security
+	AutoMode bool
+	// ControlPlaneTier is the scaling tier of the control plane, as EKS
+	// reports it: standard, tier-xl, tier-2xl, tier-4xl, or tier-8xl. ""
+	// means DescribeCluster returned no scaling config.
+	ControlPlaneTier string
+	HealthIssues     []Issue
+	Network          Network
+	Security         Security
 
 	// Support is valid when Have.Support is Collected.
 	Support Support

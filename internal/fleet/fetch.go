@@ -362,6 +362,9 @@ func fillCluster(c *Cluster, in *ekstypes.Cluster) {
 		c.UpgradePolicy = string(in.UpgradePolicy.SupportType)
 	}
 	c.AutoMode = in.ComputeConfig != nil && aws.ToBool(in.ComputeConfig.Enabled)
+	if in.ControlPlaneScalingConfig != nil {
+		c.ControlPlaneTier = string(in.ControlPlaneScalingConfig.Tier)
+	}
 	if in.Health != nil {
 		for _, issue := range in.Health.Issues {
 			c.HealthIssues = append(c.HealthIssues, Issue{
