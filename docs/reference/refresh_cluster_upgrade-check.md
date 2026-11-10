@@ -50,27 +50,27 @@ refresh cluster upgrade-check [cluster] [flags]
 ### Options
 
 ```
-      --category string   Insight category: UPGRADE_READINESS, MISCONFIGURATION, ROLLBACK_READINESS (default "UPGRADE_READINESS")
-      --exit-zero         Exit 0 whatever the verdict (report mode)
-  -h, --help              help for upgrade-check
-      --insight string    Show one insight in full, by its ID or the short ID of the table
-  -o, --output format     Output format: table, json, yaml, plain (default table)
-      --show-passing      Show the PASSING insights too
-      --status strings    Show only the insights with these statuses: PASSING, WARNING, ERROR, UNKNOWN
+      --category string             Insight category: UPGRADE_READINESS, MISCONFIGURATION, ROLLBACK_READINESS (default "UPGRADE_READINESS")
+      --exit-zero[=true|false]      Exit 0 whatever the verdict (report mode)
+  -h, --help[=true|false]           help for upgrade-check
+      --insight string              Show one insight in full, by its ID or the short ID of the table
+  -o, --output format               Output format: table, json, yaml, plain (default table)
+      --show-passing[=true|false]   Show the PASSING insights too
+      --status strings              Show only the insights with these statuses: PASSING, WARNING, ERROR, UNKNOWN
 ```
 
 ### Options inherited from parent commands
 
 ```
-      --kube-context string   Kubeconfig context, trusted even when its server is not the cluster endpoint (default: the context whose server is the cluster endpoint; for the cluster of a read command, the current context)
-      --kubeconfig string     Kubeconfig file (default: $KUBECONFIG, then ~/.kube/config)
-      --log-level string      Log level: debug, info, warn, error (env: REFRESH_LOG_LEVEL) (default "warn")
-      --max-concurrency int   Limit for AWS requests in flight in one region (env: REFRESH_MAX_CONCURRENCY) (default 32)
-      --no-color              Disable color (env: NO_COLOR)
-      --profile string        AWS shared-config profile (env: AWS_PROFILE)
-  -r, --region strings        AWS region; a command that sweeps regions takes several, repeated or separated by commas (env for a sweep with -A: REFRESH_EKS_REGIONS)
-  -t, --timeout duration      Budget for the API calls of a read; in a changing command, for the reads and the requests outside a wait; with --watch, for each refresh; 0 means no limit (env: REFRESH_TIMEOUT) (default 1m0s)
-      --verbose               Same as --log-level debug
+      --kube-context string     Kubeconfig context, trusted even when its server is not the cluster endpoint (default: the context whose server is the cluster endpoint; for the cluster of a read command, the current context)
+      --kubeconfig string       Kubeconfig file (default: $KUBECONFIG, then ~/.kube/config)
+      --log-level string        Log level: debug, info, warn, error (env: REFRESH_LOG_LEVEL) (default "warn")
+      --max-concurrency int     Limit for AWS requests in flight in one region (env: REFRESH_MAX_CONCURRENCY) (default 32)
+      --no-color[=true|false]   Disable color (env: NO_COLOR)
+      --profile string          AWS shared-config profile (env: AWS_PROFILE)
+  -r, --region strings          AWS region; a command that sweeps regions takes several, repeated or separated by commas (env for a sweep with -A: REFRESH_EKS_REGIONS)
+  -t, --timeout duration        Budget for the API calls of a read; in a changing command, for the reads and the requests outside a wait; with --watch, for each refresh; 0 means no limit (env: REFRESH_TIMEOUT) (default 1m0s)
+      --verbose[=true|false]    Same as --log-level debug
 ```
 
 ### SEE ALSO

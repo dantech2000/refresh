@@ -83,38 +83,38 @@ refresh nodegroup update [nodegroup...] [flags]
 ### Options
 
 ```
-      --all-clusters             Roll every cluster of the regions of -r, or of the configured region, one after another
-      --changelog                With --dry-run, show the AMI release notes of each roll
-  -c, --cluster string           EKS cluster name (env: REFRESH_CLUSTER; default: the active context; never the kubeconfig)
-  -d, --dry-run                  Print the plan and the verdict of the health gate, and change nothing
-  -f, --filter stringArray       Select by key=value, where * matches any text; repeatable, and all must match. Keys: name, status, instanceType, amiStatus, version
-      --force                    Proceed past drain blockers and a vCPU quota surge, with a warning
-  -h, --help                     help for update
-      --live                     Show the nodes of the roll as they drain and join, also without a terminal
-      --no-wait                  Return once AWS accepted the change
-  -o, --output format            Output format: table, json, yaml, plain (default table)
-      --poll-interval duration   Time between two status polls (default 15s)
-  -q, --quiet                    Print no progress; questions, warnings, and the result still show
-      --require-healthy          Stop on any health warning, and do not ask
-      --reroll                   Also roll a nodegroup that is on the latest AMI
-      --skip-health-check        Skip the health gate before the change
-      --skip-verify              Skip the verification after each nodegroup roll
-      --wait-timeout duration    How long to wait for the rolls of a cluster; 0 means no limit (default 40m0s)
-  -y, --yes                      Do not prompt; required with -o json|yaml and without a terminal
+      --all-clusters[=true|false]        Roll every cluster of the regions of -r, or of the configured region, one after another
+      --changelog[=true|false]           With --dry-run, show the AMI release notes of each roll
+  -c, --cluster string                   EKS cluster name (env: REFRESH_CLUSTER; default: the active context; never the kubeconfig)
+  -d, --dry-run[=true|false]             Print the plan and the verdict of the health gate, and change nothing
+  -f, --filter stringArray               Select by key=value, where * matches any text; repeatable, and all must match. Keys: name, status, instanceType, amiStatus, version
+      --force[=true|false]               Proceed past drain blockers and a vCPU quota surge, with a warning
+  -h, --help[=true|false]                help for update
+      --live[=true|false]                Show the nodes of the roll as they drain and join, also without a terminal
+      --no-wait[=true|false]             Return once AWS accepted the change
+  -o, --output format                    Output format: table, json, yaml, plain (default table)
+      --poll-interval duration           Time between two status polls (default 15s)
+  -q, --quiet[=true|false]               Print no progress; questions, warnings, and the result still show
+      --require-healthy[=true|false]     Stop on any health warning, and do not ask
+      --reroll[=true|false]              Also roll a nodegroup that is on the latest AMI
+      --skip-health-check[=true|false]   Skip the health gate before the change
+      --skip-verify[=true|false]         Skip the verification after each nodegroup roll
+      --wait-timeout duration            How long to wait for the rolls of a cluster; 0 means no limit (default 40m0s)
+  -y, --yes[=true|false]                 Do not prompt; required with -o json|yaml and without a terminal
 ```
 
 ### Options inherited from parent commands
 
 ```
-      --kube-context string   Kubeconfig context, trusted even when its server is not the cluster endpoint (default: the context whose server is the cluster endpoint; for the cluster of a read command, the current context)
-      --kubeconfig string     Kubeconfig file (default: $KUBECONFIG, then ~/.kube/config)
-      --log-level string      Log level: debug, info, warn, error (env: REFRESH_LOG_LEVEL) (default "warn")
-      --max-concurrency int   Limit for AWS requests in flight in one region (env: REFRESH_MAX_CONCURRENCY) (default 32)
-      --no-color              Disable color (env: NO_COLOR)
-      --profile string        AWS shared-config profile (env: AWS_PROFILE)
-  -r, --region strings        AWS region; a command that sweeps regions takes several, repeated or separated by commas (env for a sweep with -A: REFRESH_EKS_REGIONS)
-  -t, --timeout duration      Budget for the API calls of a read; in a changing command, for the reads and the requests outside a wait; with --watch, for each refresh; 0 means no limit (env: REFRESH_TIMEOUT) (default 1m0s)
-      --verbose               Same as --log-level debug
+      --kube-context string     Kubeconfig context, trusted even when its server is not the cluster endpoint (default: the context whose server is the cluster endpoint; for the cluster of a read command, the current context)
+      --kubeconfig string       Kubeconfig file (default: $KUBECONFIG, then ~/.kube/config)
+      --log-level string        Log level: debug, info, warn, error (env: REFRESH_LOG_LEVEL) (default "warn")
+      --max-concurrency int     Limit for AWS requests in flight in one region (env: REFRESH_MAX_CONCURRENCY) (default 32)
+      --no-color[=true|false]   Disable color (env: NO_COLOR)
+      --profile string          AWS shared-config profile (env: AWS_PROFILE)
+  -r, --region strings          AWS region; a command that sweeps regions takes several, repeated or separated by commas (env for a sweep with -A: REFRESH_EKS_REGIONS)
+  -t, --timeout duration        Budget for the API calls of a read; in a changing command, for the reads and the requests outside a wait; with --watch, for each refresh; 0 means no limit (env: REFRESH_TIMEOUT) (default 1m0s)
+      --verbose[=true|false]    Same as --log-level debug
 ```
 
 ### SEE ALSO
