@@ -68,7 +68,7 @@ func globalBindings() []binding {
 			when: func(m Model) bool { return m.screen != screenFleet },
 			do:   func(m *Model) tea.Cmd { m.screen = screenFleet; return nil }},
 		{keys: []string{"ctrl+r"}, label: "ctrl+r", desc: "read the fleet from AWS now", do: func(m *Model) tea.Cmd {
-			m.say(progressStatus, "reading the fleet")
+			m.say(view.Progress, "reading the fleet")
 			b := m.b
 			return m.guard(func() tea.Msg { b.Refresh(); return doneMsg{} })
 		}},
@@ -248,7 +248,7 @@ func changeBindings() []binding {
 			})},
 		{keys: []string{"P"}, label: "P", desc: "pause before the next phase; again to resume", short: "pause", bar: true, primary: true,
 			when: func(m Model) bool { return steer(m) && !asking(m) && !paused(m) },
-			do: said(progressStatus, "pause requested: the change pauses before its next phase",
+			do: said(view.Progress, "pause requested: the change pauses before its next phase",
 				call("pause", func(ctx context.Context, b Backend, c state.Change) error { return b.Pause(ctx, c.ID) }))},
 		{keys: []string{"P"}, label: "P", desc: "resume", short: "resume", bar: true, primary: true, when: paused,
 			do: call("resume", func(ctx context.Context, b Backend, c state.Change) error { return b.Resume(ctx, c.ID) })},

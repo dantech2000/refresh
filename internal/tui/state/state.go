@@ -46,7 +46,6 @@ type Sweep struct {
 	StartedAt time.Time
 	EndedAt   time.Time
 	Count     int
-	Interval  time.Duration
 	// Error is set when no region answered: the fleet is empty for a
 	// reason, and the fleet screen says it.
 	Error string

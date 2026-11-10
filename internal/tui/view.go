@@ -8,6 +8,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/dantech2000/refresh/internal/tui/state"
 	"github.com/dantech2000/refresh/internal/view"
 )
 
@@ -107,6 +108,9 @@ func (m Model) topBar(w int) Line {
 	if n := len(sw.Skipped); n > 0 {
 		regions += fmt.Sprintf(", %d skipped", n)
 	}
+	if n := len(sw.Failed); n > 0 {
+		regions += fmt.Sprintf(", %d failed", n)
+	}
 	synced := Line{m.tok(view.Healthy, "synced "+clock(sw.EndedAt))}
 	if sw.EndedAt.IsZero() {
 		synced = Line{m.tok(view.Progress, "sweeping "+dur(m.now.Sub(sw.StartedAt)))}
@@ -153,17 +157,19 @@ func (m Model) logStrip(w int) Line {
 		return Line{sp(1), m.mark(m.noticeStatus), sp(1), tx(m.notice)}.Fit(w)
 	}
 	l := Line{sp(1), dim("log"), sp(2)}
-	var cluster string
+	// On a cluster screen, only the lines of that cluster: two clusters
+	// with one name in two regions are two keys.
+	var cluster state.Key
 	if m.screen != screenFleet {
-		cluster = m.cluster().Name
+		cluster = m.cluster().Key
 	}
 	for i := len(m.st.Feed) - 1; i >= 0; i-- {
 		e := m.st.Feed[i]
-		if cluster != "" && e.Cluster.Name != cluster {
+		if cluster != (state.Key{}) && e.Cluster != cluster {
 			continue
 		}
 		l = append(l, dim(clock(e.At)), sp(1))
-		if e.Cluster.Name != "" && cluster == "" {
+		if e.Cluster.Name != "" && cluster == (state.Key{}) {
 			l = append(l, role(view.RoleInfo, e.Cluster.Name), sp(1))
 		}
 		l = append(l, m.mark(e.Status), sp(1), sub(e.Text))
@@ -186,7 +192,7 @@ func (m Model) keyBar(w int) Line {
 	bs := m.barBindings()
 	var l Line
 	right := full
-	for _, text := range []func(binding) string{
+	for i, text := range []func(binding) string{
 		binding.barText,
 		firstWord,
 		// Drop the words of the keys that explain themselves (arrows,
@@ -208,7 +214,7 @@ func (m Model) keyBar(w int) Line {
 	} {
 		l = Line{sp(1)}
 		gap := 2
-		if text(binding{label: "x", desc: "a b"}) != "a b" {
+		if i > 0 {
 			gap = 1 // the shortened forms sit closer together
 		}
 		for _, b := range bs {

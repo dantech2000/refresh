@@ -5,7 +5,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/dantech2000/refresh/internal/fleet"
 	"github.com/dantech2000/refresh/internal/health"
 	"github.com/dantech2000/refresh/internal/tui/state"
 	"github.com/dantech2000/refresh/internal/view"
@@ -39,7 +38,7 @@ func (b *Live) Readiness(_ context.Context, key state.Key) error {
 func (b *Live) runReadiness(key state.Key) {
 	ctx, cancel := b.withTimeout()
 	defer cancel()
-	report, err := health.CheckReadiness(ctx, b.provider.Clients(key.Region), &fleet.Fetcher{Now: b.opts.Now}, key.Name, "")
+	report, err := health.CheckReadiness(ctx, b.provider.Clients(key.Region), b.deps.Fetch.Fresh(), key.Name, "")
 
 	b.mu.Lock()
 	// The entry is replaced, never written: a published state holds the
