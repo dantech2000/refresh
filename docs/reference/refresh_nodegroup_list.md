@@ -47,29 +47,29 @@ refresh nodegroup list [flags]
 ### Options
 
 ```
-      --check-readiness           Read the Ready nodes of each nodegroup from the Kubernetes API; NODES then shows ready/desired
-  -c, --cluster string            EKS cluster name (env: REFRESH_CLUSTER; default: the active context, then the current kubeconfig context)
-      --desc                      Sort in descending order
-  -f, --filter stringArray        Select by key=value, where * matches any text; repeatable, and all must match. Keys: name, status, instanceType, amiStatus, version
-  -h, --help                      help for list
-  -o, --output format             Output format: table, json, yaml, plain (default table)
-      --sort key                  Sort by: name, status, instanceType, nodes, version, amiStatus (default name)
-  -w, --watch                     Read again and redraw every --watch-interval, until Ctrl+C
-      --watch-interval duration   Time between two reads of --watch (default 10s)
+      --check-readiness[=true|false]   Read the Ready nodes of each nodegroup from the Kubernetes API; NODES then shows ready/desired
+  -c, --cluster string                 EKS cluster name (env: REFRESH_CLUSTER; default: the active context, then the current kubeconfig context)
+      --desc[=true|false]              Sort in descending order
+  -f, --filter stringArray             Select by key=value, where * matches any text; repeatable, and all must match. Keys: name, status, instanceType, amiStatus, version
+  -h, --help[=true|false]              help for list
+  -o, --output format                  Output format: table, json, yaml, plain (default table)
+      --sort key                       Sort by: name, status, instanceType, nodes, version, amiStatus (default name)
+  -w, --watch[=true|false]             Read again and redraw every --watch-interval, until Ctrl+C
+      --watch-interval duration        Time between two reads of --watch (default 10s)
 ```
 
 ### Options inherited from parent commands
 
 ```
-      --kube-context string   Kubeconfig context, trusted even when its server is not the cluster endpoint (default: the context whose server is the cluster endpoint; for the cluster of a read command, the current context)
-      --kubeconfig string     Kubeconfig file (default: $KUBECONFIG, then ~/.kube/config)
-      --log-level string      Log level: debug, info, warn, error (env: REFRESH_LOG_LEVEL) (default "warn")
-      --max-concurrency int   Limit for AWS requests in flight in one region (env: REFRESH_MAX_CONCURRENCY) (default 32)
-      --no-color              Disable color (env: NO_COLOR)
-      --profile string        AWS shared-config profile (env: AWS_PROFILE)
-  -r, --region strings        AWS region; a command that sweeps regions takes several, repeated or separated by commas (env for a sweep with -A: REFRESH_EKS_REGIONS)
-  -t, --timeout duration      Budget for the API calls of a read; in a changing command, for the reads and the requests outside a wait; with --watch, for each refresh; 0 means no limit (env: REFRESH_TIMEOUT) (default 1m0s)
-      --verbose               Same as --log-level debug
+      --kube-context string     Kubeconfig context, trusted even when its server is not the cluster endpoint (default: the context whose server is the cluster endpoint; for the cluster of a read command, the current context)
+      --kubeconfig string       Kubeconfig file (default: $KUBECONFIG, then ~/.kube/config)
+      --log-level string        Log level: debug, info, warn, error (env: REFRESH_LOG_LEVEL) (default "warn")
+      --max-concurrency int     Limit for AWS requests in flight in one region (env: REFRESH_MAX_CONCURRENCY) (default 32)
+      --no-color[=true|false]   Disable color (env: NO_COLOR)
+      --profile string          AWS shared-config profile (env: AWS_PROFILE)
+  -r, --region strings          AWS region; a command that sweeps regions takes several, repeated or separated by commas (env for a sweep with -A: REFRESH_EKS_REGIONS)
+  -t, --timeout duration        Budget for the API calls of a read; in a changing command, for the reads and the requests outside a wait; with --watch, for each refresh; 0 means no limit (env: REFRESH_TIMEOUT) (default 1m0s)
+      --verbose[=true|false]    Same as --log-level debug
 ```
 
 ### SEE ALSO

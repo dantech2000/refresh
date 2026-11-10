@@ -31,23 +31,23 @@ refresh context add <name> [flags]
 ### Options
 
 ```
-  -c, --cluster string   EKS cluster name (required)
-  -h, --help             help for add
-      --profile string   AWS shared-config profile to save with the context
-  -r, --region string    AWS region to save with the context
-      --use              Switch to the context after it is saved
+  -c, --cluster string      EKS cluster name (required)
+  -h, --help[=true|false]   help for add
+      --profile string      AWS shared-config profile to save with the context
+  -r, --region string       AWS region to save with the context
+      --use[=true|false]    Switch to the context after it is saved
 ```
 
 ### Options inherited from parent commands
 
 ```
-      --kube-context string   Kubeconfig context, trusted even when its server is not the cluster endpoint (default: the context whose server is the cluster endpoint; for the cluster of a read command, the current context)
-      --kubeconfig string     Kubeconfig file (default: $KUBECONFIG, then ~/.kube/config)
-      --log-level string      Log level: debug, info, warn, error (env: REFRESH_LOG_LEVEL) (default "warn")
-      --max-concurrency int   Limit for AWS requests in flight in one region (env: REFRESH_MAX_CONCURRENCY) (default 32)
-      --no-color              Disable color (env: NO_COLOR)
-  -t, --timeout duration      Budget for the API calls of a read; in a changing command, for the reads and the requests outside a wait; with --watch, for each refresh; 0 means no limit (env: REFRESH_TIMEOUT) (default 1m0s)
-      --verbose               Same as --log-level debug
+      --kube-context string     Kubeconfig context, trusted even when its server is not the cluster endpoint (default: the context whose server is the cluster endpoint; for the cluster of a read command, the current context)
+      --kubeconfig string       Kubeconfig file (default: $KUBECONFIG, then ~/.kube/config)
+      --log-level string        Log level: debug, info, warn, error (env: REFRESH_LOG_LEVEL) (default "warn")
+      --max-concurrency int     Limit for AWS requests in flight in one region (env: REFRESH_MAX_CONCURRENCY) (default 32)
+      --no-color[=true|false]   Disable color (env: NO_COLOR)
+  -t, --timeout duration        Budget for the API calls of a read; in a changing command, for the reads and the requests outside a wait; with --watch, for each refresh; 0 means no limit (env: REFRESH_TIMEOUT) (default 1m0s)
+      --verbose[=true|false]    Same as --log-level debug
 ```
 
 ### SEE ALSO
