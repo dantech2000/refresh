@@ -81,11 +81,10 @@ func discover(ctx context.Context, d Deps, req RollRequest) (*fleet.SweepResult,
 	defer read.stop()
 	regions := req.Fleet.Regions
 	type outcome struct {
-		ran   bool
 		names []string
 		err   error
 	}
-	outcomes := fanout.ForEach(ctx, regions.Names, max(len(regions.Names), 1), func(ctx context.Context, region string) outcome {
+	outcomes, started := fanout.ForEachIn(ctx, nil, regions.Names, func(ctx context.Context, region string) outcome {
 		// Only a default sweep gives up on a region after one failed
 		// dial. A region that the user named gets the full retries.
 		clients := d.AWS.Clients(region)
@@ -94,13 +93,13 @@ func discover(ctx context.Context, d Deps, req RollRequest) (*fleet.SweepResult,
 		}
 		names, err := d.Fetch.Clusters(ctx, clients)
 		slices.Sort(names)
-		return outcome{ran: true, names: names, err: err}
+		return outcome{names: names, err: err}
 	})
 	sweep := &fleet.SweepResult{Regions: regions}
 	var targets []Target
 	for i, region := range regions.Names {
-		o := outcomes[i]
-		if !o.ran {
+		o, ran := outcomes[i], i < started
+		if !ran {
 			o.err = context.Cause(ctx)
 		}
 		switch {
@@ -109,7 +108,7 @@ func discover(ctx context.Context, d Deps, req RollRequest) (*fleet.SweepResult,
 			for _, name := range o.names {
 				targets = append(targets, Target{Region: region, Cluster: name})
 			}
-		case o.ran && regions.Default && awsx.IsRegionInaccessible(o.err):
+		case ran && regions.Default && awsx.IsRegionInaccessible(o.err):
 			sweep.Skipped = append(sweep.Skipped, region)
 		default:
 			sweep.Failures = append(sweep.Failures, fleet.FailureFromError(apidoc.FailureRegion, region, o.err))
