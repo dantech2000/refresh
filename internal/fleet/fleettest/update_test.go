@@ -257,6 +257,102 @@ func TestUpdateRequests(t *testing.T) {
 	}
 }
 
+// TestUpdateRefusals checks the updates that EKS refuses, and their
+// neighbours that it takes. prod is at 1.32, ng-a at 1.31.
+func TestUpdateRefusals(t *testing.T) {
+	cluster := func(version string) func(w *fleettest.World) error {
+		return func(w *fleettest.World) error {
+			_, err := w.UpdateClusterVersion(region, "prod", fleettest.ClusterVersionRequest{Version: &version})
+			return err
+		}
+	}
+	roll := func(version string) func(w *fleettest.World) error {
+		return func(w *fleettest.World) error {
+			_, err := w.UpdateNodegroupVersion(region, "prod", "ng-a", fleettest.NodegroupVersionRequest{Version: &version})
+			return err
+		}
+	}
+	addon := func(version string) func(w *fleettest.World) error {
+		return func(w *fleettest.World) error {
+			_, err := w.UpdateAddon(region, "prod", "coredns", fleettest.AddonRequest{Version: &version})
+			return err
+		}
+	}
+	scale := func(w *fleettest.World) error {
+		_, err := w.UpdateNodegroupConfig(region, "prod", "ng-a", fleettest.NodegroupConfigRequest{})
+		return err
+	}
+	catalog := func(s *fleettest.State) {
+		s.AddonVersions = []fleettest.AddonVersion{{Addon: "coredns", Version: "v2", ClusterVersions: []string{"1.32"}}, {Addon: "coredns", Version: "v0", ClusterVersions: []string{"1.31"}}}
+	}
+	seedStatus := func(st fleettest.ResourceStatus, of func(c *fleettest.Cluster) *fleettest.ResourceStatus) func(s *fleettest.State) {
+		return func(s *fleettest.State) { *of(s.Cluster(region, "prod")) = st }
+	}
+	ofCluster := func(c *fleettest.Cluster) *fleettest.ResourceStatus { return &c.Status }
+	ofNodegroup := func(c *fleettest.Cluster) *fleettest.ResourceStatus { return &c.Nodegroup("ng-a").Status }
+	ofAddon := func(c *fleettest.Cluster) *fleettest.ResourceStatus { return &c.Addon("coredns").Status }
+
+	tests := []struct {
+		name  string
+		seed  func(s *fleettest.State)
+		start func(w *fleettest.World) error
+		// want is "" for an update that starts, or the error type.
+		want string
+	}{
+		{name: "control plane one minor up", start: cluster("1.33")},
+		{name: "control plane one minor down", start: cluster("1.31")},
+		{name: "control plane two minors up", start: cluster("1.34"), want: "invalid"},
+		{name: "control plane at its own version", start: cluster("1.32"), want: "invalid"},
+		{name: "control plane to a version that does not parse", start: cluster("latest"), want: "invalid"},
+		{name: "control plane to another major", start: cluster("2.33"), want: "invalid"},
+		{name: "nodegroup to the control plane's version", start: roll("1.32")},
+		{name: "nodegroup above the control plane", start: roll("1.33"), want: "invalid"},
+		{name: "add-on with no catalog", start: addon("v9")},
+		{name: "add-on to a version of the catalog", seed: catalog, start: addon("v2")},
+		{name: "add-on to a version for the previous minor", seed: catalog, start: addon("v0")},
+		{name: "add-on to a version the catalog does not list", seed: catalog, start: addon("v9"), want: "invalid"},
+		{name: "cluster that is CREATING", seed: seedStatus(fleettest.StatusCreating, ofCluster), start: cluster("1.33"), want: "in use"},
+		{name: "cluster that is FAILED", seed: seedStatus(fleettest.StatusFailed, ofCluster), start: cluster("1.33"), want: "in use"},
+		{name: "nodegroup of a cluster that is UPDATING", seed: seedStatus(fleettest.StatusUpdating, ofCluster), start: scale, want: "in use"},
+		{name: "nodegroup of a cluster that is DEGRADED", seed: seedStatus(fleettest.StatusDegraded, ofCluster), start: scale},
+		{name: "nodegroup that is UPDATING with no update", seed: seedStatus(fleettest.StatusUpdating, ofNodegroup), start: scale, want: "in use"},
+		{name: "nodegroup that is CREATE_FAILED", seed: seedStatus(fleettest.StatusCreateFailed, ofNodegroup), start: roll("1.32"), want: "in use"},
+		{name: "nodegroup that is DEGRADED", seed: seedStatus(fleettest.StatusDegraded, ofNodegroup), start: roll("1.32")},
+		{name: "add-on that is DELETING", seed: seedStatus(fleettest.StatusDeleting, ofAddon), start: addon("v9"), want: "in use"},
+		{name: "add-on that is UPDATE_FAILED", seed: seedStatus(fleettest.StatusUpdateFailed, ofAddon), start: addon("v9")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := newWorld()
+			if tt.seed != nil {
+				w.Edit(tt.seed)
+			}
+			err := tt.start(w)
+			var invalid *fleettest.InvalidError
+			var inUse *fleettest.InUseError
+			got := ""
+			switch {
+			case errors.As(err, &invalid):
+				got = "invalid"
+			case errors.As(err, &inUse):
+				got = "in use"
+			case err != nil:
+				t.Fatalf("unexpected error %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("result = %q (%v), want %q", got, err, tt.want)
+			}
+			if err != nil {
+				var n int
+				w.View(func(s *fleettest.State) { n = len(s.Cluster(region, "prod").Updates) })
+				if n != 0 {
+					t.Errorf("a refused request recorded %d updates", n)
+				}
+			}
+		})
+	}
+}
+
 func TestUpdateTokenAndBusy(t *testing.T) {
 	w := newWorld()
 	w.Edit(func(s *fleettest.State) { s.DefaultUpdate = fleettest.UpdateScript{After: time.Hour} })

@@ -264,6 +264,25 @@ func TestAPIErrors(t *testing.T) {
 			_, err := c.eks.UpdateAddon(ctx, &eks.UpdateAddonInput{ClusterName: aws.String("staging"), AddonName: aws.String("kube-proxy")})
 			return err
 		}, wireError{"ResourceInUseException", is[*ekstypes.ResourceInUseException]}},
+		{"control plane two minors ahead", func() error {
+			_, err := c.eks.UpdateClusterVersion(ctx, &eks.UpdateClusterVersionInput{Name: aws.String("prod"), Version: aws.String("1.34")})
+			return err
+		}, invalid},
+		{"nodegroup above the control plane", func() error {
+			_, err := c.eks.UpdateNodegroupVersion(ctx, &eks.UpdateNodegroupVersionInput{
+				ClusterName: aws.String("prod"), NodegroupName: aws.String("ng-b"), Version: aws.String("1.33"),
+			})
+			return err
+		}, invalid},
+		{"add-on version the catalog does not list", func() error {
+			_, err := c.eks.UpdateAddon(ctx, &eks.UpdateAddonInput{ClusterName: aws.String("prod"), AddonName: aws.String("vpc-cni"), AddonVersion: aws.String("v9.9.9-eksbuild.1")})
+			return err
+		}, invalid},
+		{"nodegroup that is not ACTIVE", func() error {
+			f.world.Edit(func(s *fleettest.State) { s.Cluster(region, "prod").Nodegroup("ng-b").Status = fleettest.StatusCreateFailed })
+			_, err := c.eks.UpdateNodegroupConfig(ctx, &eks.UpdateNodegroupConfigInput{ClusterName: aws.String("prod"), NodegroupName: aws.String("ng-b")})
+			return err
+		}, wireError{"ResourceInUseException", is[*ekstypes.ResourceInUseException]}},
 		{"short client request token", func() error {
 			_, err := c.eks.UpdateClusterVersion(ctx, &eks.UpdateClusterVersionInput{
 				Name: aws.String("prod"), Version: aws.String("1.33"), ClientRequestToken: aws.String("0123456789abcdef0123456789abcdef"),

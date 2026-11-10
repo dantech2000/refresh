@@ -75,6 +75,11 @@ func eksError(err error) error {
 			return eksNotFound("No addon: " + notFound.Name)
 		}
 		return eksNotFound("No cluster found for name: " + notFound.Name + ".")
+	case errors.As(err, &inUse) && inUse.UpdateID == "":
+		// EKS's words for a nodegroup; the cluster and add-on forms are
+		// the same sentence, not verified.
+		kind := map[string]string{"cluster": "Cluster", "nodegroup": "Nodegroup", "addon": "Addon"}[inUse.Kind]
+		return newError("ResourceInUseException", kind+" cannot be updated as it is currently not in Active State")
 	case errors.As(err, &inUse):
 		return newError("ResourceInUseException", "Cannot update "+inUse.Name+" because it has update "+inUse.UpdateID+" in progress")
 	case errors.As(err, &invalid):

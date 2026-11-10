@@ -13,13 +13,21 @@ func (e *NotFoundError) Error() string {
 	return fmt.Sprintf("no %s named %q", e.Kind, e.Name)
 }
 
-// InUseError says that the resource has an update in progress.
+// InUseError says that the resource cannot be updated now: it has an update
+// in progress, or its status is not one that accepts an update.
 type InUseError struct {
-	Name     string
+	// Kind is "cluster", "nodegroup", or "addon".
+	Kind string
+	Name string
+	// UpdateID is the update in progress, or "" when Status is the reason.
 	UpdateID string
+	Status   ResourceStatus
 }
 
 func (e *InUseError) Error() string {
+	if e.UpdateID == "" {
+		return fmt.Sprintf("%s %s is %s, not in a status that accepts an update", e.Kind, e.Name, e.Status)
+	}
 	return fmt.Sprintf("%s has update %s in progress", e.Name, e.UpdateID)
 }
 

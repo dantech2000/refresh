@@ -171,6 +171,7 @@ func TestRollReplacesInstances(t *testing.T) {
 	w := kubeWorld(fleettest.UpdateScript{After: 4 * time.Minute})
 	w.Edit(func(s *fleettest.State) {
 		c := s.Cluster(region, "prod")
+		c.Version = "1.33" // EKS rolls a nodegroup to no version above the control plane
 		c.Nodegroup("ng-a").AutoScalingGroups = []string{"eks-ng-a"}
 		s.AutoScalingGroups = []fleettest.AutoScalingGroup{{Name: "eks-ng-a", InstanceIDs: []string{"i-old-1", "i-old-2"}}, {Name: "other", InstanceIDs: []string{"i-x"}}}
 		s.Instances = []fleettest.Instance{

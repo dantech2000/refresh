@@ -66,6 +66,22 @@ must settle each item before a test relies on it.
   the target version, which is where the first half comes from.
 - **The size checks of `UpdateNodegroupConfig`** (min, desired, max in order) and their
   messages.
+- **The version rules of the Update operations** (`fleettest/update.go`). From the EKS
+  user guide and API reference: a control plane moves one minor up or one down
+  (`InvalidParameterException`, "Unsupported Kubernetes minor version update from X to
+  Y"), a nodegroup goes to no version above the control plane, and an add-on goes to a
+  version of the catalog. Not verified: the error code and message of the nodegroup rule,
+  "Addon version specified is not supported", and that EKS does not also require the
+  add-on version to support the cluster's current Kubernetes version.
+- **The statuses that accept an update.** A cluster takes one only when ACTIVE, a
+  nodegroup when ACTIVE or DEGRADED, and an add-on unless it is CREATING, UPDATING, or
+  DELETING; any other status answers `ResourceInUseException`, "... cannot be updated as
+  it is currently not in Active State". The nodegroup sentence is the one EKS gives. Not
+  verified: DEGRADED for a nodegroup, the failed statuses of an add-on (refresh sends
+  `UpdateAddon` to repair one), and the sentence for a cluster and an add-on.
+- **The client request token length** (33 to 126 characters) is checked on
+  `UpdateClusterVersion` only, where a real upgrade failed on a 32-character token. The
+  references give no length for any of the four operations.
 
 | Operation | Service | Protocol | Mutates | success | denied | throttled | paged | delayed | cancelled | region |
 |---|---|---|---|---|---|---|---|---|---|---|
