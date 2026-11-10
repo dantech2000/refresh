@@ -141,15 +141,17 @@ func TestFetch_EmptySSMParameter(t *testing.T) {
 	}
 }
 
-// When the launch template of a nodegroup cannot be read and no instance
-// shows an AMI, the failure is reported, and it names the template call.
+// Only a CUSTOM nodegroup has its launch template read. When the template
+// cannot be read and no instance shows the AMI, the current AMI is empty,
+// and nothing failed: the status of a custom AMI comes from the nodegroup
+// alone.
 func TestFetch_TemplateDeniedAndNoInstance(t *testing.T) {
 	world, _, provider := nodegroupWorld(t)
 	world.Edit(func(s *fleettest.State) {
-		// The nodegroup has a launch template, and its group has no
-		// instance that could show the AMI.
+		// The nodegroup has a launch template with a custom AMI, and its
+		// group has no instance that could show the AMI.
 		s.Clusters[0].Nodegroups = append(s.Clusters[0].Nodegroups, &fleettest.Nodegroup{
-			Name: "templated", Version: "1.33", LaunchTemplate: &fleettest.LaunchTemplate{ID: "lt-app", Version: "1"}, AutoScalingGroups: []string{"asg-templated"},
+			Name: "templated", Version: "1.33", AMIType: "CUSTOM", LaunchTemplate: &fleettest.LaunchTemplate{ID: "lt-app", Version: "1"}, AutoScalingGroups: []string{"asg-templated"},
 		})
 		s.AutoScalingGroups = append(s.AutoScalingGroups, fleettest.AutoScalingGroup{Name: "asg-templated"})
 		s.LaunchTemplateVersions = append(s.LaunchTemplateVersions, fleettest.LaunchTemplateVersion{TemplateID: "lt-app", Version: "1", ImageID: "ami-stale"})
@@ -160,13 +162,13 @@ func TestFetch_TemplateDeniedAndNoInstance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"Nodegroup templated AccessDenied ec2:DescribeLaunchTemplateVersions"}
-	if diff := cmp.Diff(want, failureKeys(snap.Failures)); diff != "" {
-		t.Errorf("Failures (-want +got):\n%s", diff)
+	if keys := failureKeys(snap.Failures); len(keys) != 0 {
+		t.Errorf("Failures = %v, want none", keys)
 	}
 	i := slices.IndexFunc(snap.Nodegroups, func(n fleet.Nodegroup) bool { return n.Name == "templated" })
-	if status, known := snap.Nodegroups[i].AMIStatus(); known {
-		t.Errorf("templated: AMI status %s is known; its current AMI was not read", status)
+	n := snap.Nodegroups[i]
+	if status, known := n.AMIStatus(); status != apidoc.AMICustom || !known || n.AMI.Current != "" {
+		t.Errorf("templated: AMI status %s (known %v), current %q; want Custom, known, and no current AMI", status, known, n.AMI.Current)
 	}
 }
 
