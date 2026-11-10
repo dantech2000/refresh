@@ -125,7 +125,8 @@ here. `cluster upgrade` does that.
 - A nodegroup whose AMI type this version of `refresh` does not know, such as
   a type that EKS added later, is not rolled. Its step is skipped with the
   reason `AMITypeUnknown`, and a notice names the AMI type. Upgrade `refresh`
-  to roll it.
+  to roll it. A nodegroup for which EKS returned no AMI type is skipped the
+  same way.
 
 ### What a run does
 

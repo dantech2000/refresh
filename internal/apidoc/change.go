@@ -128,8 +128,9 @@ const (
 	ReasonNewerThanLatest StepReason = "NewerThanLatest"
 	ReasonCustomAMI       StepReason = "CustomAMI"
 	// ReasonAMITypeUnknown: this version of refresh does not know where the
-	// recommended AMI of the nodegroup's AMI type is published, so it
-	// cannot tell whether the nodegroup is behind.
+	// recommended AMI of the nodegroup's AMI type is published, or EKS
+	// returned no AMI type, so it cannot tell whether the nodegroup is
+	// behind.
 	ReasonAMITypeUnknown StepReason = "AMITypeUnknown"
 	ReasonSkippedByFlag  StepReason = "SkippedByFlag"
 	ReasonOutOfScope     StepReason = "OutOfScope"
