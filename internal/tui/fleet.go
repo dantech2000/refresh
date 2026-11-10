@@ -347,20 +347,7 @@ func (m Model) readinessVerdict(r *state.Readiness) Line {
 	case r.Err != "":
 		return Line{m.tok(view.Fail, "could not read the cluster")}
 	}
-	return Line{m.tok(readinessStatus(r.Report.Readiness), strings.ToLower(string(r.Report.Readiness)))}
-}
-
-// readinessStatus maps a verdict to the status that paints it.
-func readinessStatus(r apidoc.Readiness) view.Status {
-	switch r {
-	case apidoc.ReadinessReady:
-		return view.Healthy
-	case apidoc.ReadinessReview:
-		return view.Warn
-	case apidoc.ReadinessBlocked:
-		return view.Fail
-	}
-	return view.Unknown
+	return Line{m.tok(view.ReadinessStatus(r.Report.Readiness), strings.ToLower(string(r.Report.Readiness)))}
 }
 
 // fleetFeed is the fleet feed, newest first.

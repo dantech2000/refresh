@@ -359,7 +359,7 @@ func (m *Model) applyProposal(msg proposalMsg) {
 	a := m.planning.action
 	m.planning = nil
 	if msg.err != nil {
-		m.say(view.Fail, "dry run of %s: %v", describeAction(a), msg.err)
+		m.say(view.Fail, "dry run of %s: %v", a.Describe(true), msg.err)
 		return
 	}
 	p := msg.p

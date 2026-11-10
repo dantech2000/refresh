@@ -75,7 +75,7 @@ func (m *Model) cancelPlan() {
 		return
 	}
 	m.planning.cancel()
-	m.say(view.Neutral, "dry run of %s cancelled", describeAction(m.planning.action))
+	m.say(view.Neutral, "dry run of %s cancelled", m.planning.action.Describe(true))
 	m.planning = nil
 }
 
@@ -88,21 +88,6 @@ func (m *Model) start() tea.Cmd {
 		cid, err := b.Start(ctx, id)
 		return startedMsg{id: cid, err: err}
 	})
-}
-
-// describeAction names an action for a notice.
-func describeAction(a state.Action) string {
-	switch a.Kind {
-	case state.ActionRoll:
-		return "the roll of " + a.Nodegroup + " in " + a.Cluster.Name
-	case state.ActionAddons:
-		return "the add-on update of " + a.Cluster.Name
-	case state.ActionUpgrade:
-		return "the upgrade of " + a.Cluster.Name + " to " + a.To.String()
-	case state.ActionRollback:
-		return "the rollback of " + a.Cluster.Name
-	}
-	return string(a.Kind)
 }
 
 // busyReason says why a change cannot be proposed on the cluster, or "".
@@ -163,10 +148,10 @@ func patchItems(c state.Cluster) []pickItem {
 		switch {
 		case behindCP(c.Snapshot, n):
 			items = append(items, pickItem{name: n.Name, why: n.Version.String() + " → " + c.Version.String(), note: fmt.Sprintf("%d nodes", n.Desired), status: view.Warn,
-				action: state.Action{Kind: state.ActionUpgrade, Cluster: c.Key, Nodegroup: n.Name, To: c.Version, Only: []change.Part{change.PartNodegroups}}})
+				action: state.Action{Kind: change.ClusterUpgrade, Cluster: c.Key, Nodegroup: n.Name, To: c.Version, Only: []change.Part{change.PartNodegroups}}})
 		case status == apidoc.AMIOutdated:
 			items = append(items, pickItem{name: n.Name, why: "AMI " + orDash(n.AMI.Current) + " → " + orDash(n.AMI.Latest), note: fmt.Sprintf("%d nodes", n.Desired), status: view.Warn,
-				action: state.Action{Kind: state.ActionRoll, Cluster: c.Key, Nodegroup: n.Name}})
+				action: state.Action{Kind: change.NodegroupUpdate, Cluster: c.Key, Nodegroup: n.Name}})
 		}
 	}
 	return items
@@ -180,7 +165,7 @@ func (m *Model) planUpgrade() tea.Cmd {
 	c := m.cluster()
 	next := nextMinor(c.Version)
 	up := func(to fleet.Version, only ...change.Part) state.Action {
-		return state.Action{Kind: state.ActionUpgrade, Cluster: c.Key, To: to, Only: only}
+		return state.Action{Kind: change.ClusterUpgrade, Cluster: c.Key, To: to, Only: only}
 	}
 	hop := c.Version.String() + " → " + next.String()
 	items := []pickItem{
@@ -291,7 +276,7 @@ func dialogBindings() []binding {
 func (m Model) confirmParts(w int) dialogParts {
 	p := m.confirm
 	inner := w - 4
-	title := kindLabel(actionKind(p.Action.Kind)) + " " + p.Action.Cluster.Name
+	title := kindLabel(p.Action.Kind) + " " + p.Action.Cluster.Name
 	head := Block{joinRight(Line{bold(view.RoleAccent, title)}, Line{dim("dry run · nothing changed yet")}, inner), {}}
 	var body Block
 	for _, cp := range p.Doc.Clusters {
@@ -398,20 +383,6 @@ func stepDocName(s apidoc.PlanStep) string {
 		return "control plane"
 	}
 	return s.Name
-}
-
-func actionKind(k state.ActionKind) change.Kind {
-	switch k {
-	case state.ActionRoll:
-		return change.NodegroupUpdate
-	case state.ActionAddons:
-		return change.AddonUpdate
-	case state.ActionUpgrade:
-		return change.ClusterUpgrade
-	case state.ActionRollback:
-		return change.ClusterRollback
-	}
-	return change.Kind(k)
 }
 
 func actionStatus(a apidoc.StepAction) view.Status {

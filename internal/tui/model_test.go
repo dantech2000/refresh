@@ -11,6 +11,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/dantech2000/refresh/internal/change"
 	"github.com/dantech2000/refresh/internal/tui/state"
 	"github.com/dantech2000/refresh/internal/view"
 )
@@ -440,7 +441,7 @@ func TestKeysDoNothingOnTheResizeScreen(t *testing.T) {
 	// A dry run on screen: y starts nothing, esc does not close it.
 	h := newHarness(t, 160, 42, colorTheme)
 	h.state(writable(fleetState(3)))
-	h.b.proposal = proposalOf(5, state.Action{Kind: state.ActionAddons, Cluster: h.m.cluster().Key}, finishedChange(0).Plan)
+	h.b.proposal = proposalOf(5, state.Action{Kind: change.AddonUpdate, Cluster: h.m.cluster().Key}, finishedChange(0).Plan)
 	h.keys("a")
 	if h.m.confirm == nil {
 		t.Fatal("a did not open the dry run")

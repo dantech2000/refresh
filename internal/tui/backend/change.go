@@ -91,20 +91,20 @@ func (b *Live) request(a state.Action) (change.Request, error) {
 		return change.Common{Policy: health.Policy{}, Nodes: true, Limits: b.limits(kind)}
 	}
 	switch a.Kind {
-	case state.ActionRoll:
+	case change.NodegroupUpdate:
 		if a.Nodegroup == "" {
 			return nil, errors.New("a roll names one nodegroup")
 		}
 		return change.RollRequest{Common: common(change.NodegroupUpdate), Target: target, Nodegroups: []string{a.Nodegroup}}, nil
-	case state.ActionAddons:
+	case change.AddonUpdate:
 		return change.AddonUpdateRequest{Common: common(change.AddonUpdate), Target: target, All: true}, nil
-	case state.ActionUpgrade:
+	case change.ClusterUpgrade:
 		req := change.UpgradeRequest{Common: common(change.ClusterUpgrade), Target: target, To: a.To, Only: a.Only}
 		if a.Nodegroup != "" {
 			req.Nodegroups = []string{a.Nodegroup}
 		}
 		return req, nil
-	case state.ActionRollback:
+	case change.ClusterRollback:
 		return change.RollbackRequest{Common: common(change.ClusterRollback), Target: target}, nil
 	}
 	return nil, fmt.Errorf("unknown action %q", a.Kind)
@@ -121,11 +121,11 @@ func (b *Live) command(a state.Action) string {
 	parts = append(parts, "--region", a.Cluster.Region)
 	kube := false
 	switch a.Kind {
-	case state.ActionRoll:
+	case change.NodegroupUpdate:
 		parts, kube = append(parts, "nodegroup", "update", a.Nodegroup, "-c", a.Cluster.Name), true
-	case state.ActionAddons:
+	case change.AddonUpdate:
 		parts = append(parts, "addon", "update", "--all", "-c", a.Cluster.Name)
-	case state.ActionUpgrade:
+	case change.ClusterUpgrade:
 		parts, kube = append(parts, "cluster", "upgrade", a.Cluster.Name, "--to", a.To.String()), true
 		if len(a.Only) > 0 {
 			names := make([]string, len(a.Only))
@@ -137,7 +137,7 @@ func (b *Live) command(a state.Action) string {
 		if a.Nodegroup != "" {
 			parts = append(parts, "-n", a.Nodegroup)
 		}
-	case state.ActionRollback:
+	case change.ClusterRollback:
 		parts, kube = append(parts, "cluster", "rollback", a.Cluster.Name), true
 	}
 	if kube {
@@ -223,7 +223,7 @@ func (b *Live) Start(_ context.Context, id state.ProposalID) (state.ChangeID, er
 	h := change.Start(b.ctx, b.deps, change.WithExpect(p.request, p.Plan))
 	e := b.add(h, p.Action.Cluster, false, change.Resource{})
 	e.command = p.Command
-	b.say(p.Action.Cluster, view.Progress, "started "+describeAction(p.Action))
+	b.say(p.Action.Cluster, view.Progress, "started "+p.Action.Describe(false))
 	b.bumpLocked()
 	return e.id, nil
 }
@@ -554,19 +554,4 @@ func (b *Live) Stop(_ context.Context, id state.ChangeID) error {
 		return err
 	}
 	return e.handle.Stop()
-}
-
-// describeAction names an action in a feed line.
-func describeAction(a state.Action) string {
-	switch a.Kind {
-	case state.ActionRoll:
-		return "the roll of nodegroup " + a.Nodegroup
-	case state.ActionAddons:
-		return "the update of the add-ons"
-	case state.ActionUpgrade:
-		return "the upgrade to " + a.To.String()
-	case state.ActionRollback:
-		return "the rollback"
-	}
-	return string(a.Kind)
 }

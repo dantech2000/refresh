@@ -178,14 +178,14 @@ func actionBindings(here func(Model) bool) []binding {
 			when: here, do: propose(func(m *Model) tea.Cmd { return m.planRoll() })},
 		{keys: []string{"a"}, label: "a", desc: "dry-run the update of the stale add-ons", short: "add-ons", bar: true, primary: true,
 			when: here, do: propose(func(m *Model) tea.Cmd {
-				return m.plan(state.Action{Kind: state.ActionAddons, Cluster: m.cluster().Key})
+				return m.plan(state.Action{Kind: change.AddonUpdate, Cluster: m.cluster().Key})
 			})},
 		{keys: []string{"U"}, label: "U", desc: "dry-run an upgrade: choose the parts", short: "upgrade", bar: true, primary: true,
 			when: here, do: propose(func(m *Model) tea.Cmd { return m.planUpgrade() })},
 		{keys: []string{"B"}, label: "B", desc: "dry-run the rollback of the control plane (in its window)", short: "rollback", bar: true, primary: true,
 			when: func(m Model) bool { return here(m) && m.cluster().Rollback != nil },
 			do: propose(func(m *Model) tea.Cmd {
-				return m.plan(state.Action{Kind: state.ActionRollback, Cluster: m.cluster().Key})
+				return m.plan(state.Action{Kind: change.ClusterRollback, Cluster: m.cluster().Key})
 			})},
 	}
 }
