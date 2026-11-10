@@ -241,13 +241,13 @@ func TestUsageErrors(t *testing.T) {
 		{
 			name:    "invalid timeout",
 			args:    []string{"--timeout", "soon", "version"},
-			wantErr: "invalid argument \"soon\" for \"-t, --timeout\" flag: time: invalid duration \"soon\"\nRun 'refresh version --help' for usage",
+			wantErr: "invalid argument \"soon\" for \"-t, --timeout\" flag: must be a duration like \"30s\" or \"5m\"\nRun 'refresh version --help' for usage",
 		},
 		{
 			name:    "invalid timeout in the environment",
 			args:    []string{"version"},
 			env:     map[string]string{"REFRESH_TIMEOUT": "soon"},
-			wantErr: `invalid REFRESH_TIMEOUT: invalid argument "soon" for "-t, --timeout" flag: time: invalid duration "soon"`,
+			wantErr: `invalid REFRESH_TIMEOUT: invalid argument "soon" for "-t, --timeout" flag: must be a duration like "30s" or "5m"`,
 		},
 		{
 			name:    "invalid concurrency in the environment",
@@ -269,6 +269,17 @@ func TestUsageErrors(t *testing.T) {
 			name:    "a number flag below its range",
 			args:    []string{"nodegroup", "scale", "web", "--min", "-99999999999"},
 			wantErr: "--min is too small (at least -2147483648)\nRun 'refresh nodegroup scale --help' for usage",
+		},
+		{
+			// pflag reads 0x, 0o, and 0b; so does the range check.
+			name:    "a hex number flag above its range",
+			args:    []string{"nodegroup", "scale", "web", "--max", "0x80000000"},
+			wantErr: "--max is too large (at most 2147483647)\nRun 'refresh nodegroup scale --help' for usage",
+		},
+		{
+			name:    "a word for a boolean flag",
+			args:    []string{"--no-color=maybe", "version"},
+			wantErr: "invalid argument \"maybe\" for \"--no-color\" flag: must be true or false\nRun 'refresh version --help' for usage",
 		},
 		{
 			name:    "a word for a global number flag",

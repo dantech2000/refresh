@@ -351,32 +351,37 @@ func parseLogLevel(s string) (slog.Level, error) {
 var intBits = map[string]int{"int": strconv.IntSize, "int32": 32, "int64": 64}
 
 // numberFlagError rewrites the error of a whole-number flag whose value
-// does not parse, which pflag reports with the text of strconv:
+// does not parse:
 //
 //	--desired must be a whole number, not "abc"
 //	--desired is too large (at most 2147483647)
 //
-// name is how to call the value, such as an environment variable; "" means
-// the flag. It returns nil for any other error.
+// pflag does not say which of the two it was (since 1.1.0 its error is only
+// "must be an integer"), so the value is parsed again here as pflag parses
+// it. name is how to call the value, such as an environment variable; ""
+// means the flag. It returns nil for any other error.
 func numberFlagError(err error, name string) error {
 	var invalid *pflag.InvalidValueError
-	var num *strconv.NumError
-	if !errors.As(err, &invalid) || !errors.As(err, &num) {
+	if !errors.As(err, &invalid) {
 		return nil
 	}
 	bits, ok := intBits[invalid.GetFlag().Value.Type()]
 	if !ok {
 		return nil
 	}
+	v, perr := strconv.ParseInt(invalid.GetValue(), 0, bits)
+	if perr == nil {
+		return nil
+	}
 	if name == "" {
 		name = "--" + invalid.GetFlag().Name
 	}
-	if errors.Is(num.Err, strconv.ErrRange) {
-		limit := int64(1)<<(bits-1) - 1
-		if strings.HasPrefix(strings.TrimSpace(invalid.GetValue()), "-") {
-			return fmt.Errorf("%s is too small (at least %d)", name, -limit-1)
+	if errors.Is(perr, strconv.ErrRange) {
+		// On ErrRange, ParseInt returns the limit that the value is beyond.
+		if v < 0 {
+			return fmt.Errorf("%s is too small (at least %d)", name, v)
 		}
-		return fmt.Errorf("%s is too large (at most %d)", name, limit)
+		return fmt.Errorf("%s is too large (at most %d)", name, v)
 	}
 	return fmt.Errorf("%s must be a whole number, not %q", name, invalid.GetValue())
 }
