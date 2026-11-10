@@ -1,13 +1,19 @@
 package fleet_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"io"
+	"net/http"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/aws/retry"
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/dantech2000/refresh/internal/awsx"
@@ -161,8 +167,9 @@ func TestFetch_Updates(t *testing.T) {
 	// the read stops, and nothing more is described. That describe fails
 	// with the error of the context, or, when its answer was read before
 	// the client saw the end, it succeeds and the third update is not
-	// attempted. Either way nothing is collected.
-	t.Run("the context ends", func(t *testing.T) {
+	// attempted. Either way nothing is collected. The next subtest makes
+	// the second ending certain.
+	t.Run("the context ends during a describe", func(t *testing.T) {
 		world, srv, c := updatesWorld(t)
 		ctx, cancel := context.WithCancel(testContext(t))
 		defer cancel()
@@ -189,4 +196,60 @@ func TestFetch_Updates(t *testing.T) {
 			t.Errorf("updates %s, %v, %v; want Failed with the error of the context, or NotAttempted, and none collected", snap.Have.Updates, snap.UpdatesErr, snap.Updates)
 		}
 	})
+	// The context ends after the answer of the second describe was read,
+	// before the third starts: the history is not attempted, with no
+	// error, and nothing of it is kept. A partial history would hide the
+	// newest upgrade from the rollback window.
+	t.Run("the context ends between two describes", func(t *testing.T) {
+		world, srv, _ := updatesWorld(t)
+		ctx, cancel := context.WithCancel(testContext(t))
+		defer cancel()
+		cfg := srv.Config(east)
+		cfg.HTTPClient = &afterDescribe{next: cfg.HTTPClient, nth: 2, then: cancel}
+		provider := awsx.NewProvider(cfg, func(o *awsx.ProviderOptions) {
+			o.MaxInFlight = 1
+			o.Backoff = retry.BackoffDelayerFunc(func(int, error) (time.Duration, error) { return 0, nil })
+		})
+		snap, _ := (&fleet.Fetcher{Now: world.Now}).Fetch(ctx, provider.Clients(east), "prod", fleet.Need{Updates: true})
+		if snap.Have.Updates != fleet.NotAttempted || snap.UpdatesErr != nil || len(snap.Updates) != 0 {
+			t.Errorf("updates %s, %v, %v; want NotAttempted with no error and none kept", snap.Have.Updates, snap.UpdatesErr, snap.Updates)
+		}
+		if n := count(srv, fleettest.EKSDescribeUpdate); n != 2 {
+			t.Errorf("%d updates described, want 2", n)
+		}
+	})
+}
+
+// afterDescribe is an HTTP client that calls then once the client has
+// read the whole answer of the nth DescribeUpdate: that call has
+// succeeded, and the next has not started.
+type afterDescribe struct {
+	next aws.HTTPClient
+	nth  int
+	then func()
+
+	mu sync.Mutex
+	n  int
+}
+
+func (c *afterDescribe) Do(r *http.Request) (*http.Response, error) {
+	resp, err := c.next.Do(r)
+	// DescribeUpdate is GET /clusters/{name}/updates/{id}.
+	if err != nil || !strings.Contains(r.URL.Path, "/updates/") {
+		return resp, err
+	}
+	body, err := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if err != nil {
+		return nil, err
+	}
+	resp.Body = io.NopCloser(bytes.NewReader(body))
+	c.mu.Lock()
+	c.n++
+	last := c.n == c.nth
+	c.mu.Unlock()
+	if last {
+		c.then()
+	}
+	return resp, nil
 }
