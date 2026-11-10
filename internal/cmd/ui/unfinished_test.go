@@ -2,6 +2,7 @@ package ui
 
 import (
 	"bytes"
+	"context"
 	"testing"
 	"time"
 
@@ -72,5 +73,26 @@ func TestSayUnfinished(t *testing.T) {
 				t.Fatalf("said\n%s\nwant\n%s", out.String(), tc.want)
 			}
 		})
+	}
+}
+
+// Found in review: an interrupt cancelled the backend with the session,
+// so the handles could finish, cancelled, before Unfinished read them,
+// and the words on the way out named nothing. The backend keeps running
+// after the session ends, until run cancels it.
+func TestBackendOutlivesTheSession(t *testing.T) {
+	type key struct{}
+	session, interrupt := context.WithCancel(context.WithValue(t.Context(), key{}, "v"))
+	bctx, cancel := backendContext(session)
+	interrupt()
+	if bctx.Err() != nil {
+		t.Fatal("the interrupt of the session ended the backend")
+	}
+	if bctx.Value(key{}) != "v" {
+		t.Fatal("the backend lost the values of the session")
+	}
+	cancel()
+	if bctx.Err() == nil {
+		t.Fatal("the cancel of run did not end the backend")
 	}
 }

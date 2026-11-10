@@ -112,9 +112,10 @@ type Model struct {
 	// answer one only after answerDelay, so that the y that started a
 	// change, pressed again or held, cannot accept its health gate.
 	asked map[question]time.Time
-	// quitArmed is set by a q while a change of this UI runs: a second q
-	// quits, any other key keeps the UI.
-	quitArmed bool
+	// quitWarning is the notice that a q said while a change of this UI
+	// runs. While that notice shows, a second q quits, and any other key
+	// only takes it back.
+	quitWarning string
 	// tick is the command of the clock; the tests hold it.
 	tick func() tea.Cmd
 	// crash keeps the first panic of the model, shared by every copy.
@@ -184,26 +185,35 @@ type (
 
 // crash is the first panic of the model and its stack. Bubble Tea
 // recovers a panic and prints it to os.Stderr, which is the null device
-// while the UI runs, and it returns from Run before a command goroutine
-// has printed; the command reads the trace from here once the terminal
-// is restored.
+// while the UI runs; the command reads the trace from here once the
+// terminal is restored.
 type crash struct {
 	mu    sync.Mutex
 	trace string
 }
 
-// catch records a panic and panics again, for Bubble Tea to recover. It
-// must be deferred.
+// record keeps the first panic and its stack. It runs in the deferred
+// function that recovered r, so the stack is the one of the panic.
+func (c *crash) record(r any) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.trace == "" {
+		c.trace = fmt.Sprintf("panic: %v\n\n%s", r, debug.Stack())
+	}
+}
+
+// catch records a panic in Update or View and panics again: Bubble Tea
+// recovers it on the goroutine of Run, before Run returns, and restores
+// the terminal. It must be deferred.
 func (c *crash) catch() {
 	if r := recover(); r != nil {
-		c.mu.Lock()
-		if c.trace == "" {
-			c.trace = fmt.Sprintf("panic: %v\n\n%s", r, debug.Stack())
-		}
-		c.mu.Unlock()
+		c.record(r)
 		panic(r)
 	}
 }
+
+// crashMsg reports a panic in a command, which guard recovered.
+type crashMsg struct{}
 
 // Panic returns the first panic of the model, in Update, in View, or in a
 // command of the model, with its stack, or "".
@@ -213,11 +223,19 @@ func (m Model) Panic() string {
 	return m.crash.trace
 }
 
-// guard runs cmd so that a panic in it is recorded.
+// guard runs cmd so that a panic in it is recorded and ends the session
+// as a message. Bubble Tea would recover it on a goroutine that it does
+// not wait for: Run returns first, and the trace that goroutine prints
+// lands after the terminal is restored, a second time.
 func (m Model) guard(cmd tea.Cmd) tea.Cmd {
 	c := m.crash
-	return func() tea.Msg {
-		defer c.catch()
+	return func() (msg tea.Msg) {
+		defer func() {
+			if r := recover(); r != nil {
+				c.record(r)
+				msg = crashMsg{}
+			}
+		}()
 		return cmd()
 	}
 }
@@ -242,6 +260,8 @@ func (m Model) Init() tea.Cmd { return m.next(0) }
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	defer m.crash.catch()
 	switch msg := msg.(type) {
+	case crashMsg:
+		return m, tea.Quit
 	case tea.WindowSizeMsg:
 		m.w, m.h = msg.Width, msg.Height
 		m.scroll = m.clampScroll(m.scroll)

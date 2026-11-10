@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"slices"
@@ -316,6 +317,105 @@ func TestQuitAsksWhileAChangeOfThisUIRuns(t *testing.T) {
 	h.keys("q")
 	if !h.quit {
 		t.Fatal("q asked with only a change started elsewhere and a finished one")
+	}
+}
+
+// Found in review of the fix: a key after the first q took the warning
+// back and then acted, so q, y accepted a health gate. The key after the
+// warning only takes it back.
+func TestTheKeyAfterTheQuitWarningOnlyTakesItBack(t *testing.T) {
+	for _, k := range []string{"y", "n", "S", "P", "1", "a"} {
+		t.Run(k, func(t *testing.T) {
+			h := newHarness(t, 120, 40, colorTheme)
+			h.state(withChanges(writable(fleetState(3)), rollChange(5, true), upgradeChange(4, false)))
+			h.keys("3")
+			h.tick(now.Add(answerDelay))
+			h.keys("q", k)
+			if len(h.b.calls) != 0 || len(h.b.plans) != 0 || h.m.screen != screenChange || h.quit {
+				t.Fatalf("q, %s: calls %v, plans %v, screen %d, quit %v", k, h.b.calls, h.b.plans, h.m.screen, h.quit)
+			}
+			h.lacks("q again quits")
+			h.keys("y") // now it acts
+			if want := []string{"answer 5 3 true"}; !slices.Equal(h.b.calls, want) {
+				t.Fatalf("y after the warning was taken back: calls %v, want %v", h.b.calls, want)
+			}
+		})
+	}
+}
+
+// Found in review of the fix: the quit stayed armed after its warning had
+// gone, so a single q minutes later quit a running upgrade. The q counts
+// only while its warning shows, and a newer notice takes it back too.
+func TestTheQuitWarningEnds(t *testing.T) {
+	h := newHarness(t, 120, 40, colorTheme)
+	h.state(withChanges(writable(fleetState(3)), upgradeChange(4, false)))
+	h.keys("q")
+	h.tick(now.Add(time.Second))
+	h.tick(now.Add(time.Second + noticeFor))
+	h.lacks("q again quits")
+	h.keys("q")
+	if h.quit {
+		t.Fatal("a q after the warning ended quit at once")
+	}
+	h.contains("q again quits")
+
+	// A newer notice replaces the warning: q warns again, and the
+	// newer notice stays when a key takes a warning back.
+	h = newHarness(t, 120, 40, colorTheme)
+	h.state(withChanges(writable(fleetState(3)), upgradeChange(4, false)))
+	h.keys("q")
+	h.update(doneMsg{err: errors.New("a newer notice")})
+	h.keys("q")
+	if h.quit {
+		t.Fatal("a q after a newer notice quit at once")
+	}
+	h.contains("q again quits")
+	h.update(doneMsg{err: errors.New("a newer notice")})
+	h.keys("down")
+	h.contains("a newer notice")
+}
+
+// A panic in View is recorded with its stack before Bubble Tea recovers
+// it.
+func TestViewRecordsAPanic(t *testing.T) {
+	m := New(t.Context(), &scripted{}, colorTheme)
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	broken := next.(Model)
+	broken.p = nil // the painter is gone: drawing panics
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Error("View did not panic again for Bubble Tea")
+			}
+		}()
+		broken.View()
+	}()
+	if trace := m.Panic(); !strings.Contains(trace, "view.go") {
+		t.Fatalf("the trace of a panic in View:\n%s", trace)
+	}
+}
+
+// panickyReadiness is a backend whose Readiness, which a command calls,
+// panics.
+type panickyReadiness struct{ *scripted }
+
+func (panickyReadiness) Readiness(context.Context, state.Key) error { panic("readiness broke") }
+
+// A panic in a command is recorded and ends the session as a quit, so
+// that Bubble Tea, which would recover it on a goroutine it does not
+// wait for, prints nothing.
+func TestACommandPanicQuits(t *testing.T) {
+	h := newHarness(t, 120, 40, colorTheme)
+	h.m = New(t.Context(), panickyReadiness{h.b}, colorTheme)
+	h.m.tick = func() tea.Cmd { return func() tea.Msg { return heldTick{} } }
+	h.update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	h.state(fleetState(3))
+	h.keys("r")
+	if !h.quit {
+		t.Fatal("a panic in a command did not end the session")
+	}
+	if trace := h.m.Panic(); !strings.Contains(trace, "panic: readiness broke") || !strings.Contains(trace, "model_test.go") {
+		t.Fatalf("the trace:\n%s", trace)
 	}
 }
 

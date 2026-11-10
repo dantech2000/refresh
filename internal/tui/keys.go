@@ -89,13 +89,20 @@ func (m *Model) quit() tea.Cmd {
 	if len(own) == 0 {
 		return tea.Quit
 	}
-	m.quitArmed = true
 	what := "the " + strings.ToLower(kindLabel(own[0].Kind)) + " of " + own[0].Target.Cluster + " runs from this UI: q again quits, and what it has"
 	if len(own) > 1 {
 		what = plural(len(own), "change") + " run from this UI: q again quits, and what they have"
 	}
 	m.say(view.Warn, "%s not started will not run; any other key stays", what)
+	m.quitWarning = m.notice
 	return nil
+}
+
+// quitArmed reports whether a q quits at once: the warning of the q
+// before is still the notice on screen. A newer notice, or the end of
+// the warning's time, takes it back.
+func (m Model) quitArmed() bool {
+	return m.quitWarning != "" && m.notice == m.quitWarning && m.noticeShows()
 }
 
 // listBindings move a cursor over n items.
@@ -279,13 +286,17 @@ func (m Model) key(k string) (Model, tea.Cmd) {
 	if k == "ctrl+c" {
 		return m, tea.Quit
 	}
-	if m.quitArmed {
-		m.quitArmed = false
+	if m.quitArmed() {
+		m.quitWarning = ""
 		if k == "q" {
 			return m, tea.Quit
 		}
-		m.notice = "" // it says what a q does, and that is over
+		// The key only takes the warning back: a y here must not answer
+		// a question the warning covered.
+		m.notice = ""
+		return m, nil
 	}
+	m.quitWarning = ""
 	if m.tooSmall() && k != "q" {
 		return m, nil
 	}

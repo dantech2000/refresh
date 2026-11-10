@@ -55,7 +55,7 @@ Press ++question++ in the UI for the keys of the current screen.
 | ++shift+b++ | Dry-run the rollback of the control plane (`cluster rollback`). Offered after a readiness run found a rollback window. |
 | ++ctrl+r++ | Sweep the fleet now. |
 | ++ctrl+l++ | Redraw the screen. |
-| ++q++ ++ctrl+c++ | Quit. While a change of this UI runs, the first ++q++ says what stops, and a second ++q++ quits. ++ctrl+c++ quits at once. |
+| ++q++ ++ctrl+c++ | Quit. While a change of this UI runs, the first ++q++ says what stops. A second ++q++ quits while that warning shows; any other key only takes the warning back. ++ctrl+c++ quits at once. |
 
 In a dry run:
 

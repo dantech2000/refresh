@@ -133,10 +133,10 @@ func (o *options) run(ctx context.Context) error {
 	if o.profile, err = o.profileInEffect(); err != nil {
 		return err
 	}
-	ctx, cancel := context.WithCancel(ctx)
+	bctx, cancel := backendContext(ctx)
 	defer cancel()
 
-	b := backend.New(ctx, provider, backend.Options{
+	b := backend.New(bctx, provider, backend.Options{
 		Regions:         fleetcmd.SweepRegions(o.global, provider.Region(), o.allRegions),
 		Interval:        o.interval,
 		AllowChanges:    o.allowChanges,
@@ -180,18 +180,43 @@ func (o *options) run(ctx context.Context) error {
 	}
 	_, err = tea.NewProgram(m, opts...).Run()
 	restore()
-	sayPanic(o.ios.ErrOut, err, m.Panic())
+	trace := m.Panic()
+	err = panicked(err, trace)
+	sayPanic(o.ios.ErrOut, err, trace)
+	// The backend still runs: what is unfinished is what the session
+	// left, also after an interrupt.
 	sayUnfinished(o.ios.ErrOut, b.Unfinished())
-	if err != nil && ctx.Err() != nil {
+	if err != nil && !errors.Is(err, tea.ErrProgramPanic) && ctx.Err() != nil {
 		// The session was interrupted; main says so.
 		return nil
 	}
 	return err
 }
 
+// panicked is the error of a session that Run ended with err: a panic in
+// a command of the model, which the model recorded as trace, ends the
+// program as a quit, with no error from Run.
+func panicked(err error, trace string) error {
+	if trace != "" && err == nil {
+		return tea.ErrProgramPanic
+	}
+	return err
+}
+
+// backendContext is the context of the backend: the values of the
+// session, and its own cancel, which run calls after it has said what is
+// unfinished. An interrupt ends the session context; if it ended the
+// backend too, the handles of the changes would finish, cancelled,
+// before Unfinished reads them, and the words on the way out would name
+// nothing.
+func backendContext(session context.Context) (context.Context, context.CancelFunc) {
+	return context.WithCancel(context.WithoutCancel(session))
+}
+
 // sayPanic writes the panic that ended the UI, and its stack, to w. Bubble
-// Tea printed it to os.Stderr, which was the null device then. A panic
-// outside the model leaves no trace, and the user is told how to get one.
+// Tea printed it to os.Stderr, which was the null device then, or never,
+// for a panic in a command. A panic outside the model leaves no trace,
+// and the user is told how to get one.
 func sayPanic(w io.Writer, err error, trace string) {
 	if !errors.Is(err, tea.ErrProgramPanic) {
 		return

@@ -44,8 +44,10 @@ func (brokenBackend) Stop(context.Context, state.ChangeID) error   { return nil 
 // Found in review: Bubble Tea prints a panic it recovers, and its stack,
 // to os.Stderr, which is the null device while the UI runs, so the user
 // got "program experienced a panic" and nothing to find it by. For a
-// panic in a command, Run returns before the goroutine prints at all.
-// The model keeps the trace, and run writes it after the restore.
+// panic in a command, Run returns before the goroutine prints at all,
+// and its trace landed after the restore, a second time. The model
+// recovers a panic of a command itself and quits: Bubble Tea recovers
+// nothing and prints nothing, and run writes the trace once.
 func TestAPanicInTheUIKeepsItsTrace(t *testing.T) {
 	restore, err := detachStderr()
 	if err != nil {
@@ -56,8 +58,12 @@ func TestAPanicInTheUIKeepsItsTrace(t *testing.T) {
 	var in, out bytes.Buffer
 	_, err = tea.NewProgram(m, tea.WithInput(&in), tea.WithOutput(&out), tea.WithoutSignalHandler()).Run()
 	restore()
+	if err != nil {
+		t.Fatalf("Run = %v; Bubble Tea recovered the panic, and prints it", err)
+	}
+	err = panicked(err, m.Panic())
 	if !errors.Is(err, tea.ErrProgramPanic) {
-		t.Fatalf("Run = %v, want ErrProgramPanic", err)
+		t.Fatalf("the session ended with %v, want ErrProgramPanic", err)
 	}
 	var errOut bytes.Buffer
 	sayPanic(&errOut, err, m.Panic())
