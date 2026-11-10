@@ -1,5 +1,53 @@
 # Changelog
 
+## [0.18.0](https://github.com/dantech2000/refresh/compare/v0.17.3...v0.18.0) (2026-11-10)
+
+
+### ⚠ BREAKING CHANGES
+
+* one fleet-row judgement, one wait-failure table, consent and follow-ups owned by change ([#644](https://github.com/dantech2000/refresh/issues/644))
+* **cmd:** home region for nodegroup update --all-clusters, and command-layer cleanup ([#639](https://github.com/dantech2000/refresh/issues/639))
+* **addon:** addon update stops the dependents of a dependency that ended DEGRADED, and applies the stop-dependents and --no-wait rules to named add-ons (CONTRACT.md change 7; owner decision of 2026-11-09, the extension of CC-02).
+* **fleet:** skip nodegroups of an unknown AMI type, and data-layer correctness fixes ([#619](https://github.com/dantech2000/refresh/issues/619))
+* **health:** tolerate progressing pods, read the control-plane tier, trust instances over a stale metric ([#620](https://github.com/dantech2000/refresh/issues/620))
+* **change:** addon update --all no longer updates an add-on after its dependency failed, timed out, or was busy, and refuses --no-wait when the plan has a dependent pair (CONTRACT.md change 7, owner decision of 2026-11-09). Review finding CC-02.
+
+### Bug Fixes
+
+* **addon:** stop dependents after a degraded dependency and for named add-ons ([#629](https://github.com/dantech2000/refresh/issues/629)) ([5a2aa73](https://github.com/dantech2000/refresh/commit/5a2aa73d4de63eabc5e066990f979669a121efb9))
+* **change:** correctness fixes in internal/change (review batch 5) ([#622](https://github.com/dantech2000/refresh/issues/622)) ([d1e7e45](https://github.com/dantech2000/refresh/commit/d1e7e456fb60cf23cb5ef4666cadea2f2d02cf68))
+* **cmd:** home region for nodegroup update --all-clusters, and command-layer cleanup ([#639](https://github.com/dantech2000/refresh/issues/639)) ([116b9a8](https://github.com/dantech2000/refresh/commit/116b9a8341db19ff1f763cd64eb057abe1a5ca52))
+* **cmd:** key the kube client by cluster target and honour --timeout ([#614](https://github.com/dantech2000/refresh/issues/614)) ([678c090](https://github.com/dantech2000/refresh/commit/678c090d7ec46d51554bde803748bb6e35b33b41))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/config ([#637](https://github.com/dantech2000/refresh/issues/637)) ([fe892df](https://github.com/dantech2000/refresh/commit/fe892df08beafa1e76b0d48ec1ae1f962f376163))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/autoscaling ([#636](https://github.com/dantech2000/refresh/issues/636)) ([a8563ea](https://github.com/dantech2000/refresh/commit/a8563ea07eda7b5b53ba86dbf38158077e8c3aa2))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/cloudwatch ([#635](https://github.com/dantech2000/refresh/issues/635)) ([a21e27d](https://github.com/dantech2000/refresh/commit/a21e27def3b80edef2f277ac3011cbde3dcab5f6))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/eks ([#627](https://github.com/dantech2000/refresh/issues/627)) ([5992267](https://github.com/dantech2000/refresh/commit/59922678b371691b4ec7037b0ec2e49fe600c2f4))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/servicequotas ([#625](https://github.com/dantech2000/refresh/issues/625)) ([c2b56fe](https://github.com/dantech2000/refresh/commit/c2b56febce4757e8ce95da632cefdb2b61e9cd2d))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/ssm ([#631](https://github.com/dantech2000/refresh/issues/631)) ([341c63d](https://github.com/dantech2000/refresh/commit/341c63dffef0e8c3fc39c1afd35310dbff6a4f92))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/sso ([#633](https://github.com/dantech2000/refresh/issues/633)) ([4bda9b2](https://github.com/dantech2000/refresh/commit/4bda9b2c941b521f1ddb3f5991d0156adec783bc))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/ssooidc ([#623](https://github.com/dantech2000/refresh/issues/623)) ([4482760](https://github.com/dantech2000/refresh/commit/448276053c5a48c9190d5eea11a1526c282fc6ba))
+* **deps:** bump golang.org/x/oauth2 from 0.37.0 to 0.38.0 ([#626](https://github.com/dantech2000/refresh/issues/626)) ([c056cb2](https://github.com/dantech2000/refresh/commit/c056cb2a4c120cc6dfb1c8b37e1a7d9437de51f7))
+* **deps:** bump golang.org/x/sync from 0.24.0 to 0.25.0 ([#624](https://github.com/dantech2000/refresh/issues/624)) ([c87dab3](https://github.com/dantech2000/refresh/commit/c87dab354d0699b3e24a809fe6018cb534332175))
+* **fleet:** skip nodegroups of an unknown AMI type, and data-layer correctness fixes ([#619](https://github.com/dantech2000/refresh/issues/619)) ([32355f0](https://github.com/dantech2000/refresh/commit/32355f088c34ef1ae3a35e413a2d7372cf1423de))
+* **health:** block on a disruption budget the eviction API would refuse ([#643](https://github.com/dantech2000/refresh/issues/643)) ([8f74c35](https://github.com/dantech2000/refresh/commit/8f74c352b39b6a52b077ac603583434c256b607c))
+* **health:** fail closed when the API is unreadable, not unreachable ([#617](https://github.com/dantech2000/refresh/issues/617)) ([74a68e8](https://github.com/dantech2000/refresh/commit/74a68e828af725999f8ee3e4d1eb6becd65d165f))
+* **health:** tolerate progressing pods, read the control-plane tier, trust instances over a stale metric ([#620](https://github.com/dantech2000/refresh/issues/620)) ([d8ff410](https://github.com/dantech2000/refresh/commit/d8ff4102a362c8a4b32a1e942f44174c63081b61))
+* **tui:** ignore keys on the resize screen, confirm quit, keep panics visible ([#621](https://github.com/dantech2000/refresh/issues/621)) ([c7edd61](https://github.com/dantech2000/refresh/commit/c7edd61af7b32706aa852c0aa3b8eb30e1af9ca6))
+
+
+### Performance Improvements
+
+* **build:** drop text/template from the binary and guard its size ([#616](https://github.com/dantech2000/refresh/issues/616)) ([18ecff8](https://github.com/dantech2000/refresh/commit/18ecff8865240c6cc2a3131bcfb62d4b63206d91))
+* memoize the add-on catalogue, cut repeated reads and needless waits ([#638](https://github.com/dantech2000/refresh/issues/638)) ([028d241](https://github.com/dantech2000/refresh/commit/028d2416ccf77935468e3ae5414a3ea921b3beac))
+
+
+### Code Refactoring
+
+* carry outcomes as named types, never parse our own text ([#641](https://github.com/dantech2000/refresh/issues/641)) ([88f8740](https://github.com/dantech2000/refresh/commit/88f8740582929b045276c05f67af30b05774e3b8))
+* **change:** decide the insights refresh once, split the runner state, use fanout's dispatch ([#642](https://github.com/dantech2000/refresh/issues/642)) ([41519b0](https://github.com/dantech2000/refresh/commit/41519b06ce2949df099d42f26a51efa8a32d604e))
+* one fleet-row judgement, one wait-failure table, consent and follow-ups owned by change ([#644](https://github.com/dantech2000/refresh/issues/644)) ([a15933d](https://github.com/dantech2000/refresh/commit/a15933dfc0fcad494d0fd4933a6a84e93ceadb2e))
+* remove dead code, narrow exported APIs, and close review follow-ups ([#646](https://github.com/dantech2000/refresh/issues/646)) ([6de8586](https://github.com/dantech2000/refresh/commit/6de8586f066e10dceb2195c5fad1ad9186d32c41))
+
 ## [0.17.3](https://github.com/dantech2000/refresh/compare/v0.17.2...v0.17.3) (2026-11-09)
 
 
