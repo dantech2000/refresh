@@ -169,7 +169,7 @@ func scalingFailures(ctx context.Context, c awsx.PollClients, groups []string, s
 // version, as an upgrade and a rollback do, tells them by that version. A
 // roll onto a new AMI keeps the version, and tells them by their age.
 func rollIdentity(s Step, startedAt time.Time) noderoll.Identity {
-	id := noderoll.Identity{TargetAMI: s.ToImage, StartedAt: startedAt}
+	id := noderoll.Identity{StartedAt: startedAt}
 	if s.From != s.To {
 		id.TargetVersion = s.To
 	}
@@ -222,7 +222,7 @@ func observeNodes(ctx context.Context, d Deps, emit func(Event), kube kubernetes
 			}
 		default:
 			failed = 0
-			tracker.ObserveAt(snap, d.now())
+			tracker.Observe(snap, d.now())
 			view := NodeView{Nodegroup: name, Snapshot: snap, Recent: tracker.Recent(0), Watching: obs.Watching(), StartedAt: startedAt}
 			emit(Event{Kind: NodeProgress, Phase: s.Ref.Phase, Step: s.Ref, Nodes: &view})
 		}

@@ -19,22 +19,23 @@ func TestClassify_PressureAdvisory(t *testing.T) {
 		corev1.NodeCondition{Type: corev1.NodePIDPressure, Status: corev1.ConditionFalse},
 		corev1.NodeCondition{Type: corev1.NodeMemoryPressure, Status: corev1.ConditionTrue},
 	)
-	v := classify(n, newAMI, nil)
+	v := classify(n, nil)
 	if v.Phase != PhaseReady || !v.Ready {
 		t.Fatalf("pressure changed the phase: phase %s, ready %v", v.Phase, v.Ready)
 	}
 	if diff := cmp.Diff([]string{"MemoryPressure", "DiskPressure"}, v.Pressure); diff != "" {
 		t.Errorf("pressure (-want +got):\n%s", diff)
 	}
-	if got := classify(mkNode("ip-cool", newAMI, true, false), newAMI, nil).Pressure; got != nil {
+	if got := classify(mkNode("ip-cool", newAMI, true, false), nil).Pressure; got != nil {
 		t.Errorf("a node under no pressure reports %v", got)
 	}
 }
 
 // The classifier table: the phase from the cordon, the drain taints, and
-// readiness, and old or new from the baseline, or from the image label
-// when there is no baseline.
+// readiness, and old or new from the baseline. A row with no baseline has
+// ip-1 as its old node.
 func TestClassify(t *testing.T) {
+	old := map[string]bool{"name:ip-1": true}
 	tainted := func(key string) *corev1.Node {
 		n := mkNode("ip-1", oldAMI, true, false)
 		n.Spec.Taints = []corev1.Taint{{Key: key, Effect: corev1.TaintEffectNoSchedule}}
@@ -65,7 +66,6 @@ func TestClassify(t *testing.T) {
 		// is not draining.
 		{name: "a deletion candidate of the autoscaler", node: tainted("DeletionCandidateOfClusterAutoscaler"), wantPhase: PhaseReady},
 		{name: "another taint", node: tainted("dedicated"), wantPhase: PhaseReady},
-		{name: "the image label: the target AMI", node: mkNode("ip-1", newAMI, true, false), wantPhase: PhaseReady, wantNew: true},
 		{name: "the baseline: an old node", node: mkNode("ip-1", newAMI, true, false), baseline: map[string]bool{"name:ip-1": true}, wantPhase: PhaseReady},
 		{name: "the baseline: a node that came later", node: mkNode("ip-1", oldAMI, true, false), baseline: map[string]bool{"name:ip-0": true}, wantPhase: PhaseReady, wantNew: true},
 		{name: "the baseline: an old node by its UID", node: withUID("u-1"), baseline: map[string]bool{"uid:u-1": true}, wantPhase: PhaseReady},
@@ -76,7 +76,11 @@ func TestClassify(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			v := classify(tt.node, newAMI, tt.baseline)
+			baseline := tt.baseline
+			if baseline == nil {
+				baseline = old
+			}
+			v := classify(tt.node, baseline)
 			if v.Phase != tt.wantPhase || v.OnTarget != tt.wantNew {
 				t.Errorf("classify = phase %s, new %v; want %s, %v", v.Phase, v.OnTarget, tt.wantPhase, tt.wantNew)
 			}
