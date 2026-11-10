@@ -80,7 +80,9 @@ type PDB struct {
 	// maxUnavailable: 0 allows no voluntary disruption at all.
 	MaxUnavailable *int32
 	// DisruptionsAllowed, CurrentHealthy, DesiredHealthy, and ExpectedPods
-	// are the status. A budget blocks a drain when DisruptionsAllowed is 0.
+	// are the status. A budget blocks a drain when DisruptionsAllowed is 0
+	// or less, or when a rule of evicts below refuses its pods whatever
+	// the count.
 	DisruptionsAllowed, CurrentHealthy, DesiredHealthy, ExpectedPods int32
 	// Unsynced leaves the observed generation behind the generation, and
 	// SyncFailed sets the DisruptionAllowed condition to SyncFailed: the

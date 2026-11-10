@@ -781,15 +781,27 @@ func TestDrainBlockers(t *testing.T) {
 		{name: "two targets", edits: []edit{tight("api")}, targets: []string{"ng-a", "ng-b"}, want: want{outcome: health.Fail, findings: []string{"default/api"}}},
 		{name: "an unsynced budget", edits: []edit{func(_ *fleettest.State, c *fleettest.Cluster) {
 			c.PDBs[0].Unsynced, c.PDBs[0].DisruptionsAllowed, c.PDBs[0].ExpectedPods = true, 0, 0
-		}}, targets: []string{"ng-a"}, want: want{outcome: health.Fail, message: "PDB default/web allows 0 disruptions", findings: []string{"default/web"}}},
+		}}, targets: []string{"ng-a"}, want: want{outcome: health.Fail, message: "PDB default/web refuses evictions (not processed since its last change)", findings: []string{"default/web"}}},
 		{name: "a sync-failed budget", edits: []edit{func(_ *fleettest.State, c *fleettest.Cluster) {
 			c.PDBs[0].SyncFailed, c.PDBs[0].DisruptionsAllowed, c.PDBs[0].ExpectedPods = true, 0, 0
-		}}, targets: []string{"ng-a"}, want: want{outcome: health.Fail, findings: []string{"default/web"}}},
+		}}, targets: []string{"ng-a"}, want: want{outcome: health.Fail, message: "PDB default/web refuses evictions (sync failed)", findings: []string{"default/web"}}},
+		// SyncFailed while the count still allows one: the controller
+		// writes 0 when a sync fails, so the counts are not trusted and
+		// the check fails closed.
+		{name: "a sync-failed budget that counts a disruption", edits: []edit{func(_ *fleettest.State, c *fleettest.Cluster) {
+			c.PDBs[0].SyncFailed, c.PDBs[0].DisruptionsAllowed = true, 1
+		}}, targets: []string{"ng-a"}, want: want{outcome: health.Fail, message: "PDB default/web refuses evictions (sync failed)", findings: []string{"default/web"},
+			detail: "default/web (the disruption controller failed to sync it, 1 disruptions allowed; evictions are refused)"}},
+		{name: "a sync-failed budget that counts a disruption and no pod, unscoped", edits: []edit{func(_ *fleettest.State, c *fleettest.Cluster) {
+			c.PDBs[1].SyncFailed, c.PDBs[1].DisruptionsAllowed, c.PDBs[1].ExpectedPods = true, 1, 0
+		}}, want: want{outcome: health.Fail, message: "PDB default/api refuses evictions (sync failed)", findings: []string{"default/api"}}},
+		{name: "a refused budget beside a tight one", edits: []edit{tight("api"), func(_ *fleettest.State, c *fleettest.Cluster) { c.PDBs[0].Unsynced = true }},
+			want: want{outcome: health.Fail, message: "PDB default/api allows 0 disruptions and PDB default/web refuses evictions (not processed since its last change); a drain would stall", findings: []string{"default/api", "default/web"}}},
 		// The status is of an older generation and still allows a
 		// disruption. The eviction API refuses every pod of the budget
 		// until the controller has processed the new spec.
 		{name: "an unsynced budget that allowed a disruption", edits: []edit{func(_ *fleettest.State, c *fleettest.Cluster) { c.PDBs[0].Unsynced = true }},
-			targets: []string{"ng-a"}, want: want{outcome: health.Fail, findings: []string{"default/web"},
+			targets: []string{"ng-a"}, want: want{outcome: health.Fail, message: "PDB default/web refuses evictions (not processed since its last change) on the target nodegroups", findings: []string{"default/web"},
 				detail: "default/web (not processed by the disruption controller since its last change: generation 1, observed 0; evictions are refused)"}},
 		{name: "an unsynced budget elsewhere", edits: []edit{func(_ *fleettest.State, c *fleettest.Cluster) { c.PDBs[1].Unsynced = true }},
 			targets: []string{"ng-a"}, want: want{outcome: health.Pass}},
@@ -798,12 +810,12 @@ func TestDrainBlockers(t *testing.T) {
 		// More than 2000 evictions the controller has not confirmed: the
 		// eviction API refuses with 403 whatever the count allows.
 		{name: "too many unconfirmed evictions", edits: []edit{func(_ *fleettest.State, c *fleettest.Cluster) { c.PDBs[0].DisruptedPods = 2001 }},
-			targets: []string{"ng-a"}, want: want{outcome: health.Fail, findings: []string{"default/web"}, detail: "2001 evictions not yet confirmed"}},
+			targets: []string{"ng-a"}, want: want{outcome: health.Fail, message: "PDB default/web refuses evictions (more than 2000 disrupted pods)", findings: []string{"default/web"}, detail: "2001 evictions not yet confirmed"}},
 		{name: "2000 unconfirmed evictions", edits: []edit{func(_ *fleettest.State, c *fleettest.Cluster) { c.PDBs[0].DisruptedPods = 2000 }},
 			targets: []string{"ng-a"}, want: want{outcome: health.Pass}},
 		{name: "a negative count", edits: []edit{func(_ *fleettest.State, c *fleettest.Cluster) {
 			c.PDBs[1].DisruptionsAllowed, c.PDBs[1].ExpectedPods = -1, 0
-		}}, want: want{outcome: health.Fail, findings: []string{"default/api"}, detail: "-1 disruptions allowed"}},
+		}}, want: want{outcome: health.Fail, message: "PDB default/api refuses evictions (negative disruption count)", findings: []string{"default/api"}, detail: "-1 disruptions allowed"}},
 		// A synced status that counts no pod while a pod it selects runs
 		// on the target: the eviction API reads disruptionsAllowed, not
 		// expectedPods, and refuses the pod.
@@ -910,6 +922,9 @@ func TestScaleDownBlockers(t *testing.T) {
 		// every pod: each lets none go.
 		{name: "an unsynced budget", edits: []edit{func(_ *fleettest.State, c *fleettest.Cluster) { c.PDBs[1].Unsynced = true }}, remove: 1,
 			want: want{outcome: health.Fail, findings: []string{"default/api"}, detail: "generation 1, observed 0"}},
+		{name: "a sync-failed budget that counts a disruption", edits: []edit{func(_ *fleettest.State, c *fleettest.Cluster) {
+			c.PDBs[1].SyncFailed, c.PDBs[1].DisruptionsAllowed = true, 1
+		}}, remove: 1, want: want{outcome: health.Fail, findings: []string{"default/api"}, detail: "failed to sync it, 1 disruptions allowed"}},
 		{name: "too many unconfirmed evictions", edits: []edit{func(_ *fleettest.State, c *fleettest.Cluster) { c.PDBs[1].DisruptedPods = 2001 }}, remove: 1,
 			want: want{outcome: health.Fail, findings: []string{"default/api"}, detail: "2001 evictions not yet confirmed"}},
 		{name: "a pod with two budgets is not a scale-down blocker", remove: 1, edits: []edit{func(_ *fleettest.State, c *fleettest.Cluster) {

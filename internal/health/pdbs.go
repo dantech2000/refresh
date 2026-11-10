@@ -71,8 +71,9 @@ func newPDB(in policyv1.PodDisruptionBudget) pdb {
 
 func (p pdb) id() string { return p.namespace + "/" + p.name }
 
-// refusesAll returns why the eviction API refuses every pod that the
-// budget gates, whatever its counts say, or "" when it does not. The
+// refusesAll returns, in a few words, why the eviction API refuses every
+// pod that the budget gates whatever its counts say, or "" when it does
+// not. refusal gives the reason with its numbers. The
 // rules are those of checkAndDecrement in
 // kubernetes/kubernetes pkg/registry/core/pod/storage/eviction.go at
 // v1.37.2 (the Kubernetes of the client-go in go.mod), in its order:
@@ -90,17 +91,24 @@ func (p pdb) id() string { return p.namespace + "/" + p.name }
 // controller writes disruptionsAllowed 0 when a sync fails; the counts
 // of such a status are not to be trusted, so the check fails closed.
 func (p pdb) refusesAll() string {
+	short, _ := p.refusal()
+	return short
+}
+
+// refusal returns the short reason of refusesAll and the reason with its
+// numbers, or two empty strings.
+func (p pdb) refusal() (short, long string) {
 	switch {
 	case p.observed < p.generation:
-		return fmt.Sprintf("not processed by the disruption controller since its last change: generation %d, observed %d; evictions are refused", p.generation, p.observed)
+		return "not processed since its last change", fmt.Sprintf("not processed by the disruption controller since its last change: generation %d, observed %d; evictions are refused", p.generation, p.observed)
 	case p.allowed < 0:
-		return fmt.Sprintf("%d disruptions allowed; evictions are refused", p.allowed)
+		return "negative disruption count", fmt.Sprintf("%d disruptions allowed; evictions are refused", p.allowed)
 	case p.disrupted > maxDisruptedPods:
-		return fmt.Sprintf("%d evictions not yet confirmed by the disruption controller, more than %d; evictions are refused", p.disrupted, maxDisruptedPods)
+		return fmt.Sprintf("more than %d disrupted pods", maxDisruptedPods), fmt.Sprintf("%d evictions not yet confirmed by the disruption controller, more than %d; evictions are refused", p.disrupted, maxDisruptedPods)
 	case p.syncFailed:
-		return "the disruption controller failed to sync it, 0 disruptions allowed; evictions are refused"
+		return "sync failed", fmt.Sprintf("the disruption controller failed to sync it, %d disruptions allowed; evictions are refused", p.allowed)
 	}
-	return ""
+	return "", ""
 }
 
 // refuses reports whether the eviction API refuses a pod that the budget
@@ -126,7 +134,7 @@ func (p pdb) allowedNow() int32 {
 }
 
 func (p pdb) summary() string {
-	if why := p.refusesAll(); why != "" {
+	if _, why := p.refusal(); why != "" {
 		return p.id() + " (" + why + ")"
 	}
 	return fmt.Sprintf("%s (%d/%d pods healthy, 0 disruptions allowed)", p.id(), p.healthy, p.expected)
@@ -250,9 +258,9 @@ func targetsDesired(snap *fleet.Snapshot, targets []string) (int32, bool) {
 // findDrainBlockers is the rule over the budgets. Scoped, it reads the
 // pods of each namespace that has a budget that refuses evictions, to see
 // whether the budget gates a pod on a target node; unscoped, an at-risk
-// budget counts without a pod read, as the old check counted it. With withMulti it also
-// names the pods that more than one budget selects, which needs the pods
-// of each namespace with more than one budget. A scale-down leaves that
+// budget counts without a pod read, as the old check counted it. With
+// withMulti it also names the pods that more than one budget selects,
+// which needs the pods of each namespace with more than one budget. A scale-down leaves that
 // rule out: EKS ends its evictions after 15 minutes and terminates the
 // node anyway (see ScaleDownBlockers), so an eviction that fails does not
 // stop it.
@@ -261,6 +269,7 @@ func findDrainBlockers(in *Input, budgets []pdb, targets map[string]bool, scoped
 	var (
 		blockers []finding
 		multi    []finding
+		refused  = map[string]string{}
 		failures []apidoc.Failure
 		unread   []string
 		reads    []func()
@@ -292,17 +301,19 @@ func findDrainBlockers(in *Input, budgets []pdb, targets map[string]bool, scoped
 			case !scoped:
 				if p.atRisk() {
 					blockers = append(blockers, finding{p.id(), p.summary()})
+					refused[p.id()] = p.refusesAll()
 				}
 			case !p.refuses():
 			case pods != nil && slices.ContainsFunc(pods.Items, func(pod corev1.Pod) bool { return targets[pod.Spec.NodeName] && p.gates(&pod) }):
 				blockers = append(blockers, finding{p.id(), p.summary()})
+				refused[p.id()] = p.refusesAll()
 			}
 		}
 		if withMulti && len(list) > 1 && pods != nil {
 			multi = append(multi, multiPDBPods(list, pods.Items, targets, scoped)...)
 		}
 	}
-	return drainBlockersResult(blockers, multi, unread, failures, scoped)
+	return drainBlockersResult(blockers, multi, refused, unread, failures, scoped)
 }
 
 // multiPDBPods names the pods of a namespace that more than one of its
@@ -330,7 +341,10 @@ func multiPDBPods(list []pdb, pods []corev1.Pod, targets map[string]bool, scoped
 }
 
 // drainBlockersResult words the outcome of the drain-blocker check.
-func drainBlockersResult(blockers, multi []finding, unread []string, failures []apidoc.Failure, scoped bool) Result {
+// refused has the short reason of each blocker that refuses evictions
+// whatever its count, as refusesAll gives it; a blocker without one
+// allows 0 disruptions.
+func drainBlockersResult(blockers, multi []finding, refused map[string]string, unread []string, failures []apidoc.Failure, scoped bool) Result {
 	r := Result{Failures: failures, Findings: findingNames(slices.Concat(blockers, multi))}
 	for _, b := range slices.Concat(blockers, multi) {
 		r.Details = append(r.Details, "drain blocker: "+b.text)
@@ -339,12 +353,19 @@ func drainBlockersResult(blockers, multi []finding, unread []string, failures []
 	switch {
 	case len(blockers)+len(multi) > 0:
 		var parts []string
-		if len(blockers) > 0 {
-			if len(blocking) == 1 {
-				parts = append(parts, "PDB "+blocking[0]+" allows 0 disruptions")
+		var zero []string
+		for _, name := range blocking {
+			if why := refused[name]; why != "" {
+				parts = append(parts, "PDB "+name+" refuses evictions ("+why+")")
 			} else {
-				parts = append(parts, "PDBs "+strings.Join(blocking, ", ")+" allow 0 disruptions")
+				zero = append(zero, name)
 			}
+		}
+		switch {
+		case len(zero) == 1:
+			parts = slices.Insert(parts, 0, "PDB "+zero[0]+" allows 0 disruptions")
+		case len(zero) > 1:
+			parts = slices.Insert(parts, 0, "PDBs "+strings.Join(zero, ", ")+" allow 0 disruptions")
 		}
 		if len(multi) > 0 {
 			parts = append(parts, plural(len(multi), "pod")+" covered by more than one PDB")
@@ -434,7 +455,7 @@ func runScaleDown(in *Input, nodegroup string, remove int32) Result {
 		if loss := worstCaseLoss(perNode, int(remove)); loss > p.allowedNow() {
 			r.Findings = append(r.Findings, p.id())
 			counts := fmt.Sprintf("%d/%d pods healthy, %d allowed", p.healthy, p.expected, p.allowedNow())
-			if why := p.refusesAll(); why != "" {
+			if _, why := p.refusal(); why != "" {
 				counts = why
 			}
 			r.Details = append(r.Details, fmt.Sprintf("drain blocker: %s (%s; covered pods run on %d of the nodes, so removing %d can take down %d)",

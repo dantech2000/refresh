@@ -144,6 +144,9 @@ func TestDrainBlockers_AgreeWithTheDrain(t *testing.T) {
 		{name: "a sync-failed budget", edits: []edit{func(_ *fleettest.State, c *fleettest.Cluster) {
 			c.PDBs[0].SyncFailed, c.PDBs[0].DisruptionsAllowed = true, 0
 		}}},
+		{name: "a sync-failed budget that counts a disruption", edits: []edit{func(_ *fleettest.State, c *fleettest.Cluster) {
+			c.PDBs[0].SyncFailed, c.PDBs[0].DisruptionsAllowed = true, 1
+		}}},
 		{name: "a pod covered by two budgets", edits: []edit{func(_ *fleettest.State, c *fleettest.Cluster) {
 			c.PDBs = append(c.PDBs, fleettest.PDB{Namespace: "default", Name: "web-too", Selector: map[string]string{"app": "web"}, MinAvailable: 1, DisruptionsAllowed: 1, CurrentHealthy: 2, DesiredHealthy: 1, ExpectedPods: 2})
 		}}},

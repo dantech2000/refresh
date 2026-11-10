@@ -141,6 +141,7 @@ func FuzzScaleDownBlockers(f *testing.F) {
 		{2, 3, 0x40, 0x20, 0x30, 3, 0x00, 0x11, 0x03},       // a pod that is not ready, a pending one, a done one
 		{0, 8, 0, 1, 2, 3, 4, 5, 6, 7, 3, 0x01, 0x02, 0x0b}, // one node
 		{1, 4, 0x00, 0x02, 0x01, 0x03, 2, 0x00, 0x06},       // ready pods on both nodes, a budget with no selector that allows nothing
+		{1, 2, 0x00, 0x02, 1, 0x15},                         // an unsynced budget with the selector {} whose stale status allows one
 	} {
 		f.Add(seed)
 	}

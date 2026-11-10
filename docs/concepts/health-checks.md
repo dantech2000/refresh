@@ -221,13 +221,14 @@ check does not trust the counts.
 The eviction API does not look at a PDB for a pod that is `Pending`,
 `Succeeded`, or `Failed`, or that is already being deleted. For a pod that is
 not ready, the API looks at the PDB only when the PDB does not have the
-`AlwaysAllow` unhealthy pod eviction policy and has fewer healthy pods than it
-needs. A pod that more than one PDB selects is also a blocker, because the
+`AlwaysAllow` unhealthy pod eviction policy, and either has fewer healthy pods
+than it needs or needs zero healthy pods (`status.desiredHealthy` is 0). A pod that more than one PDB selects is also a blocker, because the
 eviction API refuses it.
 
-Without target nodegroups, the check reads no pods. A PDB then counts as a
-blocker when the eviction API would refuse its pods and its status counts at
-least one pod.
+Without target nodegroups, the check reads no pods. Then a PDB that allows
+zero disruptions is a blocker only when its status counts at least one pod. A
+PDB in one of the other cases above is always a blocker, even when its status
+counts no pod.
 
 | Case | Outcome |
 |---|---|
@@ -239,7 +240,9 @@ least one pod.
 If the check blocks:
 
 1. Read the blockers in the `CHECKS` section.
-2. Fix the PDB or scale the workload so that the PDB allows a disruption.
+2. Fix the PDB or scale the workload so that the PDB allows a disruption. If
+   the PDB is not processed since its last change, wait for the disruption
+   controller to process it.
 3. Run the command again.
 
 To go past the blockers, pass `--force`. The command prints a warning and

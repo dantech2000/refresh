@@ -25,7 +25,7 @@ func TestFindingsAreNamesNotParsedText(t *testing.T) {
 			got: drainBlockersResult(
 				[]finding{{"default/web (a)", "default/web (a) (2/2 pods healthy, 0 disruptions allowed)"}},
 				[]finding{{"default/pod is covered", "pod default/pod is covered is covered by 2 PDBs (a, b); the eviction API refuses such pods"}},
-				nil, nil, false),
+				nil, nil, nil, false),
 			want: []string{"default/pod is covered", "default/web (a)"},
 		},
 	}
