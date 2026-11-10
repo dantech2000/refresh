@@ -357,6 +357,8 @@ func (m *Model) applyProposal(msg proposalMsg) {
 		return
 	}
 	a := m.planning.action
+	// The dry run has answered: release its context.
+	m.planning.cancel()
 	m.planning = nil
 	if msg.err != nil {
 		m.say(view.Fail, "dry run of %s: %v", a.Describe(true), msg.err)
@@ -498,6 +500,3 @@ func (m *Model) seeNotice() {
 func (m Model) noticeShows() bool {
 	return m.notice != "" && (m.noticeTill.IsZero() || m.now.Before(m.noticeTill))
 }
-
-// progressStatus is the status of a notice about work in progress.
-const progressStatus = view.Progress

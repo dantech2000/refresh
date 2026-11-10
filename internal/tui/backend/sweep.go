@@ -27,13 +27,13 @@ type summary struct {
 func (b *Live) doSweep() {
 	started := b.opts.Now()
 	b.mu.Lock()
-	b.sweep = state.Sweep{Regions: len(b.opts.Regions.Names), StartedAt: started, Count: b.sweep.Count, Interval: b.opts.Interval}
+	b.sweep = state.Sweep{Regions: len(b.opts.Regions.Names), StartedAt: started, Count: b.sweep.Count}
 	b.mu.Unlock()
 	b.bump()
 
 	ctx, cancel := b.withTimeout()
 	defer cancel()
-	fetcher := &fleet.Fetcher{Now: b.opts.Now}
+	fetcher := b.deps.Fetch.Fresh()
 	res := fetcher.Sweep(ctx, b.provider, b.opts.Regions, fleet.SweepOptions{Need: need, OnRegion: b.regionDone})
 
 	var sweepErr error
@@ -131,7 +131,7 @@ func (b *Live) finish(res *fleet.SweepResult, sweepErr error) {
 func (b *Live) refetchCluster(key state.Key) {
 	ctx, cancel := b.withTimeout()
 	defer cancel()
-	fetcher := &fleet.Fetcher{Now: b.opts.Now}
+	fetcher := b.deps.Fetch.Fresh()
 	snap, err := fetcher.Fetch(ctx, b.provider.Clients(key.Region), key.Name, need)
 	if err != nil {
 		if b.ctx.Err() == nil {

@@ -11,6 +11,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/dantech2000/refresh/internal/apidoc"
 	"github.com/dantech2000/refresh/internal/change"
 	"github.com/dantech2000/refresh/internal/tui/state"
 	"github.com/dantech2000/refresh/internal/view"
@@ -113,6 +114,30 @@ func TestTickOnlyWhileSomethingElapses(t *testing.T) {
 	if !h.m.ticking {
 		t.Fatal("a readiness run scheduled no tick")
 	}
+}
+
+// Two clusters with one name in two regions: the log strip of one shows
+// its own lines, not the other's. The top bar counts the regions that
+// failed beside the ones skipped.
+func TestLogStripKeepsClustersOfOneNameApart(t *testing.T) {
+	h := newHarness(t, 200, 40, colorTheme)
+	st := fleetState(0)
+	eu, us := cluster("prod", "eu-west-1", "1.33"), cluster("prod", "us-east-1", "1.33")
+	st.Clusters = []state.Cluster{eu, us}
+	st.Sweep.Regions = 3
+	st.Sweep.Failed = []apidoc.Failure{{Kind: apidoc.FailureRegion, Name: "ap-south-1", Error: "throttled"}}
+	st.Feed = []state.Line{
+		{At: now, Cluster: eu.Key, Status: view.Healthy, Text: "line of eu-west-1"},
+		{At: now, Cluster: us.Key, Status: view.Healthy, Text: "line of us-east-1"},
+	}
+	h.state(st)
+	h.contains("2/3, 1 failed")
+	h.keys("enter")
+	if h.m.screen != screenCluster || h.m.cluster().Key != eu.Key {
+		t.Fatalf("screen %v on %v, want the cluster screen of prod in eu-west-1", h.m.screen, h.m.cluster().Key)
+	}
+	h.contains("line of eu-west-1")
+	h.lacks("line of us-east-1")
 }
 
 func TestEnterOpensTheClusterAndRunsReadiness(t *testing.T) {
