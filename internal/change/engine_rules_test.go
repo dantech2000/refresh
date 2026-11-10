@@ -176,7 +176,7 @@ func TestEngine_GatesRunInThePlanAndBeforeEachPhase(t *testing.T) {
 		{
 			name: "a kubelet too far behind before the control plane", before: PhaseControlPlane, req: upgradeTo("1.33"), world: func() *fleettest.World { return engineWorld(nil) },
 			change:  func(c *fleettest.Cluster) { c.Nodegroup("ng-b").Version = "1.29" },
-			notSent: sentCP33, words: "VersionSkew", step: StepControlPlane,
+			notSent: sentCP33, words: "kubelet skew limit", step: StepControlPlane,
 		},
 		{
 			name: "a degraded nodegroup before its roll", before: PhaseNodegroups, req: upgradeTo("1.33"), world: func() *fleettest.World { return engineWorld(nil) },
@@ -756,9 +756,9 @@ func TestEngine_SkewBlockedHopSendsNoRefresh(t *testing.T) {
 // would trail its target by more than 3 minor versions. health.VersionSkew
 // fails a nodegroup that trails the live control plane by 3 or more. A
 // control-plane step is sent only from the minor version before its
-// target, and there the two are one condition. The table holds them to
-// each other on every distance, and the gate of the step blocks when
-// either one does.
+// target, and there the two are one condition, so the gate of the step
+// runs only the rule of the planner. The table holds the two to each other
+// on every distance, so that cluster upgrade-check and the gate agree.
 func TestSkewRulesAgree(t *testing.T) {
 	live := fleet.Version{Major: 1, Minor: 33}
 	hop := nextMinor(live)
