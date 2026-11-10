@@ -161,6 +161,8 @@ func updateCases() []updateCase {
 		{name: "no-wait", args: []string{"vpc-cni", "--yes", "--no-wait"}, updates: []string{"vpc-cni"},
 			seed: func(c *fleettest.Cluster) { addon(c, "vpc-cni").UpdateScripts = []fleettest.UpdateScript{slow} }},
 		{name: "all", args: []string{"--all", "--yes"}, updates: []string{"vpc-cni", "coredns"}},
+		// coredns depends on vpc-cni: without a wait, the order means nothing.
+		{name: "all-no-wait", args: []string{"--all", "--yes", "--no-wait"}, exit: cmdutil.ExitFailure},
 		{name: "skip-addon", args: []string{"--all", "--skip-addon", "coredns", "--yes"}, updates: []string{"vpc-cni"}},
 		{name: "pinned-version", args: []string{"coredns", "--version", dnsNew, "--yes"}, updates: []string{"coredns"}},
 		{name: "dry-run", args: []string{"--all", "--dry-run"}},
@@ -183,7 +185,9 @@ func updateCases() []updateCase {
 			seed: func(c *fleettest.Cluster) { c.Status = fleettest.StatusUpdating }},
 		{name: "other-addon-busy", args: []string{"vpc-cni", "--yes"}, exit: cmdutil.ExitBlocked,
 			seed: func(c *fleettest.Cluster) { addon(c, "kube-proxy").Status = fleettest.StatusUpdating }},
-		{name: "busy-target", args: []string{"--all", "--yes"}, exit: cmdutil.ExitIncomplete, updates: []string{"coredns"},
+		// coredns depends on vpc-cni, so --all does not update it: nothing
+		// changed, and the busy target makes it exit 3.
+		{name: "busy-target", args: []string{"--all", "--yes"}, exit: cmdutil.ExitBlocked,
 			prepare: startElsewhere("vpc-cni", cniPatch, never)},
 		{name: "busy-only-target", args: []string{"vpc-cni", "--yes"}, exit: cmdutil.ExitBlocked,
 			prepare: startElsewhere("vpc-cni", cniPatch, never)},
@@ -196,7 +200,8 @@ func updateCases() []updateCase {
 			prepare: startElsewhere("vpc-cni", cniNew, fails)},
 		{name: "failed", args: []string{"vpc-cni", "--yes"}, exit: cmdutil.ExitFailure, updates: []string{"vpc-cni"},
 			seed: func(c *fleettest.Cluster) { addon(c, "vpc-cni").UpdateScripts = []fleettest.UpdateScript{fails} }},
-		{name: "partial-failure", args: []string{"--all", "--yes"}, exit: cmdutil.ExitIncomplete, updates: []string{"vpc-cni", "coredns"},
+		// coredns depends on vpc-cni, so --all does not update it after vpc-cni failed.
+		{name: "partial-failure", args: []string{"--all", "--yes"}, exit: cmdutil.ExitFailure, updates: []string{"vpc-cni"},
 			seed: func(c *fleettest.Cluster) { addon(c, "vpc-cni").UpdateScripts = []fleettest.UpdateScript{fails} }},
 		{name: "deadline", args: []string{"vpc-cni", "--yes", "--wait-timeout", "2m"}, exit: cmdutil.ExitIncomplete, updates: []string{"vpc-cni"},
 			seed: func(c *fleettest.Cluster) { addon(c, "vpc-cni").UpdateScripts = []fleettest.UpdateScript{never} }},
@@ -219,7 +224,7 @@ func updateCases() []updateCase {
 			}},
 		// Every start is denied: nothing changed, the run failed, and the
 		// result names the action to grant. It is not missing data.
-		{name: "denied-start", args: []string{"--all", "--yes"}, exit: cmdutil.ExitFailure, updates: []string{"vpc-cni", "coredns"},
+		{name: "denied-start", args: []string{"--all", "--yes"}, exit: cmdutil.ExitFailure, updates: []string{"vpc-cni"},
 			prepare: func(_ *testing.T, w *fleettest.World) {
 				w.SetFault(fleettest.EKSUpdateAddon, fleettest.Fault{Deny: true})
 			}},

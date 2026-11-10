@@ -185,6 +185,9 @@ func planAddons(ctx context.Context, d Deps, req AddonUpdateRequest) (*Plan, err
 		}
 		phase.Steps = append(phase.Steps, step)
 	}
+	if dependent, dep := dependentPair(phase.Steps); req.All && req.NoWait && dependent != "" {
+		return nil, fmt.Errorf("--no-wait cannot keep the dependency order of --all: add-on %s waits for %s to finish. Run without --no-wait, or update the add-ons one at a time", dependent, dep)
+	}
 	cp.markBusy(ctx, clients, phase.Steps)
 	cp.Phases = []Phase{phase}
 

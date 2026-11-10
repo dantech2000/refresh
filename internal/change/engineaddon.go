@@ -85,7 +85,7 @@ func (r *runner) runEngineAddon(cp *ClusterPlan, s Step) StepResult {
 	id, err := submitAddon(r.readCtx, clients, resource, s.To)
 	switch {
 	case err != nil:
-		return r.unsent(cp, res, err)
+		return r.unanswered(cp, res, err)
 	case id == "":
 		res.Status = StepInProgress
 		res.Failure = r.stepFailure(cp, res, apidoc.ReasonNotMonitored, "EKS accepted the update of add-on "+name+" and returned no update ID; it cannot be followed, and it may still be running")

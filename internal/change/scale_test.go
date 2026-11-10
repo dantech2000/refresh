@@ -167,8 +167,12 @@ func TestScaleSettled(t *testing.T) {
 	}{
 		{name: "the desired size and ACTIVE", req: ScaleRequest{Desired: size(3)}, got: at("ACTIVE", 3, 1, 3), wantDone: true},
 		{name: "the desired size waits for ACTIVE", req: ScaleRequest{Desired: size(3)}, got: at("UPDATING", 3, 1, 3)},
-		{name: "a desired size that does not match fails at once", req: ScaleRequest{Desired: size(3)}, got: at("UPDATING", 2, 1, 3),
-			wantErr: "update u-1 of nodegroup web reported Successful, but the desired size of the nodegroup is 2, not 3"},
+		// Something else, such as Cluster Autoscaler, moved the desired size
+		// after the update: inside the bounds, that is no failure.
+		{name: "a desired size that moved inside the bounds is done at ACTIVE", req: ScaleRequest{Desired: size(3)}, got: at("ACTIVE", 2, 1, 3), wantDone: true},
+		{name: "a desired size that moved inside the bounds waits for ACTIVE", req: ScaleRequest{Desired: size(3)}, got: at("UPDATING", 2, 1, 3)},
+		{name: "a desired size outside the bounds fails at once", req: ScaleRequest{Desired: size(3)}, got: at("UPDATING", 5, 1, 4),
+			wantErr: "update u-1 of nodegroup web reported Successful, but the desired size of the nodegroup is 5, not 3"},
 		{name: "a min size that does not match", req: ScaleRequest{Desired: size(3), Min: size(2)}, got: at("ACTIVE", 3, 1, 3),
 			wantErr: "update u-1 of nodegroup web reported Successful, but the min size of the nodegroup is 1, not 2"},
 		{name: "a max size that does not match", req: ScaleRequest{Max: size(6)}, got: at("ACTIVE", 3, 1, 3),
@@ -618,33 +622,65 @@ func oneStep(t *testing.T, res Result) StepResult {
 	return res.Clusters[0].Steps[0]
 }
 
-// The confirmation of a scale. The wait follows the update first, and
-// then judges the nodegroup on its sizes and its status together.
-func TestRunScale_Confirm(t *testing.T) {
-	t.Run("sizes that do not match after Successful fail at once", func(t *testing.T) {
+// After the update is Successful, the min and max sizes must be the ones
+// that were sent. The desired size may have moved since, inside them.
+func TestRunScale_SizesAfterSuccessful(t *testing.T) {
+	t.Run("a desired size that something else changed after Successful: succeeded, with a notice", func(t *testing.T) {
 		e := newEnv(t, scaleWorld(nil))
 		// The plan and the fresh read are the first two describes. The
 		// third is the first one after the update, and it finds another
-		// desired size than the update set.
+		// desired size than the update set, inside the bounds, as Cluster
+		// Autoscaler can leave it.
 		e.onRequest(fleettest.EKSDescribeNodegroup, func(n int) {
 			if n == 3 {
 				e.world.Edit(func(s *fleettest.State) { s.Cluster(east, "prod").Nodegroup("web").Desired = 2 })
 			}
 		})
-		res, err := Run(testContext(t), e.deps, scaleTo(3), Hooks{})
+		sc := &script{t: t}
+		res, err := Run(testContext(t), e.deps, scaleTo(3), sc.hooks())
+		if err != nil {
+			t.Fatal(err)
+		}
+		s := oneStep(t, res)
+		const note = "the desired size of nodegroup web is 2 now, not 3: something else changed it after the update"
+		if s.Status != StepSucceeded || s.Failure != nil || s.Note != note {
+			t.Errorf("step = %s, failure %+v, note %q; want Succeeded with the note %q", s.Status, s.Failure, s.Note, note)
+		}
+		if !contains(sc.events, "Notice "+note) {
+			t.Errorf("no notice %q in %v", note, sc.events)
+		}
+		if res.ExitCode() != 0 || res.Status != Succeeded {
+			t.Errorf("result = %s, exit %d; want Succeeded, 0", res.Status, res.ExitCode())
+		}
+	})
+
+	t.Run("a min size that does not match after Successful fails at once", func(t *testing.T) {
+		e := newEnv(t, scaleWorld(nil))
+		e.onRequest(fleettest.EKSDescribeNodegroup, func(n int) {
+			if n == 3 {
+				e.world.Edit(func(s *fleettest.State) { s.Cluster(east, "prod").Nodegroup("web").Min = 1 })
+			}
+		})
+		req := scaleTo(3)
+		req.Min = size(2)
+		res, err := Run(testContext(t), e.deps, req, Hooks{})
 		if err != nil {
 			t.Fatal(err)
 		}
 		s := oneStep(t, res)
 		if s.Status != StepFailed || s.Failure == nil || s.Failure.Reason != apidoc.ReasonUpdateFailed ||
-			!strings.Contains(s.Failure.Error, "reported Successful, but the desired size of the nodegroup is 2, not 3") {
+			!strings.Contains(s.Failure.Error, "reported Successful, but the min size of the nodegroup is 1, not 2") {
 			t.Errorf("step = %s, failure %+v; want Failed with the mismatch", s.Status, s.Failure)
 		}
 		if n := e.count(fleettest.EKSDescribeNodegroup); n != 3 || res.ExitCode() != 1 {
 			t.Errorf("%d describes, exit %d; want 3 and 1: the wait ends at the first answer", n, res.ExitCode())
 		}
 	})
+}
 
+// The confirmation of a scale. The wait follows the update first, and
+// then judges the nodegroup on its sizes and its status together.
+func TestRunScale_Confirm(t *testing.T) {
 	t.Run("the desired size waits for ACTIVE", func(t *testing.T) {
 		e := newEnv(t, scaleWorld(nil))
 		// The update ends at once, and the nodegroup still says UPDATING

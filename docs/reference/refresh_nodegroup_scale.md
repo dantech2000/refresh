@@ -30,7 +30,10 @@ instance types.
 The command asks once before it starts. --yes skips the question, and is
 required with -o json|yaml and without a terminal. It waits until EKS
 reports the update done and the nodegroup is ACTIVE at the new sizes;
---no-wait returns once AWS accepted the change.
+--no-wait returns once AWS accepted the change. A desired size that
+something else, such as Cluster Autoscaler, changed after the update is
+no failure while it is inside the min and max: the scale says what the
+size is now.
 
 The cluster comes from -c/--cluster, then REFRESH_CLUSTER, then the active
 refresh context. It never comes from the kubeconfig.
@@ -38,9 +41,9 @@ refresh context. It never comes from the kubeconfig.
 Exit codes:
   0  Done, or nothing to do.
   1  An error, a question answered no, or an interrupt.
-     The update failed, the nodegroup is not ACTIVE at the new sizes
-     after it, or the sizes cannot hold. A scale has no verification
-     after it, so it never exits 5.
+     The update failed, the nodegroup is not ACTIVE at the new min and
+     max sizes after it, or the sizes cannot hold. A scale has no
+     verification after it, so it never exits 5.
   2  With --dry-run only: a real run would ask about warnings.
   3  Blocked: the cluster is busy, every target is already changing, a
      gate stops the change, or --require-healthy and a warning. Nothing

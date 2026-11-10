@@ -1,11 +1,11 @@
-exit: 4
+exit: 1
 error: update 00000000-0000-4000-8000-000000000001 of add-on vpc-cni ended Failed: ConfigurationConflict: Conflicts found when trying to apply (kube-system/aws-node)
 --- stdout ---
 {
   "apiVersion": "refresh.drod.dev/v2",
   "kind": "Run",
   "operation": "AddonUpdate",
-  "status": "Incomplete",
+  "status": "Failed",
   "clusters": [
     {
       "cluster": "prod",
@@ -59,7 +59,7 @@ error: update 00000000-0000-4000-8000-000000000001 of add-on vpc-cni ended Faile
       },
       "blockers": [],
       "notices": [],
-      "status": "Incomplete",
+      "status": "Failed",
       "results": [
         {
           "phase": "Addons",
@@ -84,10 +84,16 @@ error: update 00000000-0000-4000-8000-000000000001 of add-on vpc-cni ended Faile
           "phase": "Addons",
           "kind": "Addon",
           "name": "coredns",
-          "status": "Succeeded",
-          "updateId": "00000000-0000-4000-8000-000000000002",
-          "startedAt": "2026-01-01T00:00:30Z",
-          "finishedAt": "2026-01-01T00:00:45Z"
+          "status": "NotAttempted",
+          "failure": {
+            "kind": "Addon",
+            "name": "coredns",
+            "cluster": "prod",
+            "region": "us-east-1",
+            "reason": "NotAttempted",
+            "retryable": true,
+            "error": "add-on coredns was not updated: its dependency vpc-cni did not finish (Failed); nothing was sent"
+          }
         },
         {
           "phase": "Addons",
@@ -96,19 +102,19 @@ error: update 00000000-0000-4000-8000-000000000001 of add-on vpc-cni ended Faile
           "status": "Skipped"
         }
       ],
-      "verification": [
-        {
-          "name": "AddonHealth/coredns",
-          "outcome": "Pass",
-          "blocking": false,
-          "message": "coredns is ACTIVE at v1.11.4-eksbuild.2",
-          "details": [],
-          "findings": []
-        }
-      ]
+      "verification": []
     }
   ],
   "failures": [
+    {
+      "kind": "Addon",
+      "name": "coredns",
+      "cluster": "prod",
+      "region": "us-east-1",
+      "reason": "NotAttempted",
+      "retryable": true,
+      "error": "add-on coredns was not updated: its dependency vpc-cni did not finish (Failed); nothing was sent"
+    },
     {
       "kind": "Update",
       "name": "vpc-cni",
@@ -129,6 +135,6 @@ PLAN  AddonUpdate, prod in us-east-1
 [~] vpc-cni: Started (update 00000000-0000-4000-8000-000000000001)
 vpc-cni: InProgress
 [X] vpc-cni: Failed: update 00000000-0000-4000-8000-000000000001 of add-on vpc-cni ended Failed: ConfigurationConflict: Conflicts found when trying to apply (kube-system/aws-node)
-[~] coredns: Started (update 00000000-0000-4000-8000-000000000002)
-[OK] coredns: Succeeded
+[?] coredns: NotAttempted: add-on coredns was not updated: its dependency vpc-cni did not finish (Failed); nothing was sent
+warning: addon prod/coredns (us-east-1): NotAttempted: add-on coredns was not updated: its dependency vpc-cni did not finish (Failed); nothing was sent
 warning: update prod/vpc-cni (us-east-1): UpdateFailed: update 00000000-0000-4000-8000-000000000001 of add-on vpc-cni ended Failed: ConfigurationConflict: Conflicts found when trying to apply (kube-system/aws-node)
