@@ -626,4 +626,3 @@ func (h *Handle) checkpointableLocked() error {
 
 // Done is closed when the run has ended.
 func (h *Handle) Done() <-chan struct{} { return h.done }
-
