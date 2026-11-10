@@ -1227,7 +1227,7 @@ type unbuiltRequest struct {
 	Target
 }
 
-func (unbuiltRequest) kind() Kind { return testUpgrade }
+func (unbuiltRequest) kind() Kind { return ClusterUpgrade }
 
 func (unbuiltRequest) differs(Request) string { return "" }
 
