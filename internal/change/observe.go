@@ -58,7 +58,9 @@ func (r *runner) observers(cp *ClusterPlan, ph Phase, started []int, results []S
 		}
 		rolls = append(rolls, ro)
 	}
-	clients := r.d.AWS.Clients(cp.Region)
+	// The watch reads once for each tick of the wait, so it uses the poll
+	// clients: one attempt, and the next tick is the retry.
+	poll := r.d.AWS.PollClients(cp.Region)
 	// The node view is for one roll. Several rolls at once are followed
 	// by the lines of their updates.
 	nodes := r.common.Nodes && len(rolls) == 1
@@ -72,7 +74,7 @@ func (r *runner) observers(cp *ClusterPlan, ph Phase, started []int, results []S
 			for _, ro := range rolls {
 				groups = append(groups, ro.groups...)
 			}
-			r.watchScaling(ctx, clients, groups, since, ticks)
+			r.watchScaling(ctx, poll, groups, since, ticks)
 		})
 		if nodes && kube != nil {
 			for _, ro := range rolls {
@@ -92,7 +94,7 @@ func (r *runner) observers(cp *ClusterPlan, ph Phase, started []int, results []S
 // fails is tried again on the next tick, and an error that another read
 // will not fix, such as a missing permission or credentials that could
 // not be resolved, ends the watch with no word.
-func (r *runner) watchScaling(ctx context.Context, c *awsx.Clients, groups []string, since time.Time, ticks <-chan struct{}) {
+func (r *runner) watchScaling(ctx context.Context, c awsx.PollClients, groups []string, since time.Time, ticks <-chan struct{}) {
 	if len(groups) == 0 {
 		return
 	}
@@ -131,8 +133,9 @@ type scalingFailure struct {
 
 // scalingFailures returns the failed and the cancelled activities of
 // groups that started at or after since, oldest first. It reads the
-// newest scalingActivitiesPage activities of each group.
-func scalingFailures(ctx context.Context, c *awsx.Clients, groups []string, since time.Time) ([]scalingFailure, error) {
+// newest scalingActivitiesPage activities of each group, with one attempt
+// for each read: the caller polls.
+func scalingFailures(ctx context.Context, c awsx.PollClients, groups []string, since time.Time) ([]scalingFailure, error) {
 	var out []scalingFailure
 	for _, group := range groups {
 		resp, err := c.AutoScaling.DescribeScalingActivities(ctx, &autoscaling.DescribeScalingActivitiesInput{

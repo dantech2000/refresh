@@ -1,5 +1,5 @@
 exit: 1
-error: AccessDeniedException: User: arn:aws:iam::123456789012:user/fake is not authorized to perform this action; AccessDeniedException: User: arn:aws:iam::123456789012:user/fake is not authorized to perform this action
+error: AccessDeniedException: User: arn:aws:iam::123456789012:user/fake is not authorized to perform this action
 --- stdout ---
 Run   [X] Failed   AddonUpdate
 
@@ -11,10 +11,10 @@ RUN
   status     [X] Failed
 
 RESULTS  3
-  NAME        KIND   STATUS      FROM                TO                  UPDATE  NOTE  STARTED                  FINISHED                 FAILURE
-  vpc-cni     Addon  [X] Failed  v1.19.0-eksbuild.1  v1.20.0-eksbuild.1  -       -     2026-01-01 00:00:00 UTC  2026-01-01 00:00:00 UTC  AccessDenied: AccessDeniedException: User: arn:aws:iam::123456789012:user/fake is not authorized to perform this action
-  coredns     Addon  [X] Failed  v1.11.3-eksbuild.2  v1.11.4-eksbuild.2  -       -     2026-01-01 00:00:00 UTC  2026-01-01 00:00:00 UTC  AccessDenied: AccessDeniedException: User: arn:aws:iam::123456789012:user/fake is not authorized to perform this action
-  kube-proxy  Addon  - Skipped   v1.33.0-eksbuild.2  v1.33.0-eksbuild.2  -       -     -                        -                        -
+  NAME        KIND   STATUS            FROM                TO                  UPDATE  NOTE  STARTED                  FINISHED                 FAILURE
+  vpc-cni     Addon  [X] Failed        v1.19.0-eksbuild.1  v1.20.0-eksbuild.1  -       -     2026-01-01 00:00:00 UTC  2026-01-01 00:00:00 UTC  AccessDenied: AccessDeniedException: User: arn:aws:iam::123456789012:user/fake is not authorized to perform this action
+  coredns     Addon  [?] NotAttempted  v1.11.3-eksbuild.2  v1.11.4-eksbuild.2  -       -     -                        -                        NotAttempted: add-on coredns was not updated: its dependency vpc-cni did not finish (Failed); nothing was sent
+  kube-proxy  Addon  - Skipped         v1.33.0-eksbuild.2  v1.33.0-eksbuild.2  -       -     -                        -                        -
 
 HEALTH GATE
   decision  [OK] Go
@@ -24,7 +24,7 @@ CHECKS  1
   Addons  [OK] Pass  2 add-ons ACTIVE
 
 FAILURES
-[?] addon prod/coredns (us-east-1): AccessDenied (grant eks:UpdateAddon): AccessDeniedException: User: arn:aws:iam::123456789012:user/fake is not authorized to perform this action
+[?] addon prod/coredns (us-east-1): NotAttempted: add-on coredns was not updated: its dependency vpc-cni did not finish (Failed); nothing was sent
 [?] addon prod/vpc-cni (us-east-1): AccessDenied (grant eks:UpdateAddon): AccessDeniedException: User: arn:aws:iam::123456789012:user/fake is not authorized to perform this action
 --- stderr ---
 PLAN  AddonUpdate, prod in us-east-1
@@ -32,4 +32,4 @@ PLAN  AddonUpdate, prod in us-east-1
   coredns     update v1.11.3-eksbuild.2 to v1.11.4-eksbuild.2 (VersionBehind)
   kube-proxy  skip, at v1.33.0-eksbuild.2 (AlreadyAtTarget)
 [X] vpc-cni: Failed: AccessDeniedException: User: arn:aws:iam::123456789012:user/fake is not authorized to perform this action
-[X] coredns: Failed: AccessDeniedException: User: arn:aws:iam::123456789012:user/fake is not authorized to perform this action
+[?] coredns: NotAttempted: add-on coredns was not updated: its dependency vpc-cni did not finish (Failed); nothing was sent

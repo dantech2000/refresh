@@ -758,7 +758,7 @@ Fleet mode ignores `REFRESH_CLUSTER` and the active context. A kubeconfig contex
 | `--all` | One step per installed add-on, less `--skip-addon`, in dependency order |
 | `--version` | Only with exactly one name |
 
-The phase is `Serial`, without `StopOnFailure`: a failed add-on does not stop the rest, and its dependents are still attempted (`service.go:549-562`; trace `addon-update-all-partial-failure`, both updates sent).
+The phase is `Serial`, without `StopOnFailure`: a failed add-on does not stop the rest. Since the owner decision of 2026-11-09 (CONTRACT.md change 7), with `--all` its dependents are not attempted: an add-on whose dependency did not end `Succeeded` or `Skipped` is `NotAttempted`, with a failure that names the dependency. The old command attempted them (`service.go:549-562`; trace `addon-update-all-partial-failure`, both updates sent).
 
 Dependency order is always on for `--all`. The table and the sort are ported from `addon_dependencies.go:13-101`.
 
@@ -781,7 +781,7 @@ An attached add-on (row 4) waits with `WaitSettled`. A failed wait fails the ste
 
 The request is `UpdateAddon` with the version and the token, and nothing else (`service.go:353-363`).
 
-With `--no-wait` every add-on is submitted in dependency order with no wait between (trace `addon-update-all`). `--wait-timeout` bounds each add-on on its own.
+With `--no-wait` every add-on is submitted in dependency order with no wait between. Since the owner decision of 2026-11-09, `--all --no-wait` is refused when one add-on to update depends on another: without a wait the order means nothing. `--wait-timeout` bounds each add-on on its own.
 
 ### `nodegroup scale`
 

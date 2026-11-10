@@ -180,3 +180,35 @@ func TestEngine_UnsettledNodegroupThatMissesTheGoalIsNotDone(t *testing.T) {
 		t.Errorf("notices = %q, want one that says the update did not reach 1.33", notices)
 	}
 }
+
+// A run that ends after the step waited for an update that someone else
+// started, and before the step sent its own request, sent nothing: the
+// step is NotAttempted, and no failure says that a request got no answer.
+func TestEngine_InterruptAfterAnAttachmentSentNothing(t *testing.T) {
+	world := engineWorld(func(_ *fleettest.State, c *fleettest.Cluster) {
+		c.Version = "1.33"
+		c.Addon("vpc-cni").Version, c.Addon("coredns").Version, c.Addon("kube-proxy").Version = cni33, dns33, proxy33
+		c.Nodegroup("ng-a").UpdateScripts = []fleettest.UpdateScript{{After: 30 * time.Second, Result: fleettest.UpdateFailed}}
+	})
+	rollElsewhere(t, world, "ng-a", "1.33")
+	e := newEnv(t, world)
+	ctx, cancel := context.WithCancel(testContext(t))
+	defer cancel()
+	// The attached roll ends away from the goal, and the run is
+	// interrupted before the step reads the nodegroup again.
+	res, err := Run(ctx, e.deps, upgradeTo("1.33"), Hooks{Event: func(ev Event) {
+		if ev.Kind == Notice && strings.Contains(ev.Text, "did not reach 1.33") {
+			cancel()
+		}
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := stepResultOf(t, res, StepNodegroup, "ng-a")
+	if a.Status != StepNotAttempted || a.Failure != nil {
+		t.Errorf("ng-a = %s, failure %+v; want NotAttempted with no failure: nothing was sent for it", a.Status, a.Failure)
+	}
+	if len(e.sent()) != 0 || res.ExitCode() != exitcode.Failure || res.Status != Interrupted {
+		t.Errorf("result = %s, exit %d, requests %v; want Interrupted, exit 1, and no request", res.Status, res.ExitCode(), e.sent())
+	}
+}

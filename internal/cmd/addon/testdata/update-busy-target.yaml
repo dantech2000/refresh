@@ -1,10 +1,10 @@
-exit: 4
+exit: 3
 error: add-on vpc-cni is UPDATING to v1.19.5-eksbuild.1 (AddonUpdate); it was not changed. Run the command again once that finishes
 --- stdout ---
 apiVersion: refresh.drod.dev/v2
 kind: Run
 operation: AddonUpdate
-status: Incomplete
+status: Blocked
 clusters:
   - cluster: prod
     region: us-east-1
@@ -47,7 +47,7 @@ clusters:
           findings: []
     blockers: []
     notices: []
-    status: Incomplete
+    status: Blocked
     results:
       - phase: Addons
         kind: Addon
@@ -65,22 +65,28 @@ clusters:
       - phase: Addons
         kind: Addon
         name: coredns
-        status: Succeeded
-        updateId: 00000000-0000-4000-8000-000000000002
-        startedAt: "2026-01-01T00:00:00Z"
-        finishedAt: "2026-01-01T00:00:15Z"
+        status: NotAttempted
+        failure:
+          kind: Addon
+          name: coredns
+          cluster: prod
+          region: us-east-1
+          reason: NotAttempted
+          retryable: true
+          error: 'add-on coredns was not updated: its dependency vpc-cni did not finish (Busy); nothing was sent'
       - phase: Addons
         kind: Addon
         name: kube-proxy
         status: Skipped
-    verification:
-      - name: AddonHealth/coredns
-        outcome: Pass
-        blocking: false
-        message: coredns is ACTIVE at v1.11.4-eksbuild.2
-        details: []
-        findings: []
+    verification: []
 failures:
+  - kind: Addon
+    name: coredns
+    cluster: prod
+    region: us-east-1
+    reason: NotAttempted
+    retryable: true
+    error: 'add-on coredns was not updated: its dependency vpc-cni did not finish (Busy); nothing was sent'
   - kind: Addon
     name: vpc-cni
     cluster: prod
@@ -94,6 +100,6 @@ PLAN  AddonUpdate, prod in us-east-1
   coredns     update v1.11.3-eksbuild.2 to v1.11.4-eksbuild.2 (VersionBehind)
   kube-proxy  skip, at v1.33.0-eksbuild.2 (AlreadyAtTarget)
 [!] vpc-cni: Busy: add-on vpc-cni is UPDATING to v1.19.5-eksbuild.1 (AddonUpdate); it was not changed. Run the command again once that finishes
-[~] coredns: Started (update 00000000-0000-4000-8000-000000000002)
-[OK] coredns: Succeeded
+[?] coredns: NotAttempted: add-on coredns was not updated: its dependency vpc-cni did not finish (Busy); nothing was sent
+warning: addon prod/coredns (us-east-1): NotAttempted: add-on coredns was not updated: its dependency vpc-cni did not finish (Busy); nothing was sent
 warning: addon prod/vpc-cni (us-east-1): Busy: add-on vpc-cni is UPDATING to v1.19.5-eksbuild.1 (AddonUpdate); it was not changed. Run the command again once that finishes

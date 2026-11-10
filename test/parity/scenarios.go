@@ -196,17 +196,19 @@ func addonUpdate() []Scenario {
 		{
 			// ListAddons answers one name per page. The second add-on is on
 			// the second page.
-			Name: "addon-update-all-paged", Seed: fleet(bothBehind), Legacy: all("--yes"), V2: v2All("--yes", "--no-wait"),
+			Name: "addon-update-all-paged", Seed: fleet(bothBehind), Legacy: all("--yes"), V2: v2All("--yes"),
 			Prepare: fault(on(fleettest.EKSListAddons), fleettest.Fault{PageSize: 1}),
 			Checks:  []Check{exits(0), updatesAre("UpdateAddon prod/vpc-cni", "UpdateAddon prod/coredns")},
 		},
 		{
-			Name: "addon-update-all", Seed: fleet(bothBehind), Legacy: all("--yes"), V2: v2All("--yes", "--no-wait"),
+			// The new command waits between the two: --all --no-wait is
+			// refused when one add-on depends on another (CONTRACT.md change 7).
+			Name: "addon-update-all", Seed: fleet(bothBehind), Legacy: all("--yes"), V2: v2All("--yes"),
 			Checks: []Check{exits(0), updatesAre("UpdateAddon prod/vpc-cni", "UpdateAddon prod/coredns")},
 		},
 		{
 			// coredns is listed first; the order flag puts vpc-cni before it.
-			Name: "addon-update-all-dependency-order", Legacy: all("--yes", "--dependency-order"), V2: v2All("--yes", "--no-wait"),
+			Name: "addon-update-all-dependency-order", Legacy: all("--yes", "--dependency-order"), V2: v2All("--yes"),
 			Seed:   fleet(bothBehind, func(_ *fleettest.State, c *fleettest.Cluster) { slices.Reverse(c.Addons) }),
 			Checks: []Check{exits(0), updatesAre("UpdateAddon prod/vpc-cni", "UpdateAddon prod/coredns")},
 		},
@@ -218,6 +220,9 @@ func addonUpdate() []Scenario {
 			Name: "addon-update-all-partial-failure", Seed: fleet(bothBehind, scripts(oneTick), script("vpc-cni", failsInOneTick)),
 			Legacy: all("--yes", "--wait"), V2: v2All("--yes"),
 			Checks: []Check{fails, updatesAre("UpdateAddon prod/vpc-cni", "UpdateAddon prod/coredns"), resourceIs("vpc-cni", "v1.18.0-eksbuild.1"), resourceIs("coredns", "v1.11.4-eksbuild.2")},
+			// The new command does not update coredns after its dependency
+			// failed (CONTRACT.md change 7).
+			V2Checks: []Check{says("its dependency vpc-cni did not finish")},
 		},
 	}
 }

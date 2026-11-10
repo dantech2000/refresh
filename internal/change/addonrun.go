@@ -38,7 +38,7 @@ func (r *runner) runAddonStep(cp *ClusterPlan, s Step) StepResult {
 				return out
 			}
 		}
-		out, d, ok := r.freshAddon(cp, res, clients, resource)
+		out, d, ok := r.freshAddon(cp, res, s, clients, resource)
 		if !ok {
 			return out
 		}
@@ -54,7 +54,7 @@ func (r *runner) runAddonStep(cp *ClusterPlan, s Step) StepResult {
 		id, err := submitAddon(r.readCtx, clients, resource, s.To)
 		switch {
 		case err != nil:
-			return r.unsent(cp, res, err)
+			return r.unanswered(cp, res, err)
 		case id == "":
 			res.Status = StepInProgress
 			res.Failure = r.stepFailure(cp, res, apidoc.ReasonNotMonitored, "EKS accepted the update of add-on "+s.Ref.Name+" and returned no update ID; it cannot be followed, and it may still be running")
@@ -104,11 +104,16 @@ func (r *runner) runAddonStep(cp *ClusterPlan, s Step) StepResult {
 // health that it reads: an add-on that was ACTIVE in the plan and is
 // DEGRADED now is a warning that nobody accepted. See regate.
 //
+// An add-on that still needs a request, at a version other than the one
+// that the plan read, fails the step and nothing is sent, as a roll and a
+// scale do: the person accepted a change from the version of the plan,
+// and the same request from another version can be a downgrade.
+//
 // After a person accepted such a warning it reads again, as Run does
 // after every answer. It asks at most maxQuestions times: a read after
 // that which is worse again fails the step, with no question. It returns false when the step ends here, with its
 // result. Otherwise the decision is Submit or Attach.
-func (r *runner) freshAddon(cp *ClusterPlan, res StepResult, clients *awsx.Clients, resource Resource) (StepResult, addonDecision, bool) {
+func (r *runner) freshAddon(cp *ClusterPlan, res StepResult, s Step, clients *awsx.Clients, resource Resource) (StepResult, addonDecision, bool) {
 	name := res.Ref.Name
 	for asked := 0; ; asked++ {
 		fresh, err := describe(r.readCtx, clients, resource)
@@ -126,6 +131,17 @@ func (r *runner) freshAddon(cp *ClusterPlan, res StepResult, clients *awsx.Clien
 		case d.Action == Attach:
 			r.notice(fmt.Sprintf("add-on %s is already %s to %s; waiting for that update", name, fresh.Status, d.To))
 			return res, d, true
+		case d.Action != Submit:
+			// The plan recorded no target that this read can be held to.
+			res.Status, res.FinishedAt = StepFailed, r.d.now()
+			res.Failure = r.stepFailure(cp, res, apidoc.ReasonUnknown,
+				fmt.Sprintf("add-on %s cannot be updated from what was read now (%s at %s); nothing was sent. Run the command again", name, fresh.Status, fresh.Version))
+			return res, d, false
+		case fleet.CompareAddonVersions(fresh.Version, s.From) != 0:
+			res.Status, res.FinishedAt = StepFailed, r.d.now()
+			res.Failure = r.stepFailure(cp, res, apidoc.ReasonUnknown,
+				fmt.Sprintf("add-on %s changed to %s since the plan, which read %s; nothing was sent. Run the command again", name, orUnknown(fresh.Version), orUnknown(s.From)))
+			return res, d, false
 		case r.common.Policy.Skip:
 			return res, d, true
 		}
@@ -206,17 +222,32 @@ func (r *runner) stepFailure(cp *ClusterPlan, res StepResult, reason apidoc.Reas
 	return &f
 }
 
-// unsent returns the result of a step whose fresh read or request failed.
-// A request that never left, because the run ended first, leaves the step
+// unsent returns the result of a step whose read before its request
+// failed, or that the run ended before its request. Nothing was sent for
+// the step, so a run that ended leaves it NotAttempted, also after the
+// step waited for an update that someone else started: that update is
+// not a request of this run. See unanswered for a request that failed.
+func (r *runner) unsent(cp *ClusterPlan, res StepResult, err error) StepResult {
+	return r.notSent(cp, res, err, false)
+}
+
+// unanswered returns the result of a step whose request failed. A
+// request that never left, because the run ended first, leaves the step
 // NotAttempted. A request that left and got no answer may have started
 // the update, so the step is InProgress.
-func (r *runner) unsent(cp *ClusterPlan, res StepResult, err error) StepResult {
+func (r *runner) unanswered(cp *ClusterPlan, res StepResult, err error) StepResult {
+	return r.notSent(cp, res, err, true)
+}
+
+// notSent is unsent and unanswered. requested says that err is the error
+// of the request of the step.
+func (r *runner) notSent(cp *ClusterPlan, res StepResult, err error, requested bool) StepResult {
 	f := fleet.FailureFromError(resourceKind(res.Ref), res.Ref.Name, err)
 	f.Cluster, f.Region = cp.Cluster, cp.Region
 	ended := r.readCtx.Err() != nil
 	verb, done := changeVerb(res.Ref)
 	switch {
-	case ended && (errors.Is(err, awsx.ErrNotSent) || res.StartedAt.IsZero()):
+	case ended && (!requested || errors.Is(err, awsx.ErrNotSent)):
 		res.Status = StepNotAttempted
 		if timedOut(r.readCtx) {
 			f.Reason, f.Retryable = apidoc.ReasonTimeout, true

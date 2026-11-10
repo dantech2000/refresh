@@ -730,3 +730,26 @@ func TestEngineGuard_AddonVersionMustParse(t *testing.T) {
 		})
 	}
 }
+
+// The plan of a resumed run with --only addons has no control-plane step,
+// and the add-on versions of its steps were chosen from the catalogue of
+// the control plane that the plan read. At the request the control plane
+// runs another version: the run sends no add-on version that was chosen
+// for another Kubernetes version.
+func TestEngineGuard_AddonNeedsTheControlPlaneOfItsHop(t *testing.T) {
+	world := engineWorld(func(_ *fleettest.State, c *fleettest.Cluster) { c.Version = "1.33" })
+	e := newEnv(t, world)
+	req := upgradeTo("1.33")
+	req.Only = []Part{PartAddons}
+	hooks := Hooks{Checkpoint: atCheckpoint(PhaseAddonsBefore, func() {
+		world.Edit(func(s *fleettest.State) { s.Cluster(east, "prod").Version = "1.32" })
+	})}
+	res := mustRun(t, e, req, hooks)
+	if len(e.sent()) != 0 {
+		t.Errorf("requests %v: an add-on version for 1.33 was sent to a control plane at 1.32", e.sent())
+	}
+	wantBlocked(t, stepResultOf(t, res, StepAddon, "vpc-cni"), "the control plane of prod runs 1.32", "a version for Kubernetes 1.33", "must be at 1.33")
+	if res.ExitCode() != exitcode.Blocked {
+		t.Errorf("exit = %d, want 3 (%v)", res.ExitCode(), res.Err)
+	}
+}

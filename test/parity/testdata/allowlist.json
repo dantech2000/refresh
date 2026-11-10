@@ -601,5 +601,56 @@
         "decision: cluster prod: version=1.32"
       ]
     }
+  },
+  {
+    "scenario": "addon-update-all-partial-failure",
+    "field": "mutations",
+    "reason": "Owner decision of 2026-11-09 (review finding CC-02, CONTRACT.md change 7): with --all, an add-on whose dependency did not end Succeeded or Skipped is NotAttempted, and nothing is sent for it. vpc-cni fails, so the new command does not send the update of coredns, which depends on it.",
+    "source": "`addon update --all` updates the dependents of an add-on whose update failed",
+    "ownerApproved": true,
+    "expect": [
+      {
+        "operation": "eks:UpdateAddon",
+        "target": "prod/vpc-cni"
+      }
+    ]
+  },
+  {
+    "scenario": "addon-update-all-partial-failure",
+    "field": "settlement",
+    "reason": "Owner decision of 2026-11-09 (review finding CC-02, CONTRACT.md change 7): with --all, an add-on whose dependency did not end Succeeded or Skipped is NotAttempted, and nothing is sent for it. The last change is the failed update of vpc-cni, so the new command settles on it, and never reads a coredns update.",
+    "source": "`addon update --all` updates the dependents of an add-on whose update failed",
+    "ownerApproved": true,
+    "expect": {
+      "includes": [
+        "settlement: update prod/vpc-cni 1: status=Failed"
+      ]
+    }
+  },
+  {
+    "scenario": "addon-update-all-partial-failure",
+    "field": "world",
+    "reason": "Owner decision of 2026-11-09 (review finding CC-02, CONTRACT.md change 7): with --all, an add-on whose dependency did not end Succeeded or Skipped is NotAttempted, and nothing is sent for it. coredns keeps its version, and the cluster has the failed update of vpc-cni alone.",
+    "source": "`addon update --all` updates the dependents of an add-on whose update failed",
+    "ownerApproved": true,
+    "expect": {
+      "us-east-1/prod": {
+        "addons": {
+          "coredns": "v1.11.3-eksbuild.1 ACTIVE",
+          "vpc-cni": "v1.18.0-eksbuild.1 ACTIVE"
+        },
+        "updates": [
+          "vpc-cni AddonUpdate Failed AddonVersion=v1.19.0-eksbuild.1"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "addon-update-all-partial-failure",
+    "field": "exitCode",
+    "reason": "Owner decision of 2026-11-09 (review finding CC-02, CONTRACT.md change 7): with --all, an add-on whose dependency did not end Succeeded or Skipped is NotAttempted, and nothing is sent for it. The exit-code rule is the same: the one add-on that was sent failed and nothing changed, so the run exits 1, not 4.",
+    "source": "`addon update --all` updates the dependents of an add-on whose update failed",
+    "ownerApproved": true,
+    "expect": 1
   }
 ]

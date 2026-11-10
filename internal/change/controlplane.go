@@ -73,7 +73,7 @@ func (r *runner) runControlPlane(cp *ClusterPlan, s Step, snap *fleet.Snapshot) 
 	id, err := r.submitControlPlane(clients, cp.Target, s)
 	switch {
 	case err != nil:
-		return r.unsent(cp, res, err)
+		return r.unanswered(cp, res, err)
 	case id == "":
 		res.Status = StepInProgress
 		res.Failure = r.stepFailure(cp, res, apidoc.ReasonNotMonitored, "EKS accepted the update of the control plane of "+cp.Cluster+" and returned no update ID; it cannot be followed, and it may still be running")

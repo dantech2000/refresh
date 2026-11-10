@@ -149,6 +149,24 @@ func TestWaitUpdate_NotFound(t *testing.T) {
 			t.Errorf("polls (-want +got):\n%s", diff)
 		}
 	})
+	t.Run("never seen: the wait stops after a minute of answers", func(t *testing.T) {
+		e := newEnv(t, newWorld(nil))
+		id := startUpdate(t, e, fleettest.UpdateScript{Never: true})
+		e.world.SetFault(fleettest.EKSDescribeUpdate, fleettest.Fault{Code: "ResourceNotFoundException"})
+		start := e.world.Now()
+		err := WaitUpdate(testContext(t), e.deps.AWS.PollClients(east), cni, id, (&recorder{}).options(e))
+		var unobserved *UnobservedError
+		if !errors.As(err, &unobserved) || unobserved.LastStatus != "" || unobserved.UpdateID != id {
+			t.Fatalf("error = %v, want an *UnobservedError for the update that was never seen", err)
+		}
+		// One minute at 15 seconds: 4 polls.
+		if n := e.count(fleettest.EKSDescribeUpdate); n != 4 {
+			t.Errorf("%d DescribeUpdate requests, want 4", n)
+		}
+		if waited := e.world.Now().Sub(start); waited != time.Minute {
+			t.Errorf("the wait took %s on the clock, want 1m", waited)
+		}
+	})
 	t.Run("after the update was seen", func(t *testing.T) {
 		e := newEnv(t, newWorld(nil))
 		id := startUpdate(t, e, fleettest.UpdateScript{Never: true})

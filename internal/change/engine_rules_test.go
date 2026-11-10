@@ -687,6 +687,29 @@ func TestEngine_BusyRule(t *testing.T) {
 			t.Errorf("requests (-want +got):\n%s", diff)
 		}
 	})
+	// The control plane is being rolled back elsewhere, and the plan
+	// attaches to that in its control-plane phase. The run applies the
+	// busy rule with the steps of each phase, so its first phase, the
+	// nodegroups, is blocked by the same update. The dry run says so too.
+	t.Run("a cluster that the plan attaches to in a later phase blocks the dry run", func(t *testing.T) {
+		world := upgradedWorld(nil)
+		startControlPlaneElsewhere(t, world, "1.32", fleettest.UpdateScript{Never: true})
+		e := newEnv(t, world)
+		p, err := NewPlan(testContext(t), e.deps, rollbackOf())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if p.Decision() != DecisionBlocked || p.ExitCode() != exitcode.Blocked {
+			t.Errorf("dry run = %s, exit %d, blockers %+v; want Blocked, exit 3", p.Decision(), p.ExitCode(), p.Clusters[0].Blockers)
+		}
+		res := mustRun(t, e, rollbackOf(), Hooks{})
+		if res.ExitCode() != p.ExitCode() || len(e.sent()) != 0 {
+			t.Errorf("run = %s, exit %d, requests %v; want the exit of the dry run, %d, and no request", res.Status, res.ExitCode(), e.sent(), p.ExitCode())
+		}
+		if res.Err == nil || !strings.Contains(res.Err.Error(), "prod is busy (cluster UPDATING)") {
+			t.Errorf("message = %v", res.Err)
+		}
+	})
 	t.Run("the run attaches to its own roll that is in flight", func(t *testing.T) {
 		// A run before this one was stopped during the roll of ng-a.
 		world := engineWorld(func(_ *fleettest.State, c *fleettest.Cluster) {

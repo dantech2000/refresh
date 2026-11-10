@@ -138,7 +138,8 @@ func (ir *insightsRefresher) wait(ctx context.Context, t Target, live string) er
 		_, err := clients.EKS.StartInsightsRefresh(wctx, &eks.StartInsightsRefreshInput{ClusterName: name})
 		return err
 	}
-	before, err := ir.before(wctx, poll, t)
+	o := WaitOptions{Interval: ir.poll, After: ir.d.after, budget: limit}
+	before, err := ir.before(ctx, wctx, poll, t, o)
 	switch {
 	case ctx.Err() != nil:
 		return ctx.Err()
@@ -148,7 +149,6 @@ func (ir *insightsRefresher) wait(ctx context.Context, t Target, live string) er
 		return err
 	}
 	st := refreshStart{old: before, err: start()}
-	o := WaitOptions{Interval: ir.poll, After: ir.d.after, budget: limit}
 	// EKS throttles a describe sent right after the start it accepted,
 	// and the refresh takes longer than a poll interval anyway. A start
 	// that EKS refused is followed by a describe at once: it may show
@@ -264,28 +264,56 @@ type refreshStart struct {
 // before returns the refresh that ended before the run asks for one, or
 // nil when there is none to confuse with the refresh of the run: EKS
 // reports none, a refresh with no start time, or one in progress, which
-// the run then follows. Any other error of the describe ends the wait:
-// without it, an older refresh could pass as the one of the run.
-func (ir *insightsRefresher) before(ctx context.Context, poll awsx.PollClients, t Target) (*eks.DescribeInsightsRefreshOutput, error) {
-	out, err := poll.EKS.DescribeInsightsRefresh(ctx, &eks.DescribeInsightsRefreshInput{ClusterName: aws.String(t.Cluster)})
-	switch {
-	case awsx.ErrorCode(err) == codeNotFound:
-		return nil, nil
-	case err != nil:
-		return nil, &refreshError{msg: "checking the insights refresh of cluster " + t.Cluster + " before starting one", err: err}
-	case out.Status == ekstypes.InsightsRefreshStatusInProgress || out.StartedAt == nil:
-		return nil, nil
+// the run then follows. A transient error of the describe, such as
+// throttling, is polled again, as the wait polls: see pollFailed. Any
+// other error ends the wait: without the answer, an older refresh could
+// pass as the one of the run. wctx is the limit of the refresh, and ctx
+// the context of the run.
+func (ir *insightsRefresher) before(ctx, wctx context.Context, poll awsx.PollClients, t Target, o WaitOptions) (*eks.DescribeInsightsRefreshOutput, error) {
+	for {
+		out, err := poll.EKS.DescribeInsightsRefresh(wctx, &eks.DescribeInsightsRefreshInput{ClusterName: aws.String(t.Cluster)})
+		switch {
+		case ctx.Err() != nil:
+			return nil, ctx.Err()
+		case wctx.Err() != nil:
+			return nil, fmt.Errorf("%w (%s)", errInsightsRefreshTimeout, insightsRefreshLimit)
+		case awsx.ErrorCode(err) == codeNotFound:
+			return nil, nil
+		case err != nil:
+			if stop := ir.pollFailed(t, err); stop != nil {
+				if awsx.IsIdentityFailure(err) {
+					return nil, stop
+				}
+				return nil, &refreshError{msg: "checking the insights refresh of cluster " + t.Cluster + " before starting one", err: err}
+			}
+		case out.Status == ekstypes.InsightsRefreshStatusInProgress || out.StartedAt == nil:
+			return nil, nil
+		default:
+			return out, nil
+		}
+		if err := (&refreshStart{}).pause(ctx, wctx, o, t); err != nil {
+			return nil, err
+		}
 	}
-	return out, nil
 }
 
 // refused handles the answer of the describe while the start is refused.
-// An error ends the wait.
+// An error ends the wait. A describe that failed with a transient error
+// keeps the wait going while the start is refused as for a scheduled
+// refresh.
 func (st *refreshStart) refused(ir *insightsRefresher, t Target, out *eks.DescribeInsightsRefreshOutput, err error) error {
 	switch {
 	case err == nil && out.Status == ekstypes.InsightsRefreshStatusInProgress:
 		st.err, st.rejected = nil, nil
 		ir.say("an insights refresh is already running for %s; waiting for it", t.Cluster)
+	case awsx.ErrorCode(st.err) == codeInvalidRequest && err != nil && awsx.ErrorCode(err) != codeNotFound:
+		// The describe failed, and says nothing about the refresh that
+		// refused the start. A transient error, such as throttling, is
+		// polled again, with the start, as the wait polls.
+		if stop := ir.pollFailed(t, err); stop != nil {
+			return stop
+		}
+		st.rejected, st.again = st.err, true
 	case awsx.ErrorCode(st.err) == codeInvalidRequest && awsx.ErrorCode(err) == codeNotFound:
 		if !st.noted {
 			st.noted = true
