@@ -13,8 +13,8 @@ the storage drivers. Named add-ons run in the order given. An add-on whose
 dependency ran before it and did not end clean is not updated; the others
 go on. Clean means skipped, or updated and verified healthy: a dependency
 that failed, timed out, was already changing, is not healthy after its
-update, or could not be read after it stops its dependents. --no-wait is refused when an add-on to update depends on one
-that comes before it.
+update, or could not be read after it stops its dependents. --no-wait is
+refused when an add-on to update depends on one that comes before it.
 
 Before any change the command reads the whole cluster. It refuses while
 the cluster or anything else in it is changing. An add-on that is DEGRADED,

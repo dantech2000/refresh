@@ -36,8 +36,9 @@ once AWS accepted the rolls, and --skip-verify leaves the verification
 out.
 
 --all-clusters rolls every cluster of the regions of -r, one cluster
-after another, after one confirmation for all of them. A cluster that is
-blocked or fails does not stop the next one.
+after another, after one confirmation for all of them. Without -r it rolls
+the clusters of the configured region alone. A cluster that is blocked or
+fails does not stop the next one.
 
 The cluster comes from -c/--cluster, then REFRESH_CLUSTER, then the active
 refresh context. It never comes from the kubeconfig. --all-clusters
@@ -82,7 +83,7 @@ refresh nodegroup update [nodegroup...] [flags]
 ### Options
 
 ```
-      --all-clusters             Roll every cluster of the regions of -r, one after another
+      --all-clusters             Roll every cluster of the regions of -r, or of the configured region, one after another
       --changelog                With --dry-run, show the AMI release notes of each roll
   -c, --cluster string           EKS cluster name (env: REFRESH_CLUSTER; default: the active context; never the kubeconfig)
   -d, --dry-run                  Print the plan and the verdict of the health gate, and change nothing

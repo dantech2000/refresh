@@ -200,7 +200,10 @@ the latest AMI.
 ### Every cluster: `--all-clusters`
 
 `--all-clusters` rolls every cluster of the regions of `-r`, one cluster after
-another.
+another. Without `-r` it rolls the clusters of the configured region only. It
+never reads `REFRESH_EKS_REGIONS` and never sweeps every region: a change acts
+only where you point it. With no `-r` and no configured region, it fails
+before any request.
 
 1. The command lists the clusters of the regions.
 2. It plans every cluster. A dry run stops here.
@@ -220,7 +223,7 @@ cannot be used with `-c`, with nodegroup names, or with `--kube-context`.
 | Flag | Meaning |
 |---|---|
 | `-f, --filter` | Select the targets by `key=value`. |
-| `--all-clusters` | Roll every cluster of the regions of `-r`. |
+| `--all-clusters` | Roll every cluster of the regions of `-r`, or of the configured region. |
 | `--reroll` | Also roll a nodegroup that is on the latest AMI. |
 | `--changelog` | With `--dry-run`, show the AMI release notes of each roll. |
 | `--live` | Show the nodes of the roll as they drain and join, also without a terminal. |
