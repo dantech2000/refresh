@@ -487,3 +487,28 @@ func TestFetch_InstanceIDs(t *testing.T) {
 		t.Errorf("failures = %d, state = %v, want 6 and Failed", len(snap.Failures), snap.Nodegroups[0].InstanceIDsState)
 	}
 }
+
+// The instance IDs come from the group call alone. A failed instance call
+// after it costs the AMI and the instance list, not the instance IDs.
+func TestFetch_InstanceIDsSurviveAFailedInstanceCall(t *testing.T) {
+	world, _, provider := nodegroupWorld(t)
+	world.SetFault(fleettest.EC2DescribeInstances, fleettest.Fault{Deny: true})
+	var fetcher fleet.Fetcher
+	snap, err := fetcher.Fetch(testContext(t), provider.Clients(east), "prod", fleet.Need{OnlyNodegroups: []string{"web"}, InstanceIDs: true, AMI: true, Instances: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	web := snap.Nodegroups[0]
+	if web.InstanceIDsState != fleet.Collected {
+		t.Errorf("InstanceIDsState = %v, want Collected", web.InstanceIDsState)
+	}
+	if diff := cmp.Diff([]string{"i-web-1", "i-web-2"}, web.InstanceIDs); diff != "" {
+		t.Errorf("instance IDs (-want +got):\n%s", diff)
+	}
+	if web.InstancesState != fleet.Failed || web.AMI.State != fleet.Failed {
+		t.Errorf("InstancesState = %v, AMI.State = %v, want Failed and Failed", web.InstancesState, web.AMI.State)
+	}
+	if diff := cmp.Diff([]string{"Nodegroup web AccessDenied ec2:DescribeInstances"}, failureKeys(snap.Failures)); diff != "" {
+		t.Errorf("Failures (-want +got):\n%s", diff)
+	}
+}

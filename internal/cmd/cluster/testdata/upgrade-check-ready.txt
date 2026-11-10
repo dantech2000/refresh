@@ -20,4 +20,4 @@ CHECKS  3
   NAME          OUTCOME    MESSAGE
   Insights      [OK] Pass  3 insights passing
   VersionSkew   [OK] Pass  every nodegroup on 1.32 and every add-on at its latest
-  ControlPlane  [OK] Pass  etcd 12% of 8 GiB
+  ControlPlane  [OK] Pass  etcd 13% of 8 GB

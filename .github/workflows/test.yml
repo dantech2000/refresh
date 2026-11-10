@@ -9,10 +9,12 @@ on:
   pull_request:
     branches: ["main"]
 
-# Cancel superseded runs when new commits are pushed to the same ref.
+# Cancel superseded runs when new commits are pushed to the same PR. A run on
+# main is never cancelled: it uploads the Codecov base and saves the caches,
+# and two merges close together would otherwise cancel the first.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -27,12 +29,39 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Go
+        id: go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           # Resolve the Go version from go.mod so CI never drifts from the
           # module's declared toolchain.
           go-version-file: go.mod
-          cache: true
+          # One setup-go cache key for every job meant that the job that ended
+          # first (govulncheck, with no race objects) wrote it, and the race
+          # jobs compiled from nothing. Each job now restores the caches that
+          # fit what it builds:
+          #   go-mod-*   the module cache; every Go job restores it.
+          #   go-race-*  the build cache of -race compiles; this job and
+          #              Race stress restore it.
+          # Only this job saves them, and only on main (a PR cache serves no
+          # other PR), or when nothing at all was restored. restore-keys lets
+          # a PR that changes go.sum start from the cache of main.
+          cache: false
+
+      - name: Restore the module cache
+        id: mod-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/go/pkg/mod
+          key: go-mod-${{ runner.os }}-${{ hashFiles('go.sum') }}
+          restore-keys: go-mod-${{ runner.os }}-
+
+      - name: Restore the race build cache
+        id: build-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/go-build
+          key: go-race-${{ runner.os }}-${{ hashFiles('go.mod', 'go.sum') }}
+          restore-keys: go-race-${{ runner.os }}-
 
       # We intentionally do NOT run a separate non-race `go build ./...`. Go's
       # build cache keys on -race, so a non-race build shares zero cached
@@ -75,6 +104,52 @@ jobs:
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
+      - name: Save the module cache
+        if: steps.mod-cache.outputs.cache-hit != 'true' && (github.event_name == 'push' || steps.mod-cache.outputs.cache-matched-key == '')
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ steps.mod-cache.outputs.cache-primary-key }}
+
+      - name: Save the race build cache
+        if: steps.build-cache.outputs.cache-hit != 'true' && (github.event_name == 'push' || steps.build-cache.outputs.cache-matched-key == '')
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/go-build
+          key: ${{ steps.build-cache.outputs.cache-primary-key }}
+
+      # The golangci-lint binary for lint.yml, built here so that it lands in
+      # the cache scope of main, which every PR can restore. Lint itself does
+      # not run on main. These steps come after the saves above, so the
+      # non-race objects of the linter build stay out of go-race-*.
+      - name: Read the golangci-lint version
+        if: github.event_name == 'push'
+        id: lint-version
+        run: |
+          version="$(awk '$1 == "GOLANGCI_LINT_VERSION:" {print $2}' Taskfile.yml)"
+          echo "version=${version:?no GOLANGCI_LINT_VERSION in Taskfile.yml}" >> "$GITHUB_OUTPUT"
+
+      # Same path and key as the golangci-lint job of lint.yml.
+      - name: Look up the golangci-lint binary
+        if: github.event_name == 'push'
+        id: lint-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/go/bin/golangci-lint
+          key: golangci-lint-${{ runner.os }}-${{ steps.lint-version.outputs.version }}-go${{ steps.go.outputs.go-version }}
+          lookup-only: true
+
+      - name: Build golangci-lint
+        if: github.event_name == 'push' && steps.lint-cache.outputs.cache-hit != 'true'
+        run: go install "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${{ steps.lint-version.outputs.version }}"
+
+      - name: Save the golangci-lint binary
+        if: github.event_name == 'push' && steps.lint-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/go/bin/golangci-lint
+          key: ${{ steps.lint-cache.outputs.cache-primary-key }}
+
   race-stress:
     name: Race stress (shuffled, x5)
     if: github.event_name == 'pull_request'
@@ -88,7 +163,24 @@ jobs:
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-          cache: true
+          # The caches are the explicit steps below (see the test job).
+          cache: false
+
+      - name: Restore the module cache
+        id: mod-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/go/pkg/mod
+          key: go-mod-${{ runner.os }}-${{ hashFiles('go.sum') }}
+          restore-keys: go-mod-${{ runner.os }}-
+
+      - name: Restore the race build cache
+        id: build-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/go-build
+          key: go-race-${{ runner.os }}-${{ hashFiles('go.mod', 'go.sum') }}
+          restore-keys: go-race-${{ runner.os }}-
 
       # Repeated, shuffled runs surface order-dependent tests and data races
       # that one pass in declaration order can hide. The seed is printed in the
@@ -109,11 +201,22 @@ jobs:
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-          cache: true
+          # The caches are the explicit steps below (see the test job).
+          cache: false
+
+      - name: Restore the module cache
+        id: mod-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/go/pkg/mod
+          key: go-mod-${{ runner.os }}-${{ hashFiles('go.sum') }}
+          restore-keys: go-mod-${{ runner.os }}-
 
       - name: govulncheck
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@v1.3.0
+          # The one pin is GOVULNCHECK_VERSION in Taskfile.yml.
+          version="$(awk '$1 == "GOVULNCHECK_VERSION:" {print $2}' Taskfile.yml)"
+          go install "golang.org/x/vuln/cmd/govulncheck@${version:?no GOVULNCHECK_VERSION in Taskfile.yml}"
           govulncheck ./...
 
   deadcode:
@@ -129,7 +232,16 @@ jobs:
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-          cache: true
+          # The caches are the explicit steps below (see the test job).
+          cache: false
+
+      - name: Restore the module cache
+        id: mod-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/go/pkg/mod
+          key: go-mod-${{ runner.os }}-${{ hashFiles('go.sum') }}
+          restore-keys: go-mod-${{ runner.os }}-
 
       # `-test` counts every test as an entry point, so legitimate test-only
       # seams (deterministic constructors, mock builders) are not flagged —
@@ -137,7 +249,9 @@ jobs:
       # when it finds something, so fail the step on any output.
       - name: deadcode
         run: |
-          go install golang.org/x/tools/cmd/deadcode@v0.46.0
+          # The one pin is DEADCODE_VERSION in Taskfile.yml.
+          version="$(awk '$1 == "DEADCODE_VERSION:" {print $2}' Taskfile.yml)"
+          go install "golang.org/x/tools/cmd/deadcode@${version:?no DEADCODE_VERSION in Taskfile.yml}"
           out="$(deadcode -test ./...)"
           if [ -n "$out" ]; then
             echo "::error::dead code found (unreachable even from tests):"

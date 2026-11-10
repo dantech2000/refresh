@@ -20,4 +20,4 @@ CHECKS  3
   NAME          OUTCOME    MESSAGE
   Insights      [!] Warn   EKS has not evaluated the upgrade insights of the cluster yet
   VersionSkew   [OK] Pass  every nodegroup on 1.32 and every add-on at its latest
-  ControlPlane  [OK] Pass  etcd 12% of 8 GiB
+  ControlPlane  [OK] Pass  etcd 13% of 8 GB

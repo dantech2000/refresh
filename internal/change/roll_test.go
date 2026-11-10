@@ -144,6 +144,12 @@ func TestDecideAMIUpdate(t *testing.T) {
 	}
 	custom := managed("ACTIVE", ami("ami-old", "ami-new"))
 	custom.AMIType = "CUSTOM"
+	newType := managed("ACTIVE", fleet.AMI{State: fleet.Collected, Current: "ami-new"})
+	newType.AMIType = "AL2023_x86_64_SOMETHING_NEW"
+	updatingNewType := newType
+	updatingNewType.Status = "UPDATING"
+	noType := managed("ACTIVE", ami("ami-new", ""))
+	noType.AMIType = ""
 	tests := []struct {
 		name   string
 		ng     fleet.Nodegroup
@@ -156,14 +162,18 @@ func TestDecideAMIUpdate(t *testing.T) {
 		{"2 updating, with reroll", managed("UPDATING", ami("ami-new", "ami-new")), true, RollDecision{Skip, InFlight}},
 		{"2 creating", managed("CREATING", ami("", "ami-new")), false, RollDecision{Skip, InFlight}},
 		{"2 deleting", managed("DELETING", ami("ami-old", "ami-new")), false, RollDecision{Skip, InFlight}},
-		{"3 unknown current", managed("ACTIVE", ami("", "ami-new")), false, RollDecision{Submit, AMIUnknown}},
-		{"3 unknown latest", managed("ACTIVE", ami("ami-old", "")), false, RollDecision{Submit, AMIUnknown}},
-		{"3 AMIs not read", managed("ACTIVE", fleet.AMI{State: fleet.Failed, Current: "ami-new", Latest: "ami-new"}), false, RollDecision{Submit, AMIUnknown}},
-		{"4 on latest, with reroll", managed("ACTIVE", ami("ami-new", "ami-new")), true, RollDecision{Submit, Reroll}},
-		{"5 on latest", managed("ACTIVE", ami("ami-new", "ami-new")), false, RollDecision{Skip, AlreadyLatest}},
-		{"5 on latest and degraded", managed("DEGRADED", ami("ami-new", "ami-new")), false, RollDecision{Skip, AlreadyLatest}},
-		{"6 outdated", managed("ACTIVE", ami("ami-old", "ami-new")), false, RollDecision{Submit, AMIOutdated}},
-		{"6 outdated, with reroll", managed("ACTIVE", ami("ami-old", "ami-new")), true, RollDecision{Submit, AMIOutdated}},
+		{"2 updating, AMI type unknown", updatingNewType, false, RollDecision{Skip, InFlight}},
+		{"3 AMI type unknown", newType, false, RollDecision{Skip, AMITypeUnknown}},
+		{"3 AMI type unknown, with reroll", newType, true, RollDecision{Skip, AMITypeUnknown}},
+		{"4 unknown current", managed("ACTIVE", ami("", "ami-new")), false, RollDecision{Submit, AMIUnknown}},
+		{"4 unknown latest", managed("ACTIVE", ami("ami-old", "")), false, RollDecision{Submit, AMIUnknown}},
+		{"4 AMIs not read", managed("ACTIVE", fleet.AMI{State: fleet.Failed, Current: "ami-new", Latest: "ami-new"}), false, RollDecision{Submit, AMIUnknown}},
+		{"3 AMI type not returned", noType, false, RollDecision{Skip, AMITypeUnknown}},
+		{"5 on latest, with reroll", managed("ACTIVE", ami("ami-new", "ami-new")), true, RollDecision{Submit, Reroll}},
+		{"6 on latest", managed("ACTIVE", ami("ami-new", "ami-new")), false, RollDecision{Skip, AlreadyLatest}},
+		{"6 on latest and degraded", managed("DEGRADED", ami("ami-new", "ami-new")), false, RollDecision{Skip, AlreadyLatest}},
+		{"7 outdated", managed("ACTIVE", ami("ami-old", "ami-new")), false, RollDecision{Submit, AMIOutdated}},
+		{"7 outdated, with reroll", managed("ACTIVE", ami("ami-old", "ami-new")), true, RollDecision{Submit, AMIOutdated}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -642,11 +652,29 @@ func TestStartNodegroupRoll(t *testing.T) {
 // roll could not be pinned.
 func TestRoll_NoVersionIsBlocked(t *testing.T) {
 	cp := &ClusterPlan{Target: Target{Cluster: "prod"}, snapshot: &fleet.Snapshot{Nodegroups: []fleet.Nodegroup{
-		{Name: "ng-a", State: fleet.Collected, Status: "ACTIVE", AMI: fleet.AMI{State: fleet.Collected, Current: "a", Latest: "b"}},
+		{Name: "ng-a", State: fleet.Collected, Status: "ACTIVE", AMIType: "AL2023_x86_64_STANDARD", AMI: fleet.AMI{State: fleet.Collected, Current: "a", Latest: "b"}},
 	}}}
 	step := cp.rollStep(PhaseRef{}, "ng-a", RollRequest{})
 	if step.Action != Blocked || len(cp.Blockers) != 1 || cp.Blockers[0].Kind != BlockerUnread || len(cp.Failures) != 1 {
 		t.Errorf("step = %+v, blockers %+v, failures %+v; want a Blocked step with an Unread blocker and a failure", step, cp.Blockers, cp.Failures)
+	}
+}
+
+// A nodegroup whose AMI type refresh does not know, or that EKS did not
+// return, is skipped with a notice that says which.
+func TestRoll_AMITypeUnknownNotice(t *testing.T) {
+	tests := []struct{ amiType, want string }{
+		{"AL2023_x86_64_SOMETHING_NEW", "nodegroup ng-a has the AMI type AL2023_x86_64_SOMETHING_NEW, which this version of refresh does not know, and is not rolled; upgrade refresh to roll it"},
+		{"", "EKS returned no AMI type for nodegroup ng-a, so refresh cannot find its recommended AMI, and it is not rolled"},
+	}
+	for _, tt := range tests {
+		cp := &ClusterPlan{Target: Target{Cluster: "prod"}, snapshot: &fleet.Snapshot{Nodegroups: []fleet.Nodegroup{
+			{Name: "ng-a", State: fleet.Collected, Status: "ACTIVE", Version: fleet.Version{Major: 1, Minor: 33}, AMIType: tt.amiType, AMI: fleet.AMI{State: fleet.Collected, Current: "a"}},
+		}}}
+		step := cp.rollStep(PhaseRef{}, "ng-a", RollRequest{})
+		if step.Action != Skip || step.Reason != AMITypeUnknown || len(cp.Notices) != 1 || cp.Notices[0] != tt.want {
+			t.Errorf("type %q: step = %+v, notices %q; want Skip, AMITypeUnknown, and %q", tt.amiType, step, cp.Notices, tt.want)
+		}
 	}
 }
 

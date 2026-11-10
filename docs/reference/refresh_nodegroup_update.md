@@ -30,8 +30,10 @@ goes on.
 The command asks once before it starts. --yes skips the question, and is
 required with -o json|yaml and without a terminal. It starts every roll,
 waits for all of them, and then verifies: the nodegroups are ACTIVE, the
-new nodes are Ready, and no pod is newly Pending. --no-wait returns once
-AWS accepted the rolls, and --skip-verify leaves the verification out.
+new nodes are Ready, and no new pod is stuck Pending: unschedulable, or
+unable to pull its image or read its configuration. --no-wait returns
+once AWS accepted the rolls, and --skip-verify leaves the verification
+out.
 
 --all-clusters rolls every cluster of the regions of -r, one cluster
 after another, after one confirmation for all of them. A cluster that is

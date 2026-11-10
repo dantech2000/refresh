@@ -11,8 +11,8 @@ import (
 // is Ready.
 //
 // baseline holds the old nodes of the roll, by identity (see nodeKey): a
-// node that is not in it is new. With a nil baseline the image label decides: a node is
-// new when it was launched with targetAMI. An Observer always has a
+// node that is not in it is new. With a nil baseline the image label
+// decides: a node is new when it was launched with targetAMI. An Observer always has a
 // baseline; the label rule is kept for a caller that knows the AMI.
 func classify(n *corev1.Node, targetAMI string, baseline map[string]bool) NodeView {
 	ready := nodeReady(n)
@@ -96,11 +96,13 @@ func nodeReady(n *corev1.Node) bool {
 }
 
 // hasDrainTaint reports whether a node has a taint that says it is being
-// removed: the one of a cordon, or one of the cluster autoscaler.
+// removed: the one of a cordon, or the one the cluster autoscaler sets
+// before it drains a node. DeletionCandidateOfClusterAutoscaler does not
+// count: it is a soft PreferNoSchedule taint on a node that the autoscaler
+// may remove later, and it takes the taint off again.
 func hasDrainTaint(n *corev1.Node) bool {
 	for _, t := range n.Spec.Taints {
 		if strings.HasPrefix(t.Key, "ToBeDeletedByClusterAutoscaler") ||
-			strings.HasPrefix(t.Key, "DeletionCandidateOfClusterAutoscaler") ||
 			t.Key == corev1.TaintNodeUnschedulable {
 			return true
 		}

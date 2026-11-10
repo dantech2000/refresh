@@ -2,8 +2,12 @@ package noderoll
 
 import (
 	"context"
+	"errors"
+	"io"
+	"sync"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
@@ -52,6 +56,67 @@ type informerSet struct {
 	events    corelisters.EventLister
 	factories []informers.SharedInformerFactory
 	stop      context.CancelFunc
+	// nodesWatch and eventsWatch say whether each watch broke since it
+	// last delivered an event. The cache of a broken watch keeps its last
+	// content while the reflector retries, so the observer lists instead.
+	nodesWatch, eventsWatch watchHealth
+}
+
+// watchHealth records whether a watch broke. A reflector retries without
+// end, and a lister never returns an error, so a cache whose watch broke
+// would serve its last content as current: when the API goes away
+// mid-roll, the panel would freeze with no error.
+type watchHealth struct {
+	mu     sync.Mutex
+	broken bool
+	// delivery, when set, gets a value after each event, without
+	// blocking: a test waits on it.
+	delivery chan<- struct{}
+}
+
+// failed is the watch error handler of an informer. A watch that the
+// server closed, or whose resource version expired, is not broken: the
+// reflector lists again at once, as client-go's DefaultWatchErrorHandler
+// treats them. Every error still goes to that handler.
+func (w *watchHealth) failed(ctx context.Context, r *cache.Reflector, err error) {
+	cache.DefaultWatchErrorHandler(ctx, r, err)
+	if errors.Is(err, io.EOF) || apierrors.IsResourceExpired(err) || apierrors.IsGone(err) {
+		return
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.broken = true
+}
+
+// delivered records that the watch delivered an event: a reflector that
+// listed again after an error replaces its cache, which delivers an update
+// for each object.
+func (w *watchHealth) delivered() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.broken = false
+	select {
+	case w.delivery <- struct{}{}:
+	default:
+	}
+}
+
+// ok reports whether the cache of the watch is current.
+func (w *watchHealth) ok() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return !w.broken
+}
+
+// watch sets the error handler of an informer and the event handler that
+// clears it. Both are set before the informer starts, so neither fails.
+func (w *watchHealth) watch(informer cache.SharedIndexInformer) {
+	_ = informer.SetWatchErrorHandlerWithContext(w.failed)
+	_, _ = informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc:    func(any) { w.delivered() },
+		UpdateFunc: func(any, any) { w.delivered() },
+		DeleteFunc: func(any) { w.delivered() },
+	})
 }
 
 // startInformers starts the two watches and waits for their caches to
@@ -79,6 +144,8 @@ func startInformers(ctx context.Context, client kubernetes.Interface, nodegroup 
 		factories: []informers.SharedInformerFactory{nodeFactory, eventFactory},
 		stop:      cancel,
 	}
+	set.nodesWatch.watch(nodes.Informer())
+	set.eventsWatch.watch(events.Informer())
 	nodeFactory.Start(stopCtx.Done())
 	eventFactory.Start(stopCtx.Done())
 

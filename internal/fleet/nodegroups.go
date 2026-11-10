@@ -268,17 +268,18 @@ func (f *Fetcher) fetchAMIs(ctx context.Context, c *awsx.Clients, nodegroups []N
 		if len(n.AutoScalingGroups) > 0 {
 			members = groups[n.AutoScalingGroups[0]]
 		}
-		// The read of the group and of its instances, as one error. A
-		// group with no instance had nothing to read in the second call.
-		var fromGroupErr error
+		// The read of the group, and the read of the group and of its
+		// instances as one error. A group with no instance had nothing to
+		// read in the second call.
+		var groupErr, fromGroupErr error
 		switch {
 		case len(n.AutoScalingGroups) == 0:
 		case groupsErr != nil:
-			fromGroupErr = groupsErr
+			groupErr, fromGroupErr = groupsErr, groupsErr
 		case len(members) > 0 && (need.Instances || need.AMI):
 			fromGroupErr = instancesErr
 		}
-		failures = append(failures, n.fill(lookups[i], members, instances, groups, zones, fromGroupErr, need)...)
+		failures = append(failures, n.fill(lookups[i], members, instances, groups, zones, groupErr, fromGroupErr, need)...)
 	}
 	return failures
 }
@@ -304,15 +305,18 @@ func instancesToRead(nodegroups []Nodegroup, lookups []lookup, groups map[string
 }
 
 // fill sets the instances and the AMI group of n from what the calls
-// returned, and returns its failures. A failure of the AMI that repeats the
-// failure of the instance list is reported one time.
-func (n *Nodegroup) fill(l lookup, members []string, instances map[string]Instance, groups, zones map[string][]string, fromGroupErr error, need Need) []apidoc.Failure {
+// returned, and returns its failures. groupErr is the error of the group
+// call, which alone gives the instance IDs and the zones. fromGroupErr is
+// the error of the group call or of the instance call after it. A failure
+// of the AMI that repeats the failure of the instance list is reported one
+// time.
+func (n *Nodegroup) fill(l lookup, members []string, instances map[string]Instance, groups, zones map[string][]string, groupErr, fromGroupErr error, need Need) []apidoc.Failure {
 	var failures []apidoc.Failure
 	if need.InstanceIDs {
 		n.InstanceIDsState = Collected
-		if fromGroupErr != nil {
-			n.InstanceIDsState = stateOf(fromGroupErr)
-			failures = append(failures, FailureFromError(apidoc.FailureNodegroup, n.Name, fromGroupErr))
+		if groupErr != nil {
+			n.InstanceIDsState = stateOf(groupErr)
+			failures = append(failures, FailureFromError(apidoc.FailureNodegroup, n.Name, groupErr))
 		}
 		n.InstanceIDs = make([]string, 0, len(members))
 		for _, g := range n.AutoScalingGroups {

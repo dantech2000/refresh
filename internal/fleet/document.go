@@ -120,8 +120,9 @@ func AddonDoc(a Addon) apidoc.Addon {
 
 // NodegroupDoc returns the document form of a nodegroup of the snapshot.
 // One that was not described has its name and incomplete. A group that was
-// not read is left out: the AMI, the instances. A group whose read failed
-// also marks the nodegroup incomplete.
+// not read is left out: the AMI, the instances, the ready nodes, the
+// workloads, and the sizes when EKS did not return them. A group whose read
+// failed also marks the nodegroup incomplete.
 func (s *Snapshot) NodegroupDoc(n Nodegroup) apidoc.Nodegroup {
 	if n.State != Collected {
 		return apidoc.Nodegroup{Name: n.Name, Incomplete: true}
@@ -134,13 +135,15 @@ func (s *Snapshot) NodegroupDoc(n Nodegroup) apidoc.Nodegroup {
 		ReleaseVersion: n.ReleaseVersion,
 		CapacityType:   n.CapacityType,
 		InstanceTypes:  list(n.InstanceTypes),
-		Scaling:        &apidoc.Scaling{Desired: n.Desired, Min: n.Min, Max: n.Max},
 		HealthIssues:   make([]apidoc.Issue, len(n.HealthIssues)),
 		CreatedAt:      n.CreatedAt,
 		ModifiedAt:     n.ModifiedAt,
 	}
 	for i, issue := range n.HealthIssues {
 		doc.HealthIssues[i] = apidoc.Issue{Code: issue.Code, Message: issue.Message, ResourceIDs: list(issue.ResourceIDs)}
+	}
+	if n.SizesKnown {
+		doc.Scaling = &apidoc.Scaling{Desired: n.Desired, Min: n.Min, Max: n.Max}
 	}
 	if behind, known := s.VersionBehind(n); known {
 		doc.VersionBehind = &behind
@@ -164,7 +167,7 @@ func (s *Snapshot) NodegroupDoc(n Nodegroup) apidoc.Nodegroup {
 			}
 		}
 	}
-	doc.Incomplete = failed(n.AMI.State) || failed(n.InstancesState)
+	doc.Incomplete = failed(n.AMI.State) || failed(n.InstancesState) || failed(n.ReadyState) || failed(n.WorkloadsState)
 	return doc
 }
 

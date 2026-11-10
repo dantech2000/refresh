@@ -1,10 +1,6 @@
 package fleetdata
 
-import (
-	"strings"
-
-	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
-)
+import ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 
 // AMIParametersAsOf is the date of the last check of the SSM parameter
 // paths against AWS.
@@ -65,21 +61,20 @@ var amiSpecs = map[ekstypes.AMITypes]amiSpec{
 // AMIParameter returns the SSM parameter that holds the ID of the latest
 // recommended AMI for an AMI type and a Kubernetes version such as "1.33".
 // ok is false when there is none to look up: a CUSTOM type, whose AMI the
-// user manages, and a type that this table cannot place.
+// user manages, and a type that this table does not have.
 //
-// An AMI type that is newer than the table gets the base variant of its
-// family when its name says the family. Any other type has no parameter:
-// to compare a nodegroup with the AMI of another type would call a current
-// nodegroup stale.
+// A type that is newer than the table has no parameter, also in a family
+// that the table knows. The types that EKS added were new variants of a
+// family (NVIDIA, Neuron, FIPS), each with its own AMI. To compare a
+// nodegroup with the AMI of another variant would call a current nodegroup
+// stale on every run.
 func AMIParameter(version, amiType string) (path string, ok bool) {
 	if amiType == string(ekstypes.AMITypesCustom) || version == "" {
 		return "", false
 	}
 	spec, known := amiSpecs[ekstypes.AMITypes(amiType)]
 	if !known {
-		if spec, known = inferSpec(amiType); !known {
-			return "", false
-		}
+		return "", false
 	}
 	switch spec.family {
 	case amazonLinux:
@@ -92,6 +87,13 @@ func AMIParameter(version, amiType string) (path string, ok bool) {
 	return "", false
 }
 
+// KnownAMIType reports whether the table has the AMI type: whether
+// AMIParameter can place its recommended AMI. CUSTOM is not in the table.
+func KnownAMIType(amiType string) bool {
+	_, ok := amiSpecs[ekstypes.AMITypes(amiType)]
+	return ok
+}
+
 // AMITypes returns the AMI types that the table knows, for a check against
 // the types that EKS offers.
 func AMITypes() []string {
@@ -100,28 +102,4 @@ func AMITypes() []string {
 		out = append(out, string(t))
 	}
 	return out
-}
-
-// inferSpec guesses the place of an AMI type that the table does not have,
-// from its name.
-func inferSpec(amiType string) (amiSpec, bool) {
-	name := strings.ToUpper(amiType)
-	// EKS writes ARM_64; some older names have ARM64.
-	arm := strings.Contains(name, "ARM")
-	arch := "x86_64"
-	if arm {
-		arch = "arm64"
-	}
-	switch {
-	case strings.Contains(name, "AL2023"):
-		return amiSpec{family: amazonLinux, variant: "amazon-linux-2023/" + arch + "/standard"}, true
-	case strings.Contains(name, "BOTTLEROCKET"):
-		return amiSpec{family: bottlerocket, arch: arch}, true
-	case strings.Contains(name, "AL2"):
-		if arm {
-			return amiSpec{family: amazonLinux, variant: "amazon-linux-2-arm64"}, true
-		}
-		return amiSpec{family: amazonLinux, variant: "amazon-linux-2"}, true
-	}
-	return amiSpec{}, false
 }

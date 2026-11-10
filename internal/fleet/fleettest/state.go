@@ -81,6 +81,9 @@ type Cluster struct {
 	SupportType string
 	// AutoMode reports EKS Auto Mode compute as enabled.
 	AutoMode bool
+	// ControlPlaneTier is the tier of controlPlaneScalingConfig, such as
+	// standard or tier-xl. "" reports no scaling config.
+	ControlPlaneTier string
 
 	VPCID                 string
 	SubnetIDs             []string

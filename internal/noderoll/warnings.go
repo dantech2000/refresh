@@ -81,7 +81,7 @@ func (o *Observer) fillWarnings(ctx context.Context, snap *Snapshot, names map[s
 // that cap. The pages are needed because one list with a limit returns
 // the events in key order, and so drops an arbitrary part of them.
 func (o *Observer) listWarningEvents(ctx context.Context) (events []corev1.Event, capped bool, err error) {
-	if o.inf != nil {
+	if o.inf != nil && o.inf.eventsWatch.ok() {
 		cached, err := o.inf.events.List(labels.Everything())
 		if err != nil {
 			return nil, false, err

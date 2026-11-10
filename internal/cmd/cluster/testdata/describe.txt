@@ -42,7 +42,7 @@ HEALTH  9
   NAME           OUTCOME    MESSAGE
   Nodes          [OK] Pass  6/6 nodes ready (estimated)
   Capacity       Skipped    no managed nodegroup instances
-  ControlPlane   [OK] Pass  etcd 12% of 8 GiB
+  ControlPlane   [OK] Pass  etcd 13% of 8 GB
   Workloads      Skipped    pass --check-readiness to run the Kubernetes checks
   DrainBlockers  Skipped    pass --check-readiness to run the Kubernetes checks
   PDBCoverage    Skipped    pass --check-readiness to run the Kubernetes checks

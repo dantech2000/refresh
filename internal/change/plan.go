@@ -200,6 +200,7 @@ const (
 	AlreadyAtTarget = apidoc.ReasonAlreadyAtTarget
 	NewerThanLatest = apidoc.ReasonNewerThanLatest
 	CustomAMI       = apidoc.ReasonCustomAMI
+	AMITypeUnknown  = apidoc.ReasonAMITypeUnknown
 	SkippedByFlag   = apidoc.ReasonSkippedByFlag
 	OutOfScope      = apidoc.ReasonOutOfScope
 	NoChange        = apidoc.ReasonNoChange

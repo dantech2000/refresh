@@ -166,11 +166,22 @@ minutes.
 
 | Case | Outcome |
 |---|---|
-| etcd database at 95 percent or more of 8 GiB | `Fail` |
+| etcd database at 95 percent or more of its limit | `Fail` |
 | etcd database at 80 percent or more | `Warn` |
 | 1,000 or more API requests, with 2 percent or more 5xx or 1 percent or more 429 | `Warn` |
 | The cluster emits no control-plane metrics | `Skipped` |
 | The read fails | `Unreadable`; the gate asks |
+
+The etcd limit depends on the mode of the control plane. It is 8 GB in
+Standard mode, and 16 GB on a tier of the
+[Provisioned Control Plane](https://docs.aws.amazon.com/eks/latest/userguide/eks-provisioned-control-plane.html)
+(XL, 2XL, 4XL, 8XL). The check reads the tier from `DescribeCluster`. If the
+tier is not known or the cluster could not be read, the check uses 8 GB
+and says so in its details.
+
+AWS does not say whether a GB is 10^9 or 2^30 bytes. The check uses 10^9
+bytes (8,000,000,000 and 16,000,000,000), the smaller limit, so that it
+blocks early rather than late.
 
 ## Workloads
 
@@ -259,13 +270,12 @@ when the sum passes the quota, because the result is then `Fail`. The details
 then give the sum as "at least".
 
 CloudWatch publishes the metric late. Right after a roll, its newest data
-point can still count a surge node that has stopped. So when the newest data
-point is more than two minutes old, the check also sums the instance list, in
-the same way, and uses the smaller of the two numbers. The metric only lags:
-it never counts fewer vCPUs than the instances that run. The list stops when
-its sum passes the metric, because the metric then decides. The details name
-the source that decided. If the instance list cannot be read, the metric
-decides, and the details say so.
+point can still count a surge node that has stopped. After an autoscaler or
+another roll started nodes, it can count too few. So when the newest data
+point is more than two minutes old, the check sums the instance list, in the
+same way, and uses that sum, whether it is above or below the metric. The
+details name the source that decided. If the instance list cannot be read,
+the metric decides, and the details say so.
 
 For a roll, EKS raises the Auto Scaling group of each nodegroup by the larger
 of two numbers: the number of its Availability Zones, and `maxUnavailable`. It
@@ -331,11 +341,28 @@ After a roll, the command verifies the result. `--skip-verify` leaves this out.
 |---|---|---|
 | `NodegroupActive` | A rolled nodegroup is not `ACTIVE` | The nodegroup could not be read |
 | `NodesReady` | A new node is not `Ready` after the wait | The node list fails |
-| `NewPendingPods` | A pod is `Pending` that was not `Pending` before the roll | The pod list fails |
+| `NewPendingPods` | A pod that was not `Pending` before the roll is `Pending` and stuck: the scheduler cannot place it, or a container cannot pull its image or read its configuration | The pod list fails |
 
 `NodesReady` waits for the new nodes: at most 2 minutes, and never past the
-time left of `--wait-timeout`. Without Kubernetes access, `NodesReady` and
-`NewPendingPods` are `Skipped`.
+time left of `--wait-timeout`.
+
+A `Pending` pod is stuck in two cases:
+
+- Its `PodScheduled` condition is `False` with the reason `Unschedulable`:
+  the scheduler tried and found no node for it.
+- A container or an init container is
+  [`Waiting`](https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/#container-state-waiting)
+  with the reason `ImagePullBackOff`, `ErrImagePull`, or
+  `CreateContainerConfigError`. These do not pass without a change, and a
+  bad AMI can cause them.
+
+Any other `Pending` pod is progressing. A pod that is bound to a node and
+pulls its images is also `Pending`
+([Pod phase](https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/#pod-phase)).
+Every pod that a roll moves goes through that state, so it is not an issue.
+
+Without Kubernetes access, `NodesReady` and `NewPendingPods` are
+`Skipped`.
 
 ```text
 VERIFICATION  3

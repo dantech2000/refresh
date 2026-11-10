@@ -100,8 +100,8 @@ func TestStartedAtCountsLaunchedNodesAsNew(t *testing.T) {
 
 // EKS names a node after its private IP, and EC2 can give the IP of a
 // terminated node to a new one. A new node that takes the name of an old
-// one between two snapshots is new, and the tracker sees the old node go
-// and the new one join.
+// one between two snapshots is new, and the tracker sees the old node go,
+// then the new one join.
 func TestReusedNodeNameIsANewNode(t *testing.T) {
 	const name = "ip-10-0-1-23.ec2.internal"
 	start := time.Date(2026, 9, 30, 12, 27, 23, 0, time.UTC)
@@ -127,7 +127,7 @@ func TestReusedNodeNameIsANewNode(t *testing.T) {
 		t.Errorf("the new node with the old name counts as old: %+v", snap.Nodes)
 	}
 	tr.Observe(snap)
-	want := []Event{{Node: name, Kind: EvtJoining}, {Node: name, Kind: EvtTerminated}}
+	want := []Event{{Node: name, Kind: EvtTerminated}, {Node: name, Kind: EvtJoining}}
 	if diff := cmp.Diff(want, tr.Recent(0)); diff != "" {
 		t.Errorf("events (-want +got):\n%s", diff)
 	}

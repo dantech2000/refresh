@@ -122,6 +122,11 @@ here. `cluster upgrade` does that.
   anyway.
 - A nodegroup with a custom AMI is never rolled. Publish a new launch template
   version for it.
+- A nodegroup whose AMI type this version of `refresh` does not know, such as
+  a type that EKS added later, is not rolled. Its step is skipped with the
+  reason `AMITypeUnknown`, and a notice names the AMI type. Upgrade `refresh`
+  to roll it. A nodegroup for which EKS returned no AMI type is skipped the
+  same way.
 
 ### What a run does
 
@@ -135,7 +140,8 @@ here. `cluster upgrade` does that.
 4. It asks once. `--yes` skips the question.
 5. It starts every roll and waits for all of them.
 6. It verifies: the nodegroups are `ACTIVE`, the new nodes are `Ready`, and no
-   pod is newly `Pending`.
+   new pod is stuck `Pending`: unschedulable, or unable to pull its image or
+   read its configuration.
 
 ```bash
 refresh nodegroup update -c dev-orders-32 --yes

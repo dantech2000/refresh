@@ -58,8 +58,8 @@ func run(ctx context.Context, args []string, streams *cmdutil.IOStreams) int {
 // only at the debug level (--log-level debug, --verbose).
 //
 // slog and klog have one logger each for the process. This is the only
-// place that sets them, and execute puts the defaults back when the
-// command has ended.
+// place that sets them. execute puts the slog default back when the command
+// has ended, and leaves klog routed: see execute.
 func routeLogs(errOut io.Writer) func(slog.Level) {
 	return func(level slog.Level) {
 		slog.SetDefault(slog.New(slog.NewTextHandler(errOut, &slog.HandlerOptions{Level: level})))
@@ -77,8 +77,13 @@ func execute(ctx context.Context, args []string, f *cmdutil.Factory) int {
 	cmd := root.NewCmdRoot(f)
 	cmd.SetArgs(args)
 	if f.RouteLogs != nil {
-		// The command has ended, and so has everything that logs.
-		defer klog.ClearLogger()
+		// klog keeps its logger in globals that it reads with no lock, and
+		// the watch goroutine of a client-go informer can outlive the
+		// command: it ends after the informer has stopped, with nothing to
+		// wait for. Putting klog's default back here would race with it
+		// (the race detector found this in the parity suite), so klog stays
+		// routed until the process exits. A test that routes it clears it.
+		//
 		// A slog default with a handler of its own also takes over the
 		// output of the log package, so both are put back.
 		logger, out, flags := slog.Default(), log.Writer(), log.Flags()
