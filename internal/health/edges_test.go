@@ -121,10 +121,6 @@ func TestDrainBlockers_AgreeWithTheDrain(t *testing.T) {
 	tests := []struct {
 		name  string
 		edits []edit
-		// productBug, when set, names a known bug of the gate: the case
-		// is skipped while the two disagree, and fails once they agree,
-		// so the field goes with the fix.
-		productBug string
 	}{
 		{name: "room everywhere"},
 		{name: "a tight budget on the target", edits: []edit{tight("web")}},
@@ -134,12 +130,22 @@ func TestDrainBlockers_AgreeWithTheDrain(t *testing.T) {
 		}}},
 		// The status is of an older generation and still allows one
 		// disruption. The eviction API refuses every pod of the budget
-		// (ObservedGeneration < Generation answers 429), and the gate
-		// passes it: atRisk checks allowed, not unsynced.
-		{name: "an unsynced budget that allowed a disruption", edits: []edit{func(_ *fleettest.State, c *fleettest.Cluster) { c.PDBs[0].Unsynced = true }},
-			productBug: "DrainBlockers passes a budget whose status is not synced when the old status allowed a disruption"},
+		// (ObservedGeneration < Generation answers 429).
+		{name: "an unsynced budget that allowed a disruption", edits: []edit{func(_ *fleettest.State, c *fleettest.Cluster) { c.PDBs[0].Unsynced = true }}},
+		{name: "an unsynced budget elsewhere", edits: []edit{func(_ *fleettest.State, c *fleettest.Cluster) { c.PDBs[1].Unsynced = true }}},
+		// More than 2000 unconfirmed evictions answer 403.
+		{name: "too many unconfirmed evictions", edits: []edit{func(_ *fleettest.State, c *fleettest.Cluster) { c.PDBs[0].DisruptedPods = 2001 }}},
+		{name: "2000 unconfirmed evictions", edits: []edit{func(_ *fleettest.State, c *fleettest.Cluster) { c.PDBs[0].DisruptedPods = 2000 }}},
+		{name: "a negative count", edits: []edit{func(_ *fleettest.State, c *fleettest.Cluster) { c.PDBs[0].DisruptionsAllowed = -1 }}},
+		// The API reads disruptionsAllowed, not expectedPods.
+		{name: "a synced budget that counts no pod", edits: []edit{func(_ *fleettest.State, c *fleettest.Cluster) {
+			c.PDBs[0].DisruptionsAllowed, c.PDBs[0].ExpectedPods = 0, 0
+		}}},
 		{name: "a sync-failed budget", edits: []edit{func(_ *fleettest.State, c *fleettest.Cluster) {
 			c.PDBs[0].SyncFailed, c.PDBs[0].DisruptionsAllowed = true, 0
+		}}},
+		{name: "a sync-failed budget that counts a disruption", edits: []edit{func(_ *fleettest.State, c *fleettest.Cluster) {
+			c.PDBs[0].SyncFailed, c.PDBs[0].DisruptionsAllowed = true, 1
 		}}},
 		{name: "a pod covered by two budgets", edits: []edit{func(_ *fleettest.State, c *fleettest.Cluster) {
 			c.PDBs = append(c.PDBs, fleettest.PDB{Namespace: "default", Name: "web-too", Selector: map[string]string{"app": "web"}, MinAvailable: 1, DisruptionsAllowed: 1, CurrentHealthy: 2, DesiredHealthy: 1, ExpectedPods: 2})
@@ -172,13 +178,8 @@ func TestDrainBlockers_AgreeWithTheDrain(t *testing.T) {
 			h.world.View(func(s *fleettest.State) { ended = *s.Cluster(east, "prod").Update(u.ID) })
 			drainFailed := ended.Status == fleettest.UpdateFailed && len(ended.Errors) == 1 && ended.Errors[0].Code == "PodEvictionFailure"
 			blocked := gate.Outcome == health.Fail
-			switch {
-			case blocked != drainFailed && tt.productBug != "":
-				t.Skipf("known product bug: %s", tt.productBug)
-			case blocked != drainFailed:
+			if blocked != drainFailed {
 				t.Errorf("gate %s (%s), and the roll without force ended %s %+v", gate.Outcome, gate.Message, ended.Status, ended.Errors)
-			case tt.productBug != "":
-				t.Errorf("the gate and the drain agree now; remove productBug %q", tt.productBug)
 			}
 		})
 	}
