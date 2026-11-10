@@ -132,6 +132,10 @@ func allSteps(clusters []ClusterResult) []StepResult {
 // has one.
 func (r *runner) runPhase(cp *ClusterPlan, ph Phase) []StepResult {
 	if ph.Batch {
+		// The batch is one step of the run: it starts with no state of the
+		// step before it. The roll of an engine nodegroup step is a batch
+		// too, inside its step, and keeps the state of that step.
+		r.step = stepRun{}
 		return r.runBatch(cp, ph)
 	}
 	results := make([]StepResult, 0, len(ph.Steps))

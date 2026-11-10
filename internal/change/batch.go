@@ -32,9 +32,6 @@ import (
 // budget starts at the first accepted submit, and bounds the wait and the
 // verification.
 func (r *runner) runBatch(cp *ClusterPlan, ph Phase) []StepResult {
-	// The batch is one step of the run: it starts with no state of the
-	// step before it.
-	r.step = stepRun{}
 	results := make([]StepResult, len(ph.Steps))
 	report := func(i int) {
 		r.emit(Event{Kind: StepChanged, Phase: ph.Ref, Step: ph.Steps[i].Ref, Result: &results[i]})
