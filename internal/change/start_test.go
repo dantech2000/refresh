@@ -100,7 +100,11 @@ func TestStart(t *testing.T) {
 		if diff := cmp.Diff(steps(plan), steps(v.Plan)); diff != "" {
 			t.Errorf("the plan of the first view (-reviewed +shown):\n%s", diff)
 		}
-		if res := h.Result(); res.Status != Succeeded {
+		res := h.View().Result
+		if res == nil {
+			t.Fatal("the run ended with no result")
+		}
+		if res.Status != Succeeded {
 			t.Errorf("result = %s, %v; want Succeeded with the reviewed plan", res.Status, res.Err)
 		}
 	})
