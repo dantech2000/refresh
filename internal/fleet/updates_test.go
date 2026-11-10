@@ -158,7 +158,10 @@ func TestFetch_Updates(t *testing.T) {
 		})
 	}
 	// The caller's context ends while the second update is described:
-	// the read stops, and nothing more is described.
+	// the read stops, and nothing more is described. That describe fails
+	// with the error of the context, or, when its answer was read before
+	// the client saw the end, it succeeds and the third update is not
+	// attempted. Either way nothing is collected.
 	t.Run("the context ends", func(t *testing.T) {
 		world, srv, c := updatesWorld(t)
 		ctx, cancel := context.WithCancel(testContext(t))
@@ -180,8 +183,10 @@ func TestFetch_Updates(t *testing.T) {
 		if describes != 2 {
 			t.Errorf("%d updates described, want 2: none starts after the context ended", describes)
 		}
-		if snap.Have.Updates == fleet.Collected || !errors.Is(snap.UpdatesErr, context.Canceled) || len(snap.Updates) != 0 {
-			t.Errorf("updates %s, %v, %v; want not Collected, with the error of the context", snap.Have.Updates, snap.UpdatesErr, snap.Updates)
+		failed := snap.Have.Updates == fleet.Failed && errors.Is(snap.UpdatesErr, context.Canceled)
+		notAttempted := snap.Have.Updates == fleet.NotAttempted && snap.UpdatesErr == nil
+		if !(failed || notAttempted) || len(snap.Updates) != 0 {
+			t.Errorf("updates %s, %v, %v; want Failed with the error of the context, or NotAttempted, and none collected", snap.Have.Updates, snap.UpdatesErr, snap.Updates)
 		}
 	})
 }
