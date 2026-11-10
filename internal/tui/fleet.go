@@ -171,7 +171,7 @@ func (m Model) fleetCell(column string, c state.Cluster) Line {
 			return append(l, sp(1), statusSeg(view.Fail, "ext"))
 		case c.Support == apidoc.SupportUnsupported:
 			return append(l, sp(1), statusSeg(view.Fail, "eol"))
-		case slices.ContainsFunc(c.InFlight, func(s string) bool { return strings.HasPrefix(s, "control plane") }):
+		case c.ChangingKind(apidoc.StepControlPlane):
 			return append(l, sp(1), m.mark(view.Progress))
 		}
 		return l
@@ -181,7 +181,7 @@ func (m Model) fleetCell(column string, c state.Cluster) Line {
 		}
 		l := Line{tx(strconv.Itoa(len(c.Snapshot.Nodegroups))), sp(1)}
 		switch {
-		case slices.ContainsFunc(c.InFlight, func(s string) bool { return strings.HasPrefix(s, "nodegroup ") }):
+		case c.ChangingKind(apidoc.StepNodegroup):
 			return append(l, m.mark(view.Progress))
 		case c.Stale.AMIs+c.Stale.Behind > 0:
 			return append(l, m.tok(view.Warn, fmt.Sprintf("%d stale", c.Stale.AMIs+c.Stale.Behind)))
@@ -194,7 +194,7 @@ func (m Model) fleetCell(column string, c state.Cluster) Line {
 		switch {
 		case c.Snapshot == nil:
 			return Line{dim("?")}
-		case slices.ContainsFunc(c.InFlight, func(s string) bool { return strings.HasPrefix(s, "add-on ") }):
+		case c.ChangingKind(apidoc.StepAddon):
 			return Line{m.tok(view.Progress, "updating")}
 		case c.Stale.Addons > 0:
 			return Line{m.tok(view.Warn, fmt.Sprintf("%d stale", c.Stale.Addons))}
@@ -218,7 +218,7 @@ func statusText(c state.Cluster) string {
 			return "issues"
 		}
 	case view.Progress:
-		return c.InFlight[0]
+		return c.InFlight[0].String()
 	case view.Warn:
 		return "needs attention"
 	case view.Unknown:
@@ -293,7 +293,7 @@ func (m Model) clusterCard(w int) Block {
 		body = append(body, Line{sub(padRight(it.name, nameW) + "  "), m.tok(view.Warn, it.what)}.Fit(w-4))
 	}
 	for _, f := range c.InFlight {
-		body = append(body, Line{m.tok(view.Progress, f)})
+		body = append(body, Line{m.tok(view.Progress, f.String())})
 	}
 	body = append(body, Line{chip("r"), sp(1), sub("readiness"), sp(2), chip("enter"), sp(1), sub("open the cluster")})
 	return box(Line{bold(view.RoleAccent, c.Name)}, body, w, m.bd)

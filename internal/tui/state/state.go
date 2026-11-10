@@ -5,6 +5,7 @@
 package state
 
 import (
+	"slices"
 	"time"
 
 	"github.com/dantech2000/refresh/internal/apidoc"
@@ -61,9 +62,9 @@ type Cluster struct {
 	Version  fleet.Version
 	Support  apidoc.SupportTier
 	Stale    Stale
-	// InFlight names the resources that the snapshot shows changing, such
-	// as "nodegroup ng-a", sorted.
-	InFlight   []string
+	// InFlight are the resources that the snapshot shows changing, sorted
+	// by their text.
+	InFlight   []InFlight
 	Incomplete bool
 	// Readiness is the last readiness run of the cluster, or nil.
 	Readiness *Readiness
@@ -89,6 +90,34 @@ type Stale struct {
 // Changing reports whether the snapshot shows something of the cluster in
 // flight.
 func (c Cluster) Changing() bool { return len(c.InFlight) > 0 }
+
+// ChangingKind reports whether the snapshot shows a resource of kind k in
+// flight.
+func (c Cluster) ChangingKind(k apidoc.StepKind) bool {
+	return slices.ContainsFunc(c.InFlight, func(f InFlight) bool { return f.Kind == k })
+}
+
+// InFlight is one resource that the snapshot shows changing.
+type InFlight struct {
+	// Kind is apidoc.StepControlPlane, StepNodegroup, or StepAddon.
+	Kind apidoc.StepKind
+	// Name is the nodegroup or the add-on; empty for the control plane.
+	Name string
+	// Status is the status that EKS reports, such as UPDATING.
+	Status string
+}
+
+// String names the resource and its status, such as
+// "nodegroup ng-a UPDATING".
+func (f InFlight) String() string {
+	switch f.Kind {
+	case apidoc.StepControlPlane:
+		return "control plane " + f.Status
+	case apidoc.StepAddon:
+		return "add-on " + f.Name + " " + f.Status
+	}
+	return "nodegroup " + f.Name + " " + f.Status
+}
 
 // Readiness is one readiness run of a cluster.
 type Readiness struct {

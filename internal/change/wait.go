@@ -13,6 +13,7 @@ import (
 
 	"github.com/dantech2000/refresh/internal/awsx"
 	"github.com/dantech2000/refresh/internal/fanout"
+	"github.com/dantech2000/refresh/internal/fleet"
 )
 
 // DefaultPollInterval is the pause between two polls when the caller
@@ -150,7 +151,15 @@ type UpdateError struct {
 }
 
 func (e *UpdateError) Error() string {
-	msg := fmt.Sprintf("update %s of %s ended %s", e.UpdateID, e.Resource, e.Status)
+	return fmt.Sprintf("update %s of %s %s", e.UpdateID, e.Resource, e.Outcome())
+}
+
+// Outcome says how the update ended, with the errors that EKS reports,
+// such as "ended Failed: PodEvictionFailure: ...". It is the Error text
+// without the update and the resource, for a caller that names them in
+// its own words.
+func (e *UpdateError) Outcome() string {
+	msg := "ended " + e.Status
 	parts := make([]string, 0, len(e.Issues))
 	for _, issue := range e.Issues {
 		part := issue.Code
@@ -417,9 +426,8 @@ type Settled struct {
 	// Sizes are the scaling sizes of a nodegroup, each one as EKS returned
 	// it.
 	Sizes Sizes
-	// Issues are the codes and messages of the health issues that EKS
-	// reports for the resource.
-	Issues []string
+	// Issues are the health issues that EKS reports for an add-on.
+	Issues []fleet.Issue
 }
 
 // WaitSettled polls the resource until done reports true, and returns the
@@ -484,7 +492,7 @@ func describe(ctx context.Context, c *awsx.Clients, r Resource) (Settled, error)
 		s := Settled{Status: string(out.Addon.Status), Version: aws.ToString(out.Addon.AddonVersion)}
 		if out.Addon.Health != nil {
 			for _, issue := range out.Addon.Health.Issues {
-				s.Issues = append(s.Issues, string(issue.Code)+": "+aws.ToString(issue.Message))
+				s.Issues = append(s.Issues, fleet.Issue{Code: string(issue.Code), Message: aws.ToString(issue.Message), ResourceIDs: issue.ResourceIds})
 			}
 		}
 		return s, nil

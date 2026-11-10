@@ -265,7 +265,7 @@ func stale(c state.Cluster) state.Cluster {
 // changing makes a row show a nodegroup in flight.
 func changing(c state.Cluster) state.Cluster {
 	c.Snapshot.Nodegroups[1].Status = "UPDATING"
-	c.InFlight = []string{"nodegroup web UPDATING"}
+	c.InFlight = []state.InFlight{{Kind: apidoc.StepNodegroup, Name: "web", Status: "UPDATING"}}
 	c.Status = view.Progress
 	return c
 }
@@ -293,7 +293,10 @@ func extended(c state.Cluster) state.Cluster {
 func report() *health.ReadinessReport {
 	return &health.ReadinessReport{
 		Readiness: apidoc.ReadinessReview,
-		Reasons:   []string{"Insights: 1 insight warns about 1.34 (DEPRECATED_APIS)", "VersionSkew: nodegroup web is 1 minor behind"},
+		Reasons: []health.Reason{
+			{Check: "Insights", Outcome: health.Warn, Message: "1 insight warns about 1.34 (DEPRECATED_APIS)"},
+			{Check: "VersionSkew", Outcome: health.Warn, Message: "nodegroup web is 1 minor behind"},
+		},
 		Checks: []health.Result{
 			{Name: "Insights", Outcome: health.Warn, Blocking: true, Message: "1 insight warns about 1.34", Details: []string{"DEPRECATED_APIS: 3 clients use apps/v1beta1"}, Findings: []string{"DEPRECATED_APIS"}},
 			{Name: "VersionSkew", Outcome: health.Pass, Blocking: true, Message: "every nodegroup is within 3 minors of the control plane"},

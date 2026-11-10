@@ -112,7 +112,11 @@ func (m Model) busyReason() string {
 	case c.Change != 0:
 		return c.Name + " has a change in this UI; press 3 to watch it"
 	case c.Changing():
-		return c.Name + " is changing (" + strings.Join(c.InFlight, ", ") + "); wait for it"
+		inFlight := make([]string, len(c.InFlight))
+		for i, f := range c.InFlight {
+			inFlight[i] = f.String()
+		}
+		return c.Name + " is changing (" + strings.Join(inFlight, ", ") + "); wait for it"
 	}
 	return ""
 }
