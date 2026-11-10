@@ -187,7 +187,12 @@ func (r *runner) guardControlPlane(cp *ClusterPlan, res StepResult, s Step, snap
 //  3. Its version, or the version of the step, does not parse: Blocked.
 //     It is neither at the goal nor behind it.
 //  4. Its version meets the phase now: Skipped.
-//  5. The request would go the wrong way: Blocked. A rollback never sends
+//  5. An upgrade, and the control plane does not run the version of the
+//     hop of the step: Blocked. The version of the step was chosen from
+//     the catalogue of that hop. A plan with --only addons has no
+//     control-plane step, and its plan read the control plane some time
+//     ago. A rollback judges its target in guardRollback.
+//  6. The request would go the wrong way: Blocked. A rollback never sends
 //     a version above the live one, and an upgrade never one below it.
 //     Someone moved the add-on since the plan.
 func (r *runner) guardAddon(cp *ClusterPlan, res StepResult, s Step, snap *fleet.Snapshot) (StepResult, bool) {
@@ -212,6 +217,11 @@ func (r *runner) guardAddon(cp *ClusterPlan, res StepResult, s Step, snap *fleet
 		r.notice(fmt.Sprintf("add-on %s is at %s now; nothing was sent", name, a.Version))
 		res.Status = StepSkipped
 		return res, false
+	case r.req.kind() == ClusterUpgrade && !s.Ref.Phase.Hop.IsZero() && snap.Cluster.Version.Compare(s.Ref.Phase.Hop) != 0:
+		hop := s.Ref.Phase.Hop.String()
+		return r.blockStep(cp, res, StepBlocked, apidoc.ReasonUnknown, fmt.Sprintf(
+			"the control plane of %s runs %s, and add-on %s would move to %s, a version for Kubernetes %s: the control plane must be at %s; it was not changed",
+			cp.Cluster, orUnknown(snap.Cluster.Version.String()), name, s.To, hop, hop)), false
 	case !addonDirection(r.req.kind(), a.Version, s.To):
 		return r.blockStep(cp, res, StepBlocked, apidoc.ReasonUnknown, wrongAddonDirection(r.req.kind(), name, a.Version, s.To)), false
 	}
