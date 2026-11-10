@@ -97,14 +97,7 @@ func pacedRig(t *testing.T, world *fleettest.World, withKube bool, p *pacer, edi
 			t.Fatal(err)
 		}
 		t.Setenv("KUBECONFIG", path)
-		cfg := srv.Config()
-		if p != nil {
-			// The paced observer lists on each snapshot, as fast as
-			// the server answers: the default client-side limit of
-			// client-go would wait on the real clock.
-			cfg.QPS = -1
-		}
-		client, err := kubernetes.NewForConfig(cfg)
+		client, err := kubernetes.NewForConfig(srv.Config())
 		if err != nil {
 			t.Fatal(err)
 		}

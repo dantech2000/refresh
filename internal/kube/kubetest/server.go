@@ -214,9 +214,12 @@ func (s *Server) Close() {
 	s.http.Close()
 }
 
-// Config returns a client-go config that reaches the server.
+// Config returns a client-go config that reaches the server. It has no
+// client-side rate limit: the default of client-go (5 requests a second)
+// would make a test wait on the real clock, and the product sets its own
+// limit in kube.
 func (s *Server) Config() *rest.Config {
-	return &rest.Config{Host: s.URL}
+	return &rest.Config{Host: s.URL, QPS: -1}
 }
 
 // WriteKubeconfig writes a kubeconfig file with one context, named after

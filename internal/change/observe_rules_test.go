@@ -23,12 +23,7 @@ func listingObserver(t *testing.T) (*env, *kubetest.Server, RollRequest) {
 	t.Helper()
 	e := newEnv(t, rollWorld(neverEnds))
 	srv := e.withKube(t)
-	// The snapshots come as fast as the server answers, faster than the
-	// default client-side limit of client-go, which would wait on the
-	// real clock.
-	cfg := srv.Config()
-	cfg.QPS = -1
-	client, err := kubernetes.NewForConfig(cfg)
+	client, err := kubernetes.NewForConfig(srv.Config())
 	if err != nil {
 		t.Fatal(err)
 	}
