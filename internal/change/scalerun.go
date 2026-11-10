@@ -53,7 +53,7 @@ func (r *runner) runScaleStep(cp *ClusterPlan, s Step) StepResult {
 	id, err := submitScale(r.readCtx, clients, resource, req)
 	switch {
 	case err != nil:
-		return r.unsent(cp, res, err)
+		return r.unanswered(cp, res, err)
 	case id == "":
 		res.Status = StepInProgress
 		res.Failure = r.stepFailure(cp, res, apidoc.ReasonNotMonitored, "EKS accepted the scale of nodegroup "+s.Ref.Name+" and returned no update ID; it cannot be followed, and it may still be running")

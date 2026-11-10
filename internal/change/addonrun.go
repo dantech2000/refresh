@@ -54,7 +54,7 @@ func (r *runner) runAddonStep(cp *ClusterPlan, s Step) StepResult {
 		id, err := submitAddon(r.readCtx, clients, resource, s.To)
 		switch {
 		case err != nil:
-			return r.unsent(cp, res, err)
+			return r.unanswered(cp, res, err)
 		case id == "":
 			res.Status = StepInProgress
 			res.Failure = r.stepFailure(cp, res, apidoc.ReasonNotMonitored, "EKS accepted the update of add-on "+s.Ref.Name+" and returned no update ID; it cannot be followed, and it may still be running")
@@ -222,17 +222,32 @@ func (r *runner) stepFailure(cp *ClusterPlan, res StepResult, reason apidoc.Reas
 	return &f
 }
 
-// unsent returns the result of a step whose fresh read or request failed.
-// A request that never left, because the run ended first, leaves the step
+// unsent returns the result of a step whose read before its request
+// failed, or that the run ended before its request. Nothing was sent for
+// the step, so a run that ended leaves it NotAttempted, also after the
+// step waited for an update that someone else started: that update is
+// not a request of this run. See unanswered for a request that failed.
+func (r *runner) unsent(cp *ClusterPlan, res StepResult, err error) StepResult {
+	return r.notSent(cp, res, err, false)
+}
+
+// unanswered returns the result of a step whose request failed. A
+// request that never left, because the run ended first, leaves the step
 // NotAttempted. A request that left and got no answer may have started
 // the update, so the step is InProgress.
-func (r *runner) unsent(cp *ClusterPlan, res StepResult, err error) StepResult {
+func (r *runner) unanswered(cp *ClusterPlan, res StepResult, err error) StepResult {
+	return r.notSent(cp, res, err, true)
+}
+
+// notSent is unsent and unanswered. requested says that err is the error
+// of the request of the step.
+func (r *runner) notSent(cp *ClusterPlan, res StepResult, err error, requested bool) StepResult {
 	f := fleet.FailureFromError(resourceKind(res.Ref), res.Ref.Name, err)
 	f.Cluster, f.Region = cp.Cluster, cp.Region
 	ended := r.readCtx.Err() != nil
 	verb, done := changeVerb(res.Ref)
 	switch {
-	case ended && (errors.Is(err, awsx.ErrNotSent) || res.StartedAt.IsZero()):
+	case ended && (!requested || errors.Is(err, awsx.ErrNotSent)):
 		res.Status = StepNotAttempted
 		if timedOut(r.readCtx) {
 			f.Reason, f.Retryable = apidoc.ReasonTimeout, true
