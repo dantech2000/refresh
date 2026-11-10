@@ -6,6 +6,8 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/fake"
 )
 
@@ -93,6 +95,41 @@ func TestStartedAtCountsLaunchedNodesAsNew(t *testing.T) {
 	snap := snapshot(t, obs)
 	if !nodeOf(snap, "launched").OnTarget || nodeOf(snap, "old-1").OnTarget || nodeOf(snap, "old-2").OnTarget {
 		t.Fatalf("nodes = %+v, want only launched new", snap.Nodes)
+	}
+}
+
+// EKS names a node after its private IP, and EC2 can give the IP of a
+// terminated node to a new one. A new node that takes the name of an old
+// one between two snapshots is new, and the tracker sees the old node go
+// and the new one join.
+func TestReusedNodeNameIsANewNode(t *testing.T) {
+	const name = "ip-10-0-1-23.ec2.internal"
+	start := time.Date(2026, 9, 30, 12, 27, 23, 0, time.UTC)
+	node := func(uid string, ready bool, created time.Time) *corev1.Node {
+		n := mkNode(name, "", ready, false)
+		n.UID = types.UID(uid)
+		n.CreationTimestamp = metav1.NewTime(created)
+		return n
+	}
+	client := fake.NewClientset(node("uid-old", true, start.Add(-time.Hour)))
+	obs := listing(t, client, Identity{}, newClock())
+	tr := NewTracker()
+	snap := snapshot(t, obs)
+	if nodeOf(snap, name).OnTarget {
+		t.Fatalf("the node that is there as Attach lists counts as new: %+v", snap.Nodes)
+	}
+	tr.Observe(snap)
+
+	deleteNode(t, client, name)
+	createNode(t, client, node("uid-new", false, start.Add(time.Minute)))
+	snap = snapshot(t, obs)
+	if !nodeOf(snap, name).OnTarget {
+		t.Errorf("the new node with the old name counts as old: %+v", snap.Nodes)
+	}
+	tr.Observe(snap)
+	want := []Event{{Node: name, Kind: EvtJoining}, {Node: name, Kind: EvtTerminated}}
+	if diff := cmp.Diff(want, tr.Recent(0)); diff != "" {
+		t.Errorf("events (-want +got):\n%s", diff)
 	}
 }
 

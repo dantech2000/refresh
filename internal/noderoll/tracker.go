@@ -39,13 +39,30 @@ const trackerEventCapacity = 256
 // compares each snapshot with the one before. It reads nothing itself. It
 // keeps the last trackerEventCapacity events.
 type Tracker struct {
-	prev   map[string]Phase
+	// prev holds the nodes of the snapshot before, by identity: a node
+	// that takes the name of one that is gone is another node.
+	prev   map[string]tracked
 	seeded bool
 	events []Event
 }
 
+// tracked is one node of the snapshot before.
+type tracked struct {
+	name  string
+	phase Phase
+}
+
 // NewTracker returns a Tracker with no events.
-func NewTracker() *Tracker { return &Tracker{prev: map[string]Phase{}} }
+func NewTracker() *Tracker { return &Tracker{prev: map[string]tracked{}} }
+
+// trackKey is the identity of a node view: the key of the observer, or
+// the name for a view that has none.
+func trackKey(n NodeView) string {
+	if n.key != "" {
+		return n.key
+	}
+	return "name:" + n.Name
+}
 
 // Observe compares s with the snapshot before it and adds an event for
 // each difference. The first snapshot is the starting point and gives no
@@ -55,9 +72,9 @@ func (t *Tracker) Observe(s Snapshot) { t.ObserveAt(s, time.Time{}) }
 // ObserveAt is Observe with the time of the snapshot, which each event
 // that it adds carries.
 func (t *Tracker) ObserveAt(s Snapshot, at time.Time) {
-	cur := make(map[string]Phase, len(s.Nodes))
+	cur := make(map[string]tracked, len(s.Nodes))
 	for _, n := range s.Nodes {
-		cur[n.Name] = n.Phase
+		cur[trackKey(n)] = tracked{name: n.Name, phase: n.Phase}
 	}
 	if !t.seeded {
 		t.prev = cur
@@ -66,8 +83,8 @@ func (t *Tracker) ObserveAt(s Snapshot, at time.Time) {
 	}
 	// A node that appeared or changed its phase, in the order of s.Nodes.
 	for _, n := range s.Nodes {
-		old, existed := t.prev[n.Name]
-		if existed && old == n.Phase {
+		old, existed := t.prev[trackKey(n)]
+		if existed && old.phase == n.Phase {
 			continue
 		}
 		if k := eventForPhase(n.Phase); k != "" {
@@ -76,9 +93,9 @@ func (t *Tracker) ObserveAt(s Snapshot, at time.Time) {
 	}
 	// A node that is gone, by name: the order of a map is random.
 	var gone []string
-	for name := range t.prev {
-		if _, ok := cur[name]; !ok {
-			gone = append(gone, name)
+	for key, n := range t.prev {
+		if _, ok := cur[key]; !ok {
+			gone = append(gone, n.name)
 		}
 	}
 	slices.Sort(gone)
