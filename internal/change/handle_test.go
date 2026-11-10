@@ -22,6 +22,15 @@ type scripted struct {
 
 func newScripted() *scripted { return &scripted{ops: make(chan func(Hooks))} }
 
+// start is Start over any run: the tests of the state table script one
+// that calls the hooks in an order of their own, with no network.
+func start(kind Kind, target Target, now func() time.Time, checkpoints bool, run func(Hooks) (Result, error)) *Handle {
+	h := newHandle(kind, target, false, now)
+	h.checkpoints = checkpoints
+	go h.run(run)
+	return h
+}
+
 func (s *scripted) run(h Hooks) (Result, error) {
 	for op := range s.ops {
 		op(h)
