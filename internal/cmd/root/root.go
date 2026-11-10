@@ -63,16 +63,30 @@ skip the confirmation prompts.`,
 		// No Args: cobra's own check for a root with subcommands answers an
 		// unknown command with "Did you mean this?" suggestions, and an Args
 		// function here would replace it.
-		Version:       f.Build.Version,
+		//
+		// No Version either: cobra's default prints "refresh version X",
+		// not our three lines, and the only way to change that is
+		// SetVersionTemplate, which runs a text/template. A reachable
+		// text/template keeps every exported method in the binary (more
+		// than half its size). RunE prints --version.
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
+			// --version prints and stops before anything else, as it did
+			// when cobra printed it.
+			if versionFlag(cmd) {
+				return nil
+			}
 			if err := cmdutil.CheckClusterFlag(cmd); err != nil {
 				return err
 			}
 			return o.complete(cmd.Root().PersistentFlags(), f)
 		},
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if versionFlag(cmd) {
+				_, err := fmt.Fprint(f.IOStreams.Out, versioncmd.Format(f.Build))
+				return err
+			}
 			return cmd.Help()
 		},
 	}
@@ -102,7 +116,6 @@ skip the confirmation prompts.`,
 	// Defining the flag here keeps cobra from adding its own with the -v
 	// shorthand, which the CLI leaves unused.
 	cmd.Flags().Bool("version", false, "Print the version, the commit, and the build date")
-	cmd.SetVersionTemplate(versioncmd.Format(f.Build))
 
 	cmd.AddGroup(
 		&cobra.Group{ID: groupCore, Title: "Core Commands:"},
@@ -210,6 +223,13 @@ Exit codes:
 			fl.Usage = "Leave the description of each command and flag out of the completions"
 		}
 	}
+}
+
+// versionFlag reports whether --version is set. Only the root defines the
+// flag; on any other command it is false.
+func versionFlag(cmd *cobra.Command) bool {
+	v, err := cmd.Flags().GetBool("version")
+	return err == nil && v
 }
 
 // The groups of the root help.

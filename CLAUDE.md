@@ -35,6 +35,7 @@ task vet            # go vet ./...
 task vuln           # govulncheck ./...
 task deadcode       # fail on code that nothing reaches, tests included
 task tidy:check     # go mod tidy -diff
+task size:check     # build the release-style binary, fail above the limit in tools/sizecheck.sh
 task docs:check     # regenerate docs/reference and api/schema, fail if either changed
 task docs:build     # the published site: v2, v1, schemas, redirects (tools/mkdocs/build_site.py)
 task docs:build:current  # mkdocs build --strict, current docs only

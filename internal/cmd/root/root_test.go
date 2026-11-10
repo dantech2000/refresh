@@ -93,6 +93,61 @@ buildDate: "2026-01-02T03:04:05Z"
 	}
 }
 
+// TestVersionFlag checks that --version prints before the global flags and
+// their environment are checked, as cobra's own --version did, and that
+// the version is printed as it is, not run as a template.
+func TestVersionFlag(t *testing.T) {
+	tests := []struct {
+		name    string
+		env     map[string]string
+		args    []string
+		version string
+		want    string
+	}{
+		{
+			name: "bad environment",
+			env:  map[string]string{"REFRESH_TIMEOUT": "soon", "REFRESH_LOG_LEVEL": "loud"},
+			args: []string{"--version"},
+			want: "refresh version: v1.2.3\ncommit: abc1234\nbuilt: 2026-01-02T03:04:05Z\n",
+		},
+		{
+			name: "bad global flag",
+			args: []string{"--version", "--max-concurrency", "0"},
+			want: "refresh version: v1.2.3\ncommit: abc1234\nbuilt: 2026-01-02T03:04:05Z\n",
+		},
+		{
+			name:    "braces in the version",
+			args:    []string{"--version"},
+			version: "v1.2.3-{{.Name}}",
+			want:    "refresh version: v1.2.3-{{.Name}}\ncommit: abc1234\nbuilt: 2026-01-02T03:04:05Z\n",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			clearEnv(t)
+			for k, v := range tt.env {
+				t.Setenv(k, v)
+			}
+			f, _, out, errOut := cmdutiltest.NewFactory()
+			if tt.version != "" {
+				f.Build.Version = tt.version
+			}
+
+			err := execute(f, tt.args...)
+
+			if code := cmdutil.ExitCode(err); code != cmdutil.ExitOK {
+				t.Errorf("exit code = %d (error: %v), want 0", code, err)
+			}
+			if diff := cmp.Diff(tt.want, out.String()); diff != "" {
+				t.Errorf("stdout (-want +got):\n%s", diff)
+			}
+			if errOut.Len() != 0 {
+				t.Errorf("stderr = %q, want nothing", errOut.String())
+			}
+		})
+	}
+}
+
 // TestVersionPrintsOneDocument reads the machine output back with a decoder
 // and checks that stdout holds one document and nothing else.
 func TestVersionPrintsOneDocument(t *testing.T) {

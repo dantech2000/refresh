@@ -145,3 +145,30 @@ jobs:
             exit 1
           fi
           echo "No dead code."
+
+  size:
+    name: Binary size
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # No cache: this is the only non-race build in CI, and its objects
+      # must not go into a build cache that the race jobs restore.
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      # The same build and check as `task size:check`: the flags and
+      # ldflags of .goreleaser.yml. tools/sizecheck.sh explains the limit.
+      - name: Release-style binary is within the size limit
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          pkg=github.com/dantech2000/refresh/internal/build
+          go build -trimpath -ldflags="-s -w -X $pkg.version=$(git describe --tags --always --dirty) -X $pkg.commit=$(git rev-parse --short HEAD) -X $pkg.buildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o dist/refresh ./cmd/refresh
+          sh tools/sizecheck.sh dist/refresh
