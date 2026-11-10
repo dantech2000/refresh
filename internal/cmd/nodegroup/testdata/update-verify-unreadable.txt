@@ -17,7 +17,7 @@ RESULTS  1
 VERIFICATION  3
   NAME             OUTCOME         MESSAGE
   NodegroupActive  [OK] Pass       web ACTIVE
-  NodesReady       [?] Unreadable  the nodes could not be listed before the roll
+  NodesReady       [OK] Pass       2 new nodes ready
   NewPendingPods   [?] Unreadable  the Pending pods could not be listed before the roll
 
 NOTICES
@@ -33,5 +33,5 @@ warning: the health checks were skipped (--skip-health-check)
 web: InProgress
 [OK] web: Succeeded
   [OK] NodegroupActive  web ACTIVE
-  [?]  NodesReady       the nodes could not be listed before the roll
+  [OK] NodesReady       2 new nodes ready
   [?]  NewPendingPods   the Pending pods could not be listed before the roll

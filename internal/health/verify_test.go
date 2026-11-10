@@ -2,8 +2,14 @@ package health_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
+
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/kubernetes/fake"
 
 	"github.com/dantech2000/refresh/internal/fleet"
 	"github.com/dantech2000/refresh/internal/fleet/fleettest"
@@ -154,20 +160,6 @@ func TestVerify(t *testing.T) {
 			t.Errorf("exit = %d, want 4", code)
 		}
 	})
-	t.Run("the baseline could not be taken", func(t *testing.T) {
-		h := newHarness(t)
-		h.world.SetFault(fleettest.KubeListPods, fleettest.Fault{Deny: true})
-		base := health.TakeBaseline(ctx, h.client, "prod")
-		if base.Taken != true || len(base.Failures) != 1 {
-			t.Fatalf("baseline = %+v", base)
-		}
-		h.world.SetFault(fleettest.KubeListPods, fleettest.Fault{})
-		h.roll(fleettest.RollScript{})
-		h.world.Advance(rollDuration)
-		results := health.Run(ctx, health.Verify([]string{"ng-a"}, base, health.WaitOptions{}), h.input(ctx, "ng-a"))
-		check(t, results[1], want{outcome: health.Unreadable, message: "could not be listed before the roll", failures: 1})
-		check(t, results[2], want{outcome: health.Unreadable, failures: 1})
-	})
 	t.Run("the nodegroup cannot be read after the roll", func(t *testing.T) {
 		h := newHarness(t)
 		base := health.TakeBaseline(ctx, h.client, "prod")
@@ -196,6 +188,91 @@ func TestVerify(t *testing.T) {
 			t.Errorf("exit = %d, want 0", code)
 		}
 	})
+}
+
+// Each check of the verification needs its own list of the baseline:
+// the one whose list failed is Unreadable, with that failure once, and
+// the other still checks.
+func TestVerify_BaselineFails(t *testing.T) {
+	ctx := testContext(t)
+	baselineFails := []struct {
+		name        string
+		op          fleettest.Operation
+		nodesReady  want
+		pendingPods want
+		operation   string
+	}{
+		{
+			name: "the Pending pods could not be listed before the roll", op: fleettest.KubeListPods,
+			nodesReady:  want{outcome: health.Pass, message: "2 new nodes ready"},
+			pendingPods: want{outcome: health.Unreadable, message: "the Pending pods could not be listed before the roll", failures: 1},
+			operation:   "listing Pending pods before the roll",
+		},
+		{
+			name: "the nodes could not be listed before the roll", op: fleettest.KubeListNodes,
+			nodesReady:  want{outcome: health.Unreadable, message: "the nodes could not be listed before the roll", failures: 1},
+			pendingPods: want{outcome: health.Pass, message: "no new Pending pods"},
+			operation:   "listing nodes before the roll",
+		},
+	}
+	for _, tt := range baselineFails {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newHarness(t)
+			h.world.SetFault(tt.op, fleettest.Fault{Deny: true})
+			base := health.TakeBaseline(ctx, h.client, "prod")
+			if !base.Taken {
+				t.Fatalf("baseline = %+v", base)
+			}
+			h.world.SetFault(tt.op, fleettest.Fault{})
+			h.roll(fleettest.RollScript{})
+			h.world.Advance(rollDuration)
+			results := health.Run(ctx, health.Verify([]string{"ng-a"}, base, health.WaitOptions{}), h.input(ctx, "ng-a"))
+			check(t, results[1], tt.nodesReady)
+			check(t, results[2], tt.pendingPods)
+			failures := health.Failures(results)
+			if len(failures) != 1 || !strings.HasPrefix(failures[0].Error, tt.operation+": ") {
+				t.Fatalf("failures = %+v, want one, of %q", failures, tt.operation)
+			}
+			if code := health.VerifyExit(results); code != 4 {
+				t.Errorf("exit = %d, want 4", code)
+			}
+		})
+	}
+}
+
+// EKS names a node after its private IP, and EC2 can give the IP of a
+// terminated node to a new one. A new node that takes the name of an old
+// one is new: it is checked, and when it is not Ready the check fails.
+func TestVerify_ReusedNodeName(t *testing.T) {
+	ctx := testContext(t)
+	node := func(uid string, ready corev1.ConditionStatus) *corev1.Node {
+		return &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{Name: "ip-10-0-1-23.ec2.internal", UID: types.UID(uid), Labels: map[string]string{"eks.amazonaws.com/nodegroup": "ng-a"}},
+			Status:     corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: ready}}},
+		}
+	}
+	tests := []struct {
+		name  string
+		after *corev1.Node
+		want  want
+	}{
+		{name: "the old node is still there", after: node("uid-old", corev1.ConditionFalse), want: want{outcome: health.Pass, message: "0 new nodes ready"}},
+		{name: "a new node with the old name, Ready", after: node("uid-new", corev1.ConditionTrue), want: want{outcome: health.Pass, message: "1 new node ready"}},
+		{
+			name: "a new node with the old name, not Ready", after: node("uid-new", corev1.ConditionFalse),
+			want: want{outcome: health.Fail, message: "1 of 1 new node not ready after the roll", findings: []string{"ip-10-0-1-23.ec2.internal"}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			base := health.TakeBaseline(ctx, fake.NewClientset(node("uid-old", corev1.ConditionTrue)), "prod")
+			h := newHarness(t)
+			in := h.input(ctx, "ng-a")
+			in.Kube = fake.NewClientset(tt.after)
+			results := health.Run(ctx, health.Verify([]string{"ng-a"}, base, health.WaitOptions{}), in)
+			check(t, results[1], tt.want)
+		})
+	}
 }
 
 // A snapshot read through the fetcher after the roll sees the nodegroup

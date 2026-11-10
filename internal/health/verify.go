@@ -19,18 +19,32 @@ import (
 
 // Baseline is what verification compares against, taken before a roll.
 type Baseline struct {
-	// Nodes is the set of node names in the cluster.
+	// Nodes is the set of the nodes in the cluster, by identity (see
+	// nodeKey), not by name: EC2 can give the private IP of a terminated
+	// node to a new one, and the new node then has the old name.
 	Nodes map[string]struct{}
 	// Pending is the set of "namespace/name" of the Pending pods, less the
-	// pods pinned to a node that is not in Nodes: a DaemonSet pod made for
-	// a node that a roll just removed, which the garbage collector deletes.
+	// pods pinned to a node that is not in the cluster: a DaemonSet pod
+	// made for a node that a roll just removed, which the garbage
+	// collector deletes. When the nodes could not be listed, it holds
+	// every Pending pod.
 	Pending map[string]struct{}
-	// Failures are the lists that failed. The checks that need the
-	// baseline are then Unreadable: the client was there and did not
-	// answer.
-	Failures []apidoc.Failure
+	// NodesFailure and PendingFailure are the failures of the two lists,
+	// or nil. The check that needs a list that failed is Unreadable: the
+	// client was there and did not answer. The other check still runs.
+	NodesFailure, PendingFailure *apidoc.Failure
 	// Taken is false when there was no Kubernetes client.
 	Taken bool
+}
+
+// nodeKey is the identity of a node: its UID, which the API server gives
+// each node object once. A node without one, as some fakes make it, is
+// known by its name.
+func nodeKey(n *corev1.Node) string {
+	if n.UID != "" {
+		return "uid:" + string(n.UID)
+	}
+	return "name:" + n.Name
 }
 
 // TakeBaseline lists the nodes, with no selector, and the Pending pods, in
@@ -53,20 +67,31 @@ func TakeBaseline(ctx context.Context, kube kubernetes.Interface, cluster string
 	}()
 	pods, podsErr = kube.CoreV1().Pods("").List(ctx, metav1.ListOptions{FieldSelector: "status.phase=Pending"})
 	<-done
+	var names map[string]struct{}
 	if nodesErr != nil {
-		b.Failures = append(b.Failures, kubeFailure(cluster, "listing nodes before the roll", nodesErr))
+		f := kubeFailure(cluster, "listing nodes before the roll", nodesErr)
+		b.NodesFailure = &f
+	} else {
+		names = make(map[string]struct{}, len(nodes.Items))
+		for i := range nodes.Items {
+			b.Nodes[nodeKey(&nodes.Items[i])] = struct{}{}
+			names[nodes.Items[i].Name] = struct{}{}
+		}
 	}
 	if podsErr != nil {
-		b.Failures = append(b.Failures, kubeFailure(cluster, "listing Pending pods before the roll", podsErr))
-	}
-	if nodesErr != nil || podsErr != nil {
+		f := kubeFailure(cluster, "listing Pending pods before the roll", podsErr)
+		b.PendingFailure = &f
 		return b
 	}
-	for i := range nodes.Items {
-		b.Nodes[nodes.Items[i].Name] = struct{}{}
-	}
 	for i := range pods.Items {
-		if key, ok := pendingKey(&pods.Items[i], b.Nodes); ok {
+		pod := &pods.Items[i]
+		if names == nil {
+			// Without the nodes, the pinned rule cannot apply: every
+			// Pending pod counts as Pending before the roll.
+			b.Pending[pod.Namespace+"/"+pod.Name] = struct{}{}
+			continue
+		}
+		if key, ok := pendingKey(pod, names); ok {
 			b.Pending[key] = struct{}{}
 		}
 	}
@@ -74,7 +99,7 @@ func TakeBaseline(ctx context.Context, kube kubernetes.Interface, cluster string
 }
 
 // pendingKey returns the key of a Pending pod, or false for a pod pinned
-// to a node that is not in nodes, which is not stuck.
+// to a node that is not in nodes, a set of node names, which is not stuck.
 func pendingKey(pod *corev1.Pod, nodes map[string]struct{}) (string, bool) {
 	if name := pinnedNode(pod); name != "" {
 		if _, ok := nodes[name]; !ok {
@@ -190,15 +215,15 @@ func runNodegroupActive(in *Input, nodegroups []string) Result {
 }
 
 // runNodesReady lists the nodes and keeps the new ones of the rolled
-// nodegroups: those that carry a nodegroup's label and are not in the
-// baseline. A new node that is not Ready is listed again every interval
+// nodegroups: those that carry a nodegroup's label and whose identity is
+// not in the baseline. A new node that is not Ready is listed again every interval
 // until it is, or until the bound passes.
 func runNodesReady(ctx context.Context, in *Input, nodegroups []string, base Baseline, wait WaitOptions) Result {
 	if !base.Taken {
 		return Result{Outcome: Skipped, Message: "no baseline of the nodes before the roll"}
 	}
-	if len(base.Failures) > 0 {
-		return Result{Outcome: Unreadable, Message: "the nodes could not be listed before the roll", Failures: base.Failures}
+	if base.NodesFailure != nil {
+		return Result{Outcome: Unreadable, Message: "the nodes could not be listed before the roll", Failures: []apidoc.Failure{*base.NodesFailure}}
 	}
 	now, after := wait.Now, wait.After
 	if now == nil {
@@ -246,7 +271,7 @@ func runNodesReady(ctx context.Context, in *Input, nodegroups []string, base Bas
 func newNodeState(list *corev1.NodeList, nodegroups []string, base Baseline) (newNodes int, notReady []string) {
 	for i := range list.Items {
 		node := &list.Items[i]
-		if _, old := base.Nodes[node.Name]; old || !slices.Contains(nodegroups, node.Labels[labelNodegroup]) {
+		if _, old := base.Nodes[nodeKey(node)]; old || !slices.Contains(nodegroups, node.Labels[labelNodegroup]) {
 			continue
 		}
 		newNodes++
@@ -262,8 +287,8 @@ func runNewPendingPods(in *Input, base Baseline) Result {
 	if !base.Taken {
 		return Result{Outcome: Skipped, Message: "no baseline of the Pending pods before the roll"}
 	}
-	if len(base.Failures) > 0 {
-		return Result{Outcome: Unreadable, Message: "the Pending pods could not be listed before the roll", Failures: base.Failures}
+	if base.PendingFailure != nil {
+		return Result{Outcome: Unreadable, Message: "the Pending pods could not be listed before the roll", Failures: []apidoc.Failure{*base.PendingFailure}}
 	}
 	cluster := in.Snapshot.Cluster.Name
 	// Both lists in one round trip.

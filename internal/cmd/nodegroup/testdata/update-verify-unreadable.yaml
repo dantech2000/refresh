@@ -41,9 +41,9 @@ clusters:
         details: []
         findings: []
       - name: NodesReady
-        outcome: Unreadable
+        outcome: Pass
         blocking: true
-        message: the nodes could not be listed before the roll
+        message: 2 new nodes ready
         details: []
         findings: []
       - name: NewPendingPods
@@ -67,6 +67,6 @@ warning: the health checks were skipped (--skip-health-check)
 web: InProgress
 [OK] web: Succeeded
   [OK] NodegroupActive  web ACTIVE
-  [?]  NodesReady       the nodes could not be listed before the roll
+  [OK] NodesReady       2 new nodes ready
   [?]  NewPendingPods   the Pending pods could not be listed before the roll
 warning: cluster prod (us-east-1): AccessDenied: listing Pending pods before the roll: Pod is forbidden: User "fake" cannot list the resource at the cluster scope
