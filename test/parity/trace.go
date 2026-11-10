@@ -46,11 +46,12 @@ import (
 type Trace struct {
 	ExitCode int `json:"exitCode"`
 	// Stdout and Stderr are what the binary printed, normalised (see
-	// normaliser). They are empty for a run on a terminal, whose transcript
-	// is in Terminal and is not part of a golden file: it holds spinner
-	// frames, which depend on timing.
-	Stdout   string `json:"stdout"`
-	Stderr   string `json:"stderr"`
+	// normaliser), and Terminal the transcript of a run on a terminal. No
+	// recorded trace holds them: the command goldens of internal/cmd hold the
+	// output, and a terminal has spinner frames, which depend on timing. A
+	// failure message shows their end.
+	Stdout   string `json:"-"`
+	Stderr   string `json:"-"`
 	Terminal string `json:"-"`
 	// RefusedBeforeMutation is set when the run failed and had sent no
 	// mutating request.

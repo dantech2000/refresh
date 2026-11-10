@@ -68,33 +68,33 @@ func rollOf(nodegroup string, r fleettest.RollScript) edit {
 }
 
 func kubeNodegroupUpdate() []Scenario {
-	v2 := args("nodegroup", "update", "ng-a", "-c", "prod", "--poll-interval", pollArg, "-o", "json")
+	cmd := args("nodegroup", "update", "ng-a", "-c", "prod", "--poll-interval", pollArg, "-o", "json")
 	a := "UpdateNodegroupVersion prod/ng-a"
 	return []Scenario{
 		{
-			Name: "nodegroup-update-kube-yes", Kube: true, Seed: fleet(workloads, scripts(slow)), V2: v2("--yes"),
+			Name: "nodegroup-update-kube-yes", Kube: true, Seed: fleet(workloads, scripts(slow)), Args: cmd("--yes"),
 			Checks: []Check{exits(0), updatesAre(a), sawKube(fleettest.KubeListPDBs), sawKube(fleettest.KubeListNodes)},
 		},
-		{Name: "nodegroup-update-pdb-blocked", Behaviour: DrainBlocked, Kube: true, Seed: fleet(workloads, tight("web")), V2: v2("--yes")},
+		{Name: "nodegroup-update-pdb-blocked", Behaviour: DrainBlocked, Kube: true, Seed: fleet(workloads, tight("web")), Args: cmd("--yes")},
 		{
 			Name: "nodegroup-update-pdb-forced", Behaviour: DrainForced, Kube: true, Seed: fleet(workloads, tight("web"), scripts(slow)),
-			V2: v2("--yes", "--force"), Checks: []Check{updatesAre(a)},
+			Args: cmd("--yes", "--force"), Checks: []Check{updatesAre(a)},
 		},
 		{
 			// The budget that allows nothing covers pods of the other nodegroup only.
-			Name: "nodegroup-update-pdb-elsewhere", Kube: true, Seed: fleet(workloads, tight("api"), scripts(slow)), V2: v2("--yes"),
+			Name: "nodegroup-update-pdb-elsewhere", Kube: true, Seed: fleet(workloads, tight("api"), scripts(slow)), Args: cmd("--yes"),
 			Checks: []Check{exits(0), updatesAre(a)},
 		},
 		{
 			Name: "nodegroup-update-pdbs-unreadable", Behaviour: GateUnreadable, Kube: true, Seed: fleet(workloads),
-			Prepare: deny(fleettest.KubeListPDBs), V2: v2("--yes"),
+			Prepare: deny(fleettest.KubeListPDBs), Args: cmd("--yes"),
 		},
 		{
 			Name: "nodegroup-update-pdbs-unreadable-forced", Behaviour: GateUnreadableForced, Kube: true, Seed: fleet(workloads, scripts(slow)),
-			Prepare: deny(fleettest.KubeListPDBs), V2: v2("--yes", "--force"),
+			Prepare: deny(fleettest.KubeListPDBs), Args: cmd("--yes", "--force"),
 		},
 		{
-			Name: "nodegroup-update-workload-failing", Kube: true, V2: v2("--yes"), Checks: []Check{fails, noUpdates},
+			Name: "nodegroup-update-workload-failing", Kube: true, Args: cmd("--yes"), Checks: []Check{fails, noUpdates},
 			Seed: fleet(workloads, func(_ *fleettest.State, c *fleettest.Cluster) {
 				c.Pods[0].Phase, c.Pods[0].Node = "Pending", ""
 				c.Pods[1].NotReady = true
@@ -103,40 +103,38 @@ func kubeNodegroupUpdate() []Scenario {
 		{
 			// One node of the other nodegroup is NotReady: a warning, which
 			// --yes accepts.
-			Name: "nodegroup-update-node-not-ready", Kube: true, V2: v2("--yes"),
+			Name: "nodegroup-update-node-not-ready", Kube: true, Args: cmd("--yes"),
 			Checks: []Check{exits(0), updatesAre(a), sawKubeFact(fleettest.KubeListNodes, "b-2", "condition", "NotReady")},
 			Seed:   fleet(workloads, scripts(slow), func(_ *fleettest.State, c *fleettest.Cluster) { c.Nodes[3].NotReady = true }),
 		},
 		{
-			Name: "nodegroup-update-node-not-ready-require-healthy", Kube: true, V2: v2("--yes", "--require-healthy"),
-			Checks: []Check{exits(2), noMutations, sawKubeFact(fleettest.KubeListNodes, "b-2", "condition", "NotReady")},
+			Name: "nodegroup-update-node-not-ready-require-healthy", Kube: true, Args: cmd("--yes", "--require-healthy"),
+			Checks: []Check{exits(3), noMutations, sawKubeFact(fleettest.KubeListNodes, "b-2", "condition", "NotReady")},
 			Seed:   fleet(workloads, func(_ *fleettest.State, c *fleettest.Cluster) { c.Nodes[3].NotReady = true }),
 		},
 		{
-			// The new nodes never become Ready. The legacy verification reads
-			// the nodegroup's status and the Pending pods, not the nodes, so
-			// it passes.
-			// The new verification waits for a new node to be Ready: for
-			// two minutes after the update ended, and never past
-			// --wait-timeout. The binary measures that wait on its own
-			// clock, which is the real one, and no request of the world can
-			// move it. So both command lines get the same short
+			// The new nodes never become Ready. The verification waits for a
+			// new node to be Ready: for two minutes after the update ended,
+			// and never past --wait-timeout. The binary measures that wait
+			// on its own clock, which is the real one, and no request of the
+			// world can move it. So the command line gets a short
 			// --wait-timeout, which the roll itself never reaches: it ends
-			// after three polls.
+			// after three polls. The nodes that are not Ready are an issue:
+			// exit 5.
 			Name: "nodegroup-update-verify-node-not-ready", Kube: true,
-			V2:        v2("--yes", "--wait-timeout", verifyWaitArg),
-			Seed:      fleet(workloads, rollOf("ng-a", fleettest.RollScript{NodesNeverReady: true})),
-			Checks:    []Check{exits(0), updatesAre(a), worldSays("ng-a NotReady")},
-			V2Require: []Fact{{Subject: "node prod/ng-a-u1-1", Attribute: "condition", Value: "NotReady"}},
+			Args:    cmd("--yes", "--wait-timeout", verifyWaitArg),
+			Seed:    fleet(workloads, rollOf("ng-a", fleettest.RollScript{NodesNeverReady: true})),
+			Checks:  []Check{exits(5), updatesAre(a), worldSays("ng-a NotReady")},
+			Require: []Fact{{Subject: "node prod/ng-a-u1-1", Attribute: "condition", Value: "NotReady"}},
 		},
 		{
-			Name: "nodegroup-update-verify-pending-pods", Kube: true, V2: v2("--yes"),
+			Name: "nodegroup-update-verify-pending-pods", Kube: true, Args: cmd("--yes"),
 			Seed:   fleet(workloads, rollOf("ng-a", fleettest.RollScript{PendingPods: true})),
 			Checks: []Check{exits(5), updatesAre(a), worldSays("default/web-1-u1:Pending")},
 		},
 		{
 			// The update succeeds and EKS leaves the nodegroup DEGRADED.
-			Name: "nodegroup-update-verify-degraded", Kube: true, V2: v2("--yes"),
+			Name: "nodegroup-update-verify-degraded", Kube: true, Args: cmd("--yes"),
 			Seed: fleet(workloads, func(_ *fleettest.State, c *fleettest.Cluster) {
 				s := slow
 				s.ResourceStatus = fleettest.StatusDegraded
@@ -146,24 +144,24 @@ func kubeNodegroupUpdate() []Scenario {
 			Checks: []Check{exits(5), updatesAre(a)},
 		},
 		{
-			// The pod list is refused once the roll has started. The legacy
-			// verification then skips the pod check, and passes.
-			Name: "nodegroup-update-verify-pods-unreadable", Kube: true, Seed: fleet(workloads, scripts(slow)), V2: v2("--yes"),
-			Moves:     []Move{{When: AfterMutation(fleettest.EKSUpdateNodegroupVersion, "prod/ng-a"), Do: deny(fleettest.KubeListPods)}},
-			Checks:    []Check{exits(0), updatesAre(a)},
-			V2Require: []Fact{{Subject: "pods prod", Attribute: "read", Value: "error=Forbidden"}},
+			// The pod list is refused once the roll has started. A
+			// verification that cannot read is incomplete: exit 4.
+			Name: "nodegroup-update-verify-pods-unreadable", Kube: true, Seed: fleet(workloads, scripts(slow)), Args: cmd("--yes"),
+			Moves:   []Move{{When: AfterMutation(fleettest.EKSUpdateNodegroupVersion, "prod/ng-a"), Do: deny(fleettest.KubeListPods)}},
+			Checks:  []Check{exits(4), updatesAre(a)},
+			Require: []Fact{{Subject: "pods prod", Attribute: "read", Value: "error=Forbidden"}},
 		},
 		{
 			// DescribeNodegroup is refused once the update has ended, so the
 			// state of the nodegroup after the roll is unknown.
-			Name: "nodegroup-update-verify-unreadable", Kube: true, Seed: fleet(workloads, scripts(slow)), V2: v2("--yes"),
+			Name: "nodegroup-update-verify-unreadable", Kube: true, Seed: fleet(workloads, scripts(slow)), Args: cmd("--yes"),
 			Moves:  []Move{{When: WhenUpdate(1, fleettest.UpdateSuccessful), Do: fault(on(fleettest.EKSDescribeNodegroup), fleettest.Fault{Deny: true})}},
 			Checks: []Check{exits(4), updatesAre(a)},
 		},
 		{
 			// The update has ended, and the next describe of the nodegroup
 			// still says UPDATING, as EKS can for a moment.
-			Name: "nodegroup-update-verify-status-lags", Kube: true, Seed: fleet(workloads, scripts(slow)), V2: v2("--yes"),
+			Name: "nodegroup-update-verify-status-lags", Kube: true, Seed: fleet(workloads, scripts(slow)), Args: cmd("--yes"),
 			Moves: []Move{{When: WhenUpdate(1, fleettest.UpdateSuccessful), Do: func(w *fleettest.World) error {
 				w.ScriptStatus(Region, "prod", "ng-a", fleettest.StatusUpdating)
 				return nil
@@ -171,7 +169,7 @@ func kubeNodegroupUpdate() []Scenario {
 			Checks: []Check{exits(5), updatesAre(a), sawAnswer(fleettest.EKSDescribeNodegroup, "1.32.0-20260101 UPDATING")},
 		},
 		{
-			Name: "nodegroup-update-stuck-drain", Kube: true, V2: v2("--yes"),
+			Name: "nodegroup-update-stuck-drain", Kube: true, Args: cmd("--yes"),
 			Seed: fleet(workloads, func(_ *fleettest.State, c *fleettest.Cluster) {
 				s := failing
 				s.Roll = fleettest.RollScript{StuckDrain: true}
@@ -184,14 +182,14 @@ func kubeNodegroupUpdate() []Scenario {
 			// The live node view, forced on without a terminal. It reads the
 			// nodes through client-go informers.
 			Name: "nodegroup-update-live-view", Kube: true, Live: true, Seed: fleet(workloads, scripts(slow)),
-			V2:     []string{"nodegroup", "update", "ng-a", "-c", "prod", "--poll-interval", pollArg, "--yes", "--live"},
+			Args:   []string{"nodegroup", "update", "ng-a", "-c", "prod", "--poll-interval", pollArg, "--yes", "--live"},
 			Checks: []Check{exits(0), updatesAre(a), called(fleettest.KubeWatchNodes), called(fleettest.KubeWatchEvents), worldSays("ng-a-u1-1:ng-a Ready")},
 		},
 		{
 			// The dry run sees a budget with room. Before the real run the
 			// budget tightens, and the real run's gate must see that.
 			Name: "nodegroup-update-pdb-tightens-after-dry-run", Kube: true, Seed: fleet(workloads),
-			V2Preview: v2("--dry-run"), V2: v2("--yes"),
+			Preview: cmd("--dry-run"), Args: cmd("--yes"),
 			AfterPreview: func(w *fleettest.World) error {
 				w.Edit(func(s *fleettest.State) { tighten(s.Cluster(Region, "prod"), "web") })
 				return nil
@@ -204,41 +202,41 @@ func kubeNodegroupUpdate() []Scenario {
 func kubeNodegroupScale() []Scenario {
 	// The command has no --check-pdbs: the gate of a scale-down
 	// always reads the budgets.
-	v2To := func(desired string) func(extra ...string) []string {
+	to := func(desired string) func(extra ...string) []string {
 		return args("nodegroup", "scale", "ng-a", "-c", "prod", "--desired", desired, "--poll-interval", pollArg, "--no-wait", "-o", "json")
 	}
 	one := updatesAre("UpdateNodegroupConfig prod/ng-a")
 	return []Scenario{
 		{
-			Name: "nodegroup-scale-pdb-safe", Kube: true, Seed: fleet(workloads), V2: v2To("1")("--yes"),
+			Name: "nodegroup-scale-pdb-safe", Kube: true, Seed: fleet(workloads), Args: to("1")("--yes"),
 			Checks: []Check{exits(0), one, sawKube(fleettest.KubeListPDBs)},
 		},
 		{
-			Name: "nodegroup-scale-pdb-blocked", Behaviour: Blocked, Kube: true, Seed: fleet(workloads, tight("web")), V2: v2To("1")("--yes"),
+			Name: "nodegroup-scale-pdb-blocked", Behaviour: Blocked, Kube: true, Seed: fleet(workloads, tight("web")), Args: to("1")("--yes"),
 			Checks: []Check{exits(3), noMutations, sawKubeFact(fleettest.KubeListPDBs, "default/web", "allowed", "0")},
 		},
 		{
 			Name: "nodegroup-scale-pdb-forced", Behaviour: DrainForced, Kube: true, Seed: fleet(workloads, tight("web")),
-			V2: v2To("1")("--yes", "--force"), Checks: []Check{one},
+			Args: to("1")("--yes", "--force"), Checks: []Check{one},
 		},
 		{
 			Name: "nodegroup-scale-pdbs-unreadable", Behaviour: GateUnreadable, Kube: true, Seed: fleet(workloads),
-			Prepare: deny(fleettest.KubeListPDBs), V2: v2To("1")("--yes"),
+			Prepare: deny(fleettest.KubeListPDBs), Args: to("1")("--yes"),
 		},
 		{
 			Name: "nodegroup-scale-pdbs-unreadable-forced", Behaviour: GateUnreadableForced, Kube: true, Seed: fleet(workloads),
-			Prepare: deny(fleettest.KubeListPDBs), V2: v2To("1")("--yes", "--force"),
+			Prepare: deny(fleettest.KubeListPDBs), Args: to("1")("--yes", "--force"),
 		},
 		{
 			// A scale-up removes no node, so a tight budget does not matter.
-			Name: "nodegroup-scale-up-ignores-pdbs", Kube: true, Seed: fleet(workloads, tight("web")), V2: v2To("3")("--yes"),
+			Name: "nodegroup-scale-up-ignores-pdbs", Kube: true, Seed: fleet(workloads, tight("web")), Args: to("3")("--yes"),
 			Checks: []Check{exits(0), one},
 		},
 	}
 }
 
 func kubeClusterUpgrade() []Scenario {
-	v2 := args("cluster", "upgrade", "prod", "--to", "1.33", "--poll-interval", pollArg, "-o", "json")
+	cmd := args("cluster", "upgrade", "prod", "--to", "1.33", "--poll-interval", pollArg, "-o", "json")
 	const (
 		control = "UpdateClusterVersion prod"
 		cni     = "UpdateAddon prod/vpc-cni"
@@ -248,40 +246,41 @@ func kubeClusterUpgrade() []Scenario {
 	)
 	return []Scenario{
 		{
-			Name: "cluster-upgrade-kube-yes", Kube: true, Seed: fleet(workloads, scripts(slow)), V2: v2("--yes"),
+			Name: "cluster-upgrade-kube-yes", Kube: true, Seed: fleet(workloads, scripts(slow)), Args: cmd("--yes"),
 			Checks: []Check{exits(0), updatesAre(control, cni, dns, a, b), sawKube(fleettest.KubeListPDBs)},
 		},
 		{
-			// The budget of the first nodegroup's pods allows nothing.
-			// The legacy command reads the budgets only when it reaches the
-			// nodegroup, after the control plane and the add-ons are done.
-			Name: "cluster-upgrade-pdb-blocked", Behaviour: DrainBlocked, Kube: true, Seed: fleet(workloads, tight("web"), scripts(slow)), V2: v2("--yes"),
-			Checks:    []Check{updatesAre(control, cni, dns)},
-			V2Require: []Fact{{Subject: "pdb prod/default/web", Attribute: "allowed", Value: "0"}},
+			// The budget of the first nodegroup's pods allows nothing. The
+			// plan runs every gate before the first update, so nothing is
+			// updated, and the gate refuses: exit 3.
+			Name: "cluster-upgrade-pdb-blocked", Behaviour: DrainBlocked, Kube: true, Seed: fleet(workloads, tight("web"), scripts(slow)), Args: cmd("--yes"),
+			Checks:  []Check{exits(3), noUpdates},
+			Require: []Fact{{Subject: "pdb prod/default/web", Attribute: "allowed", Value: "0"}},
 		},
 		{
 			Name: "cluster-upgrade-pdb-forced", Behaviour: DrainForced, Kube: true, Seed: fleet(workloads, tight("web"), scripts(slow)),
-			V2: v2("--yes", "--force"), Checks: []Check{exits(0), updatesAre(control, cni, dns, a, b)},
+			Args: cmd("--yes", "--force"), Checks: []Check{exits(0), updatesAre(control, cni, dns, a, b)},
 		},
 		{
-			// The budget of the second nodegroup's pods allows nothing.
-			Name: "cluster-upgrade-pdb-blocks-second-nodegroup", Kube: true, Seed: fleet(workloads, tight("api"), scripts(slow)), V2: v2("--yes"),
-			Checks:    []Check{fails, updatesAre(control, cni, dns, a), resourceIs("ng-a", "1.33 "), resourceIs("ng-b", "1.32 ")},
-			V2Require: []Fact{{Subject: "pdb prod/default/api", Attribute: "allowed", Value: "0"}},
+			// The budget of the second nodegroup's pods allows nothing. The
+			// plan's gate sees it before the first update.
+			Name: "cluster-upgrade-pdb-blocks-second-nodegroup", Kube: true, Seed: fleet(workloads, tight("api"), scripts(slow)), Args: cmd("--yes"),
+			Checks:  []Check{exits(3), noUpdates, resourceIs("ng-a", "1.32 "), resourceIs("ng-b", "1.32 ")},
+			Require: []Fact{{Subject: "pdb prod/default/api", Attribute: "allowed", Value: "0"}},
 		},
 		{
 			Name: "cluster-upgrade-pdbs-unreadable", Behaviour: GateUnreadable, Kube: true, Seed: fleet(workloads, scripts(slow)),
-			Prepare: deny(fleettest.KubeListPDBs), V2: v2("--yes"), Checks: []Check{updatesAre(control, cni, dns)},
-			V2Require: []Fact{{Subject: "pdbs prod", Attribute: "read", Value: "error=Forbidden"}},
+			Prepare: deny(fleettest.KubeListPDBs), Args: cmd("--yes"), Checks: []Check{exits(4), noUpdates},
+			Require: []Fact{{Subject: "pdbs prod", Attribute: "read", Value: "error=Forbidden"}},
 		},
 		{
 			Name: "cluster-upgrade-pdbs-unreadable-forced", Behaviour: GateUnreadableForced, Kube: true, Seed: fleet(workloads, scripts(slow)),
-			Prepare: deny(fleettest.KubeListPDBs), V2: v2("--yes", "--force"),
+			Prepare: deny(fleettest.KubeListPDBs), Args: cmd("--yes", "--force"),
 		},
 		{
 			// While the first nodegroup rolls, the second one degrades and its
 			// nodes stop being Ready.
-			Name: "cluster-upgrade-nodegroup-degrades-mid-run", Kube: true, Seed: fleet(workloads, scripts(slow)), V2: v2("--yes"),
+			Name: "cluster-upgrade-nodegroup-degrades-mid-run", Kube: true, Seed: fleet(workloads, scripts(slow)), Args: cmd("--yes"),
 			Moves: []Move{{When: AfterMutation(fleettest.EKSUpdateNodegroupVersion, "prod/ng-a"), Do: func(w *fleettest.World) error {
 				w.Edit(func(s *fleettest.State) {
 					c := s.Cluster(Region, "prod")
@@ -302,9 +301,9 @@ func kubeClusterUpgrade() []Scenario {
 			// After the plan is made, and before the add-on phase, someone
 			// else starts an update of vpc-cni.
 			// The foreign update outlasts the control-plane phase, so it is
-			// still in flight when the add-on phase starts. The legacy
-			// command waits for it and sends no update of its own.
-			Name: "cluster-upgrade-addon-updated-elsewhere", Kube: true, Seed: fleet(workloads, scripts(slow), script("vpc-cni", long)), V2: v2("--yes"),
+			// still in flight when the add-on phase starts. The command
+			// waits for it and sends no update of its own.
+			Name: "cluster-upgrade-addon-updated-elsewhere", Kube: true, Seed: fleet(workloads, scripts(slow), script("vpc-cni", long)), Args: cmd("--yes"),
 			Clock: []fleettest.Operation{fleettest.EKSDescribeUpdate, fleettest.EKSDescribeInsightsRefresh, fleettest.EKSDescribeAddon},
 			Moves: []Move{{When: BeforeMutation(fleettest.EKSUpdateClusterVersion, "prod"), Do: func(w *fleettest.World) error {
 				_, err := w.UpdateAddon(Region, "prod", "vpc-cni", fleettest.AddonRequest{Version: new("v1.20.0-eksbuild.1")})
@@ -316,7 +315,7 @@ func kubeClusterUpgrade() []Scenario {
 }
 
 func kubeClusterRollback() []Scenario {
-	v2 := args("cluster", "rollback", "prod", "--poll-interval", pollArg, "-o", "json")
+	cmd := args("cluster", "rollback", "prod", "--poll-interval", pollArg, "-o", "json")
 	const (
 		control = "UpdateClusterVersion prod"
 		cni     = "UpdateAddon prod/vpc-cni"
@@ -326,25 +325,27 @@ func kubeClusterRollback() []Scenario {
 	)
 	return []Scenario{
 		{
-			Name: "cluster-rollback-kube-yes", Kube: true, Seed: fleet(upgraded, workloads, scripts(slow)), V2: v2("--yes"),
+			Name: "cluster-rollback-kube-yes", Kube: true, Seed: fleet(upgraded, workloads, scripts(slow)), Args: cmd("--yes"),
 			Checks: []Check{exits(0), updatesAre(a, b, cni, dns, control), sawKube(fleettest.KubeListPDBs)},
 		},
-		{Name: "cluster-rollback-pdb-blocked", Behaviour: DrainBlocked, Kube: true, Seed: fleet(upgraded, workloads, tight("web"), scripts(slow)), V2: v2("--yes")},
+		{Name: "cluster-rollback-pdb-blocked", Behaviour: DrainBlocked, Kube: true, Seed: fleet(upgraded, workloads, tight("web"), scripts(slow)), Args: cmd("--yes")},
 		{
 			Name: "cluster-rollback-pdb-forced", Behaviour: DrainForced, Kube: true, Seed: fleet(upgraded, workloads, tight("web"), scripts(slow)),
-			V2: v2("--yes", "--force"), Checks: []Check{exits(0), updatesAre(a, b, cni, dns, control)},
+			Args: cmd("--yes", "--force"), Checks: []Check{exits(0), updatesAre(a, b, cni, dns, control)},
 		},
 		{
-			Name: "cluster-rollback-pdb-blocks-second-nodegroup", Kube: true, Seed: fleet(upgraded, workloads, tight("api"), scripts(slow)), V2: v2("--yes"),
-			Checks: []Check{fails, updatesAre(a), resourceIs("ng-a", "1.32 "), resourceIs("ng-b", "1.33 ")},
+			// The plan's gate sees the budget of the second nodegroup before
+			// the first update.
+			Name: "cluster-rollback-pdb-blocks-second-nodegroup", Kube: true, Seed: fleet(upgraded, workloads, tight("api"), scripts(slow)), Args: cmd("--yes"),
+			Checks: []Check{exits(3), noMutations, resourceIs("ng-a", "1.33 "), resourceIs("ng-b", "1.33 ")},
 		},
 		{
 			Name: "cluster-rollback-pdbs-unreadable", Behaviour: GateUnreadable, Kube: true, Seed: fleet(upgraded, workloads, scripts(slow)),
-			Prepare: deny(fleettest.KubeListPDBs), V2: v2("--yes"),
+			Prepare: deny(fleettest.KubeListPDBs), Args: cmd("--yes"),
 		},
 		{
 			Name: "cluster-rollback-pdbs-unreadable-forced", Behaviour: GateUnreadableForced, Kube: true, Seed: fleet(upgraded, workloads, scripts(slow)),
-			Prepare: deny(fleettest.KubeListPDBs), V2: v2("--yes", "--force"),
+			Prepare: deny(fleettest.KubeListPDBs), Args: cmd("--yes", "--force"),
 		},
 	}
 }

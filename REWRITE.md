@@ -445,6 +445,8 @@ The runner starts each binary as a subprocess, with a PTY where a scenario needs
 
 `legacy/PORTING.md` triages every legacy test file as ported, covered by a scenario, or dropped with a reason. A test that names a past regression is never dropped.
 
+After the rewrite the suite was re-baselined: each scenario's recorded trace is now a trace of the new binary (`test/parity/testdata/traces`), and the allowlist is gone. The new traces differ from the old ones in exactly the 67 approved allowlist entries. The old traces could not be recorded again, so they froze the fake fleet as well as the old binary; a trace of the new binary can be recorded again, and its diff reviewed. `CONTRACT.md` stays the record of what changed from the old CLI.
+
 ## Phases
 
 ### Phase 0: branch, move, contract, baseline

@@ -32,11 +32,11 @@ import (
 // a child behind, print its environment.
 const helperArg = "parity-helper"
 
-// v2Binary is the path of the binary that TestPaired compares with the
-// legacy one. TestMain sets it before any test runs.
-var v2Binary string
+// binary is the path of the binary that TestScenarios holds to the
+// recorded traces. TestMain sets it before any test runs.
+var binary string
 
-// TestMain builds the binary once. Set REFRESH_PARITY_V2 to the path of a
+// TestMain builds the binary once. Set REFRESH_PARITY_BINARY to the path of a
 // binary to test that one and skip its build. Under go test -race the binary
 // is built with the race detector too: a data race in the binary then fails
 // its run with exit code 66. The build also reuses the race compile of the
@@ -53,17 +53,17 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	v2Binary = os.Getenv("REFRESH_PARITY_V2")
-	if v2Binary == "" {
-		v2Binary = filepath.Join(dir, "refresh-v2")
-		args := []string{"build", "-o", v2Binary}
+	binary = os.Getenv("REFRESH_PARITY_BINARY")
+	if binary == "" {
+		binary = filepath.Join(dir, "refresh")
+		args := []string{"build", "-o", binary}
 		if raceBuild {
 			args = append(args, "-race")
 		}
 		build := exec.Command("go", append(args, "../../cmd/refresh")...) //nolint:gosec,noctx // fixed arguments; nothing to cancel it
 		build.Stderr = os.Stderr
 		if err := build.Run(); err != nil {
-			fmt.Fprintln(os.Stderr, "building the v2 binary:", err)
+			fmt.Fprintln(os.Stderr, "building the binary:", err)
 			_ = os.RemoveAll(dir)
 			os.Exit(1)
 		}
@@ -164,23 +164,42 @@ func changeNodegroup(eager bool) int {
 }
 
 // outputOnly are the trace fields no golden file holds.
-var outputOnly = cmpopts.IgnoreFields(Trace{}, "Terminal", "PeakConcurrency", "Requests", "Confirmations", "Elapsed", "WorldElapsed")
+var outputOnly = cmpopts.IgnoreFields(Trace{}, "Stdout", "Stderr", "Terminal", "PeakConcurrency", "Requests", "Confirmations", "Elapsed", "WorldElapsed")
 
-// run returns the recorded trace of the scenario: what the last release of
-// the old CLI did when it ran the scenario's legacy command line. The old
-// tree is gone, so the traces cannot change any more.
-func run(t *testing.T, sc Scenario) Trace {
+// update makes TestScenarios record the trace of each scenario in
+// testdata/traces, in place of comparing with it. Read the diff before you
+// commit it: a changed trace is a changed behaviour.
+var update = flag.Bool("update", false, "record the trace of each scenario in testdata/traces")
+
+// tracePath is the recorded trace of the scenario.
+func tracePath(sc Scenario) string {
+	return filepath.Join("testdata", "traces", sc.Name+".json")
+}
+
+// recorded returns the recorded trace of the scenario.
+func recorded(t *testing.T, sc Scenario) Trace {
 	t.Helper()
-	path := filepath.Join("testdata", "legacy", sc.Name+".json")
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(tracePath(sc))
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("%v; run the suite with -update to record the trace", err)
 	}
 	var trace Trace
 	if err := json.Unmarshal(data, &trace); err != nil {
-		t.Fatalf("%s: %v", path, err)
+		t.Fatalf("%s: %v", tracePath(sc), err)
 	}
 	return trace
+}
+
+// record writes the trace of a run as the recorded trace of the scenario.
+func record(t *testing.T, sc Scenario, trace Trace) {
+	t.Helper()
+	data, err := json.MarshalIndent(trace, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(tracePath(sc), append(data, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // brief describes a run for a failure message: its exit code, its update
@@ -205,7 +224,7 @@ func TestMatrix(t *testing.T) {
 		}
 		byName[sc.Name] = sc
 		switch {
-		case len(sc.V2) == 0 || sc.Seed == nil:
+		case len(sc.Args) == 0 || sc.Seed == nil:
 			t.Errorf("%s needs a seed and a command line", sc.Name)
 		case sc.Behaviour == "" && len(sc.Checks) == 0:
 			t.Errorf("%s has no behaviour and no checks: nothing says what it is for", sc.Name)

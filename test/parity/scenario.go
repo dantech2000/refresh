@@ -33,10 +33,8 @@ type Scenario struct {
 	// update or to set a fault.
 	Seed    func(s *fleettest.State)
 	Prepare func(w *fleettest.World) error
-	// V2 are the arguments of the binary. The recorded trace of the old
-	// CLI holds what it did for the same intent; its command lines went with
-	// its source.
-	V2 []string
+	// Args are the arguments of the binary.
+	Args []string
 	// Stdin is what the binary reads when it has no Terminal.
 	Stdin string
 	// Terminal, when set, runs the binary on a pseudo-terminal and answers
@@ -67,16 +65,13 @@ type Scenario struct {
 	// Holds keep requests from being answered until something else has
 	// happened, to fix the order of two things the binary does at once.
 	Holds []Hold
-	// V2Require are facts the v2 binary must have seen at some point of the
-	// run, where the contract asks more of it than the old binary did.
-	// V2Checks are further assertions on the v2 trace alone, such as a
-	// notice the contract requires. The legacy trace is not held to either.
-	V2Require []Fact
-	V2Checks  []Check
-	// V2Preview is a command line to run first on the same world, such as
+	// Require are facts the binary must have seen at some point of the
+	// run, besides the evidence of the recorded trace.
+	Require []Fact
+	// Preview is a command line to run first on the same world, such as
 	// the dry run of the change. AfterPreview then changes the world, and
 	// the trace is that of the main run alone.
-	V2Preview    []string
+	Preview      []string
 	AfterPreview func(w *fleettest.World) error
 	// Cluster is a cluster whose final state the trace records even when
 	// no request names it. Empty means "prod".
@@ -90,7 +85,7 @@ type Scenario struct {
 // runLimit is how long a run of a scenario may take on the real clock.
 const runLimit = 2 * time.Minute
 
-// Move changes the world once, at a point of the run that both binaries
+// Move changes the world once, at a point of the run that every binary
 // reach whatever they read on the way there.
 type Move struct {
 	When Anchor
@@ -179,12 +174,12 @@ type Signal struct {
 	Nth    int
 	// AfterPrompt, when not 0, counts only the requests that arrive after
 	// the prompt with that number was answered, from 1. The answer is a
-	// point that both binaries reach, so the count does not depend on how
+	// point that every binary reaches, so the count does not depend on how
 	// often a binary read before it asked.
 	AfterPrompt int
 }
 
-// Command is a legacy command that changes AWS state.
+// Command is a command that changes AWS state.
 type Command string
 
 // The commands of the matrix.
@@ -245,30 +240,25 @@ const (
 
 // Check is one assertion on a trace.
 type Check struct {
-	// Field is the part of the trace the check is about. A paired run skips
-	// the check when the allowlist lets that field of the scenario differ:
-	// the check then describes the old binary only. A check with no field
-	// always runs.
-	Field Field
 	// Run returns what is wrong, or nil.
 	Run func(t Trace) error
 }
 
 // The checks that take no argument.
 var (
-	fails                    = Check{Field: FieldExitCode, Run: failsIn}
-	noRequests               = Check{Field: FieldDecision, Run: noRequestsIn}
-	noMutations              = Check{Field: FieldMutations, Run: noMutationsIn}
-	noUpdates                = Check{Field: FieldMutations, Run: noUpdatesIn}
-	changes                  = Check{Field: FieldMutations, Run: changesIn}
-	allAccepted              = Check{Field: FieldMutations, Run: allAcceptedIn}
-	refusedByEKS             = Check{Field: FieldMutations, Run: refusedByEKSIn}
-	nothingAfterSignal       = Check{Field: FieldMutations, Run: nothingAfterSignalIn}
-	oneUpdatePerLostResponse = Check{Field: FieldMutations, Run: oneUpdatePerLostResponseIn}
+	fails                    = Check{Run: failsIn}
+	noRequests               = Check{Run: noRequestsIn}
+	noMutations              = Check{Run: noMutationsIn}
+	noUpdates                = Check{Run: noUpdatesIn}
+	changes                  = Check{Run: changesIn}
+	allAccepted              = Check{Run: allAcceptedIn}
+	refusedByEKS             = Check{Run: refusedByEKSIn}
+	nothingAfterSignal       = Check{Run: nothingAfterSignalIn}
+	oneUpdatePerLostResponse = Check{Run: oneUpdatePerLostResponseIn}
 	sawThrottle              = Check{Run: sawThrottleIn}
-	noRolls                  = Check{Field: FieldMutations, Run: noRollsIn}
-	rolls                    = Check{Field: FieldMutations, Run: rollsIn}
-	anUpdateFailed           = Check{Field: FieldWorld, Run: anUpdateFailedIn}
+	noRolls                  = Check{Run: noRollsIn}
+	rolls                    = Check{Run: rollsIn}
+	anUpdateFailed           = Check{Run: anUpdateFailedIn}
 )
 
 // behaviourChecks are what a scenario of each behaviour must show.
@@ -309,6 +299,9 @@ var dryRunReads = map[Command][]fleettest.Operation{
 // checks returns the scenario's own checks and those of its behaviour.
 func (sc Scenario) checks() []Check {
 	out := slices.Concat(behaviourChecks[sc.Behaviour], sc.Checks)
+	for _, f := range sc.Require {
+		out = append(out, saw(f))
+	}
 	if sc.Behaviour == DryRun {
 		for _, op := range dryRunReads[sc.Command] {
 			out = append(out, sawRead(op))
@@ -317,29 +310,13 @@ func (sc Scenario) checks() []Check {
 	return out
 }
 
-// check runs the scenario's checks, except those about a field that skip
-// accepts. A nil skip runs them all.
-func (sc Scenario) check(t Trace, skip func(Field) bool) error {
+// check runs the scenario's checks.
+func (sc Scenario) check(t Trace) error {
 	var errs []error
 	for _, c := range sc.checks() {
-		if skip != nil && skip(c.Field) {
-			continue
-		}
 		if err := c.Run(t); err != nil {
 			errs = append(errs, err)
 		}
-	}
-	return errors.Join(errs...)
-}
-
-// checkV2 runs what the scenario asks of the v2 binary alone.
-func (sc Scenario) checkV2(t Trace) error {
-	var errs []error
-	for _, f := range sc.V2Require {
-		errs = append(errs, saw(f).Run(t))
-	}
-	for _, c := range sc.V2Checks {
-		errs = append(errs, c.Run(t))
 	}
 	return errors.Join(errs...)
 }
@@ -388,7 +365,7 @@ func updates(t Trace) []string {
 }
 
 func exits(code int) Check {
-	return Check{Field: FieldExitCode, Run: func(t Trace) error {
+	return Check{Run: func(t Trace) error {
 		if t.ExitCode != code {
 			return fmt.Errorf("exit code %d, want %d", t.ExitCode, code)
 		}
@@ -446,7 +423,7 @@ func allAcceptedIn(t Trace) error {
 // updatesAre: the Update requests are exactly these, in this order, each as
 // "Operation target".
 func updatesAre(want ...string) Check {
-	return Check{Field: FieldMutations, Run: func(t Trace) error {
+	return Check{Run: func(t Trace) error {
 		if got := updates(t); !slices.Equal(got, want) {
 			return fmt.Errorf("update requests %v, want %v", got, want)
 		}
@@ -565,7 +542,7 @@ func rollsIn(t Trace) error {
 // worldSays: the final state of prod, as the trace records it, contains
 // the text.
 func worldSays(text string) Check {
-	return Check{Field: FieldWorld, Run: func(t Trace) error {
+	return Check{Run: func(t Trace) error {
 		if state := fmt.Sprintf("%+v", t.World[Region+"/prod"]); !strings.Contains(state, text) {
 			return fmt.Errorf("the final state of prod does not contain %q: %s", text, state)
 		}
@@ -595,7 +572,7 @@ func beforeRoll(t Trace, op fleettest.Operation) []Record {
 // sawKube: the binary had an answer to the Kubernetes request before
 // it first sent a change to a nodegroup, or without sending one.
 func sawKube(op fleettest.Operation) Check {
-	return Check{Field: FieldEvidence, Run: func(t Trace) error {
+	return Check{Run: func(t Trace) error {
 		if len(beforeRoll(t, op)) == 0 {
 			return fmt.Errorf("no %s answer before the first nodegroup change", op)
 		}
@@ -610,7 +587,7 @@ func sawKube(op fleettest.Operation) Check {
 // for the attribute "read". It is how a scenario shows that a gate read
 // the state it then decided on.
 func sawKubeFact(op fleettest.Operation, item, attribute, value string) Check {
-	return Check{Field: FieldEvidence, Run: func(t Trace) error {
+	return Check{Run: func(t Trace) error {
 		for _, r := range beforeRoll(t, op) {
 			for _, f := range r.Facts {
 				if f.Attribute == attribute && f.Value == value && (item == "" || strings.HasSuffix(f.Subject, "/"+item)) {
@@ -711,7 +688,7 @@ func anUpdateFailedIn(t Trace) error {
 // resourceIs: the final line of a nodegroup or an add-on of prod contains
 // the text.
 func resourceIs(name, text string) Check {
-	return Check{Field: FieldWorld, Run: func(t Trace) error {
+	return Check{Run: func(t Trace) error {
 		c := t.World[Region+"/prod"]
 		line, ok := c.Nodegroups[name]
 		if !ok {

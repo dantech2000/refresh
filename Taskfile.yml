@@ -148,7 +148,7 @@ tasks:
         done
 
   test:parity:
-    desc: Run the parity suite (the new binary against the recorded traces of the old one)
+    desc: Run the parity suite (the binary against the recorded trace of each scenario)
     cmds:
       - go test -count=1 ./test/parity/...
 
