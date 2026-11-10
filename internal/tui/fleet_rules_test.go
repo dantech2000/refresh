@@ -3,7 +3,47 @@ package tui
 import (
 	"strings"
 	"testing"
+
+	"github.com/dantech2000/refresh/internal/apidoc"
+	"github.com/dantech2000/refresh/internal/tui/state"
+	"github.com/dantech2000/refresh/internal/view"
 )
+
+// A resource in flight marks the column of its kind and no other, and the
+// STATUS column names it.
+func TestFleetInFlightMarksItsColumn(t *testing.T) {
+	cols := map[apidoc.StepKind]string{
+		apidoc.StepControlPlane: "VERSION",
+		apidoc.StepNodegroup:    "NODEGROUPS",
+		apidoc.StepAddon:        "ADD-ONS",
+	}
+	tests := []struct {
+		f      state.InFlight
+		status string
+	}{
+		{state.InFlight{Kind: apidoc.StepControlPlane, Status: "UPDATING"}, "control plane UPDATING"},
+		{state.InFlight{Kind: apidoc.StepNodegroup, Name: "web", Status: "UPDATING"}, "nodegroup web UPDATING"},
+		{state.InFlight{Kind: apidoc.StepAddon, Name: "vpc-cni", Status: "UPDATING"}, "add-on vpc-cni UPDATING"},
+	}
+	for _, tt := range tests {
+		t.Run(string(tt.f.Kind), func(t *testing.T) {
+			h := newHarness(t, 140, 40, colorTheme)
+			idle := fleetState(1).Clusters[0]
+			busy := idle
+			busy.InFlight = []state.InFlight{tt.f}
+			busy.Status = view.Progress
+			for kind, col := range cols {
+				before, after := h.m.fleetCell(col, idle).Plain(), h.m.fleetCell(col, busy).Plain()
+				if changed := before != after; changed != (kind == tt.f.Kind) {
+					t.Errorf("%s: cell %q with nothing in flight, %q with %s in flight; want a change only in the column of its kind", col, before, after, tt.f)
+				}
+			}
+			if got := h.m.fleetCell("STATUS", busy).Plain(); !strings.Contains(got, tt.status) {
+				t.Errorf("STATUS = %q, want it to contain %q", got, tt.status)
+			}
+		})
+	}
+}
 
 // A cluster with a nodegroup whose AMI could not be read does not show
 // as current in the fleet table: its nodegroups cell says how many are

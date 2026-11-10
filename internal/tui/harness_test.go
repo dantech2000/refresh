@@ -265,7 +265,7 @@ func stale(c state.Cluster) state.Cluster {
 // changing makes a row show a nodegroup in flight.
 func changing(c state.Cluster) state.Cluster {
 	c.Snapshot.Nodegroups[1].Status = "UPDATING"
-	c.InFlight = []string{"nodegroup web UPDATING"}
+	c.InFlight = []state.InFlight{{Kind: apidoc.StepNodegroup, Name: "web", Status: "UPDATING"}}
 	c.Status = view.Progress
 	return c
 }
