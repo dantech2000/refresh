@@ -37,9 +37,11 @@ const helperArg = "parity-helper"
 var v2Binary string
 
 // TestMain builds the binary once. Set REFRESH_PARITY_V2 to the path of a
-// binary to test that one and skip its build. Set REFRESH_PARITY_RACE=1 to
-// build it with the race detector: a data race in the binary then fails its
-// run with exit code 66.
+// binary to test that one and skip its build. Under go test -race the binary
+// is built with the race detector too: a data race in the binary then fails
+// its run with exit code 66. The build also reuses the race compile of the
+// dependencies that the test packages already made, where a plain build would
+// compile them a second time.
 func TestMain(m *testing.M) {
 	if len(os.Args) > 2 && os.Args[1] == helperArg {
 		helper(os.Args[2])
@@ -54,7 +56,11 @@ func TestMain(m *testing.M) {
 	v2Binary = os.Getenv("REFRESH_PARITY_V2")
 	if v2Binary == "" {
 		v2Binary = filepath.Join(dir, "refresh-v2")
-		build := exec.Command("go", "build", "-o", v2Binary, "../../cmd/refresh") //nolint:gosec,noctx // fixed arguments; nothing to cancel it
+		args := []string{"build", "-o", v2Binary}
+		if raceBuild {
+			args = append(args, "-race")
+		}
+		build := exec.Command("go", append(args, "../../cmd/refresh")...) //nolint:gosec,noctx // fixed arguments; nothing to cancel it
 		build.Stderr = os.Stderr
 		if err := build.Run(); err != nil {
 			fmt.Fprintln(os.Stderr, "building the v2 binary:", err)
