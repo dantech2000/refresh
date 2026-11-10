@@ -185,7 +185,7 @@ func TestFetch_Updates(t *testing.T) {
 		}
 		failed := snap.Have.Updates == fleet.Failed && errors.Is(snap.UpdatesErr, context.Canceled)
 		notAttempted := snap.Have.Updates == fleet.NotAttempted && snap.UpdatesErr == nil
-		if !(failed || notAttempted) || len(snap.Updates) != 0 {
+		if ended := failed || notAttempted; !ended || len(snap.Updates) != 0 {
 			t.Errorf("updates %s, %v, %v; want Failed with the error of the context, or NotAttempted, and none collected", snap.Have.Updates, snap.UpdatesErr, snap.Updates)
 		}
 	})
