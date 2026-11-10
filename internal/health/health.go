@@ -242,8 +242,8 @@ func skip(c Check, in *Input) (Result, bool) {
 	return Result{}, false
 }
 
-// Document returns the document form of a result.
-func Document(r Result) apidoc.HealthResult {
+// document returns the document form of a result.
+func document(r Result) apidoc.HealthResult {
 	return apidoc.HealthResult{
 		Name:     r.Name,
 		Outcome:  apidoc.HealthOutcome(r.Outcome),
@@ -258,7 +258,7 @@ func Document(r Result) apidoc.HealthResult {
 func Documents(results []Result) []apidoc.HealthResult {
 	out := make([]apidoc.HealthResult, len(results))
 	for i, r := range results {
-		out[i] = Document(r)
+		out[i] = document(r)
 	}
 	return out
 }

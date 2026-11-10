@@ -69,31 +69,26 @@ func InsightDoc(id, name *string, category ekstypes.Category, status *ekstypes.I
 	return doc
 }
 
-// InsightsInput is what the Insights check judges: the insights of one
+// insightsInput is what the Insights check judges: the insights of one
 // category, or the error of reading them.
-type InsightsInput struct {
+type insightsInput struct {
 	Insights []apidoc.Insight
 	Err      error
 	// Category is the category that was read. "" is UPGRADE_READINESS.
 	Category string
-	// ForVersion, when set, keeps the insights about that Kubernetes
-	// version only, and makes "no insight" a failure: the upgrade gate
-	// refreshes the insights first, so none means that EKS has not
-	// evaluated the version.
-	ForVersion fleet.Version
 }
 
-// Insights checks the EKS cluster insights: an ERROR insight blocks, and
+// insightsCheck checks the EKS cluster insights: an ERROR insight blocks, and
 // so does an UNKNOWN one, which EKS could not evaluate. A WARNING insight
 // warns. No insight at all in UPGRADE_READINESS warns too: EKS has not
 // evaluated the cluster yet.
-func Insights(in InsightsInput) Check {
+func insightsCheck(in insightsInput) Check {
 	return Check{Name: "Insights", Blocking: true, FailClosed: true, Run: func(_ context.Context, run *Input) Result {
 		return runInsights(in, run.Snapshot.Cluster.Name)
 	}}
 }
 
-func runInsights(in InsightsInput, cluster string) Result {
+func runInsights(in insightsInput, cluster string) Result {
 	if in.Err != nil {
 		f := fleet.FailureFromError(apidoc.FailureCluster, cluster, in.Err)
 		return Result{Outcome: Unreadable, Message: "could not read the cluster insights: " + f.Error + failureAction(f), Failures: []apidoc.Failure{f}}
@@ -101,11 +96,6 @@ func runInsights(in InsightsInput, cluster string) Result {
 	var errs, unknown, warnings []string
 	total := 0
 	for _, i := range in.Insights {
-		if !in.ForVersion.IsZero() {
-			if v, err := fleet.ParseVersion(i.KubernetesVersion); err != nil || v != in.ForVersion {
-				continue
-			}
-		}
 		total++
 		switch i.Status {
 		case string(ekstypes.InsightStatusValuePassing):
@@ -133,8 +123,6 @@ func runInsights(in InsightsInput, cluster string) Result {
 	switch {
 	case len(parts) > 0:
 		r.Outcome, r.Message = Fail, strings.Join(parts, "; ")
-	case total == 0 && !in.ForVersion.IsZero():
-		r.Outcome, r.Message = Fail, fmt.Sprintf("EKS has no insight for Kubernetes %s yet", in.ForVersion)
 	case total == 0 && category == CategoryUpgradeReadiness:
 		r.Outcome, r.Message = Warn, "EKS has not evaluated the upgrade insights of the cluster yet"
 	case len(warnings) > 0:
