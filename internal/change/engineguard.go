@@ -125,7 +125,7 @@ func (r *runner) guardRollback(cp *ClusterPlan, res StepResult, snap *fleet.Snap
 	if !ok {
 		return res, true
 	}
-	blockers, failures, err := RollbackStillEligible(snap, req, rollbackInputs(r.readCtx, r.d, r.d.AWS.Clients(cp.Region), cp.Cluster), cp.To)
+	blockers, failures, err := RollbackStillEligible(snap, req, rollbackInputs(r.readCtx, r.d, r.d.AWS.Clients(cp.Region), cp.Cluster, nil), cp.To)
 	if ended := r.readCtx.Err(); ended != nil {
 		return r.unsent(cp, res, ended), false
 	}
