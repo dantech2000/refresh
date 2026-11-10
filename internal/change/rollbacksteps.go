@@ -33,7 +33,7 @@ func (p *rollbackPlanner) workSteps() {
 //  7. Otherwise: Submit.
 //
 // The control plane does not roll back while a nodegroup of row 4 or 5
-// is above the target: see RollbackControlPlaneBlockers.
+// is above the target: see rollbackControlPlaneBlockers.
 func (p *rollbackPlanner) nodegroupSteps() []Step {
 	target := p.cp.To
 	phase := PhaseRef{Target: p.cp.Target, Kind: PhaseNodegroups}

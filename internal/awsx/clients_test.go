@@ -1,4 +1,4 @@
-package awsx_test
+package awsx
 
 import (
 	"context"
@@ -16,7 +16,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	"github.com/aws/smithy-go"
 
-	"github.com/dantech2000/refresh/internal/awsx"
 	"github.com/dantech2000/refresh/internal/awsx/awsxtest"
 	"github.com/dantech2000/refresh/internal/fleet/fleettest"
 )
@@ -25,13 +24,13 @@ const region = "us-east-1"
 
 // noBackoff makes a retry follow its failed attempt at once, so a test of
 // the attempt count does not wait.
-func noBackoff(o *awsx.ProviderOptions) {
+func noBackoff(o *ProviderOptions) {
 	o.Backoff = retry.BackoffDelayerFunc(func(int, error) (time.Duration, error) { return 0, nil })
 }
 
 // newServer starts a fake AWS with one cluster and returns it with a
 // provider that reaches it.
-func newServer(t *testing.T) (*fleettest.World, *awsxtest.Server, *awsx.Provider) {
+func newServer(t *testing.T) (*fleettest.World, *awsxtest.Server, *Provider) {
 	t.Helper()
 	world := fleettest.New()
 	world.Edit(func(s *fleettest.State) {
@@ -43,15 +42,15 @@ func newServer(t *testing.T) (*fleettest.World, *awsxtest.Server, *awsx.Provider
 	})
 	srv := awsxtest.NewServer(world)
 	t.Cleanup(srv.Close)
-	return world, srv, awsx.NewProvider(srv.Config(region), noBackoff)
+	return world, srv, NewProvider(srv.Config(region), noBackoff)
 }
 
 // clientsFor returns the clients of provider for the policy.
-func clientsFor(provider *awsx.Provider, policy awsx.Policy) *awsx.Clients {
+func clientsFor(provider *Provider, policy Policy) *Clients {
 	switch policy {
-	case awsx.Sweep:
+	case Sweep:
 		return provider.SweepClients(region).Clients
-	case awsx.Poll:
+	case Poll:
 		return provider.PollClients(region).Clients
 	}
 	return provider.Clients(region)
@@ -81,7 +80,7 @@ func testContext(t *testing.T) context.Context {
 // requests one call makes. The server's request log counts them, so a
 // second retry layer anywhere would show.
 func TestPolicyRequestCounts(t *testing.T) {
-	policies := []awsx.Policy{awsx.Standard, awsx.Sweep, awsx.Poll}
+	policies := []Policy{Standard, Sweep, Poll}
 	tests := []struct {
 		name  string
 		fault fleettest.Fault
@@ -105,31 +104,31 @@ func TestPolicyRequestCounts(t *testing.T) {
 			name:    "throttled forever",
 			fault:   fleettest.Fault{Throttle: 1000},
 			want:    [3]int{5, 5, 1},
-			wantErr: awsx.IsThrottling,
+			wantErr: IsThrottling,
 		},
 		{
 			name:    "access denied",
 			fault:   fleettest.Fault{Deny: true},
 			want:    [3]int{1, 1, 1},
-			wantErr: awsx.IsPermissionError,
+			wantErr: isPermissionError,
 		},
 		{
 			name:    "server error",
 			fault:   fleettest.Fault{Code: "InternalServerException", Status: 500},
 			want:    [3]int{5, 5, 1},
-			wantErr: awsx.IsServerError,
+			wantErr: isServerError,
 		},
 		{
 			name:    "validation error",
 			fault:   fleettest.Fault{Code: "InvalidParameterException", Status: 400},
 			want:    [3]int{1, 1, 1},
-			wantErr: awsx.IsValidation,
+			wantErr: isValidation,
 		},
 		{
 			name:    "connection reset",
 			fault:   fleettest.Fault{Reset: true},
 			want:    [3]int{5, 5, 1},
-			wantErr: awsx.IsNetworkError,
+			wantErr: isNetworkError,
 		},
 	}
 	for _, tt := range tests {
@@ -143,7 +142,7 @@ func TestPolicyRequestCounts(t *testing.T) {
 				if got := count(srv, fleettest.EKSListClusters); got != tt.want[i] {
 					t.Errorf("requests = %d, want %d", got, tt.want[i])
 				}
-				wantErr := tt.wantErr != nil || (tt.pollErr && policy == awsx.Poll)
+				wantErr := tt.wantErr != nil || (tt.pollErr && policy == Poll)
 				switch {
 				case !wantErr && err != nil:
 					t.Errorf("error = %v, want success", err)
@@ -160,7 +159,7 @@ func TestPolicyRequestCounts(t *testing.T) {
 // A request that hangs is sent once: when the context ends, the call ends,
 // and an ended context is never retried.
 func TestHangIsNotRetried(t *testing.T) {
-	for _, policy := range []awsx.Policy{awsx.Standard, awsx.Sweep, awsx.Poll} {
+	for _, policy := range []Policy{Standard, Sweep, Poll} {
 		t.Run(policy.String(), func(t *testing.T) {
 			world, srv, provider := newServer(t)
 			world.SetFault(fleettest.EKSListClusters, fleettest.Fault{Hang: true})
@@ -193,56 +192,41 @@ func TestHangIsNotRetried(t *testing.T) {
 }
 
 // TestMutateRetryStartsOneUpdate: the answer to an update call is lost after
-// the update started. The retry carries the same client request token, so
-// the world has one update.
+// the update started. The retry carries the client request token that the
+// SDK filled, so the world has one update.
 func TestMutateRetryStartsOneUpdate(t *testing.T) {
-	tests := []struct {
-		name  string
-		token *string // nil lets the SDK fill the token
-	}{
-		{name: "token from the SDK"},
-		{name: "token from the caller", token: aws.String(awsx.IdempotencyToken())},
+	world, srv, provider := newServer(t)
+	world.SetFault(fleettest.EKSUpdateNodegroupVersion, fleettest.Fault{LoseResponse: 1})
+
+	out, err := provider.Clients(region).EKS.UpdateNodegroupVersion(testContext(t), &eks.UpdateNodegroupVersionInput{
+		ClusterName:   aws.String("prod"),
+		NodegroupName: aws.String("ng-a"),
+	})
+	if err != nil {
+		t.Fatalf("UpdateNodegroupVersion: %v", err)
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			world, srv, provider := newServer(t)
-			world.SetFault(fleettest.EKSUpdateNodegroupVersion, fleettest.Fault{LoseResponse: 1})
 
-			out, err := provider.Clients(region).EKS.UpdateNodegroupVersion(testContext(t), &eks.UpdateNodegroupVersionInput{
-				ClusterName:        aws.String("prod"),
-				NodegroupName:      aws.String("ng-a"),
-				ClientRequestToken: tt.token,
-			})
-			if err != nil {
-				t.Fatalf("UpdateNodegroupVersion: %v", err)
-			}
-
-			var sent []awsxtest.Request
-			for _, r := range srv.Requests() {
-				if r.Operation == fleettest.EKSUpdateNodegroupVersion {
-					sent = append(sent, r)
-				}
-			}
-			if len(sent) != 2 {
-				t.Fatalf("requests = %d, want 2: the lost one and its retry", len(sent))
-			}
-			first, second := sent[0].Input["clientRequestToken"], sent[1].Input["clientRequestToken"]
-			if first == nil || first == "" || first != second {
-				t.Errorf("client request tokens = %v, %v; want one token twice", first, second)
-			}
-			if tt.token != nil && first != *tt.token {
-				t.Errorf("client request token = %v, want the caller's %q", first, *tt.token)
-			}
-			var ids []string
-			world.View(func(s *fleettest.State) {
-				for _, u := range s.Cluster(region, "prod").Updates {
-					ids = append(ids, u.ID)
-				}
-			})
-			if len(ids) != 1 || ids[0] != aws.ToString(out.Update.Id) {
-				t.Errorf("updates in the world = %v, want only %q", ids, aws.ToString(out.Update.Id))
-			}
-		})
+	var sent []awsxtest.Request
+	for _, r := range srv.Requests() {
+		if r.Operation == fleettest.EKSUpdateNodegroupVersion {
+			sent = append(sent, r)
+		}
+	}
+	if len(sent) != 2 {
+		t.Fatalf("requests = %d, want 2: the lost one and its retry", len(sent))
+	}
+	first, second := sent[0].Input["clientRequestToken"], sent[1].Input["clientRequestToken"]
+	if first == nil || first == "" || first != second {
+		t.Errorf("client request tokens = %v, %v; want one token twice", first, second)
+	}
+	var ids []string
+	world.View(func(s *fleettest.State) {
+		for _, u := range s.Cluster(region, "prod").Updates {
+			ids = append(ids, u.ID)
+		}
+	})
+	if len(ids) != 1 || ids[0] != aws.ToString(out.Update.Id) {
+		t.Errorf("updates in the world = %v, want only %q", ids, aws.ToString(out.Update.Id))
 	}
 }
 
@@ -253,7 +237,7 @@ func TestPollDoesNotRetryALostResponse(t *testing.T) {
 
 	_, err := provider.PollClients(region).EKS.ListClusters(testContext(t), &eks.ListClustersInput{})
 
-	if err == nil || awsx.IsPermanentAPIError(err) || !awsx.IsRetryable(err) {
+	if err == nil || IsPermanentAPIError(err) || !isRetryable(err) {
 		t.Errorf("error = %v, want a transient error that a wait loop polls through", err)
 	}
 	if got := count(srv, fleettest.EKSListClusters); got != 1 {
@@ -265,7 +249,7 @@ func TestProviderCachesClients(t *testing.T) {
 	_, _, provider := newServer(t)
 
 	standard := provider.Clients(region)
-	if standard.Region != region || standard.Policy != awsx.Standard {
+	if standard.Region != region || standard.Policy != Standard {
 		t.Errorf("Clients() are for %s with %v, want %s with Standard", standard.Region, standard.Policy, region)
 	}
 	if provider.Clients(region) != standard {
@@ -278,10 +262,10 @@ func TestProviderCachesClients(t *testing.T) {
 		t.Errorf("Region() = %q, want %q", provider.Region(), region)
 	}
 	sweep, poll := provider.SweepClients(region), provider.PollClients(region)
-	if sweep.Policy != awsx.Sweep || sweep.Region != region {
+	if sweep.Policy != Sweep || sweep.Region != region {
 		t.Errorf("SweepClients() are for %s with %v", sweep.Region, sweep.Policy)
 	}
-	if poll.Policy != awsx.Poll || poll.Region != region {
+	if poll.Policy != Poll || poll.Region != region {
 		t.Errorf("PollClients() are for %s with %v", poll.Region, poll.Policy)
 	}
 	if sweep.Clients == standard || poll.Clients == standard || sweep.Clients == poll.Clients {
@@ -301,12 +285,12 @@ func TestProviderCachesClients(t *testing.T) {
 // policy.
 func TestMaxAttemptsSettingDoesNotChangeAPolicy(t *testing.T) {
 	tests := []struct {
-		policy awsx.Policy
+		policy Policy
 		want   int
 	}{
-		{policy: awsx.Standard, want: 5},
-		{policy: awsx.Sweep, want: 5},
-		{policy: awsx.Poll, want: 1},
+		{policy: Standard, want: 5},
+		{policy: Sweep, want: 5},
+		{policy: Poll, want: 1},
 	}
 	for _, tt := range tests {
 		t.Run(tt.policy.String(), func(t *testing.T) {
@@ -317,11 +301,11 @@ func TestMaxAttemptsSettingDoesNotChangeAPolicy(t *testing.T) {
 			cfg := srv.Config(region)
 			cfg.RetryMaxAttempts = 2 // what AWS_MAX_ATTEMPTS=2 loads
 			cfg.RetryMode = aws.RetryModeAdaptive
-			provider := awsx.NewProvider(cfg, noBackoff)
+			provider := NewProvider(cfg, noBackoff)
 
 			_, err := clientsFor(provider, tt.policy).EKS.ListClusters(testContext(t), &eks.ListClustersInput{})
 
-			if !awsx.IsThrottling(err) {
+			if !IsThrottling(err) {
 				t.Errorf("error = %v, want the throttling error", err)
 			}
 			if got := count(srv, fleettest.EKSListClusters); got != tt.want {
@@ -342,7 +326,7 @@ func TestThrottlingHasNoRetryQuota(t *testing.T) {
 
 	for i := range calls {
 		_, err := client.ListClusters(testContext(t), &eks.ListClustersInput{})
-		if !awsx.IsThrottling(err) {
+		if !IsThrottling(err) {
 			t.Fatalf("call %d: error = %v, want the throttling error", i+1, err)
 		}
 	}
@@ -399,7 +383,7 @@ func TestListAll(t *testing.T) {
 	world.SetFault(fleettest.EKSListClusters, fleettest.Fault{PageSize: 2})
 	client := provider.Clients(region).EKS
 
-	got, err := awsx.ListAll(testContext(t),
+	got, err := ListAll(testContext(t),
 		func(ctx context.Context, token *string) (*eks.ListClustersOutput, error) {
 			return client.ListClusters(ctx, &eks.ListClustersInput{NextToken: token})
 		},
@@ -446,7 +430,7 @@ func TestListAllErrors(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			calls := 0
-			got, err := awsx.ListAll(context.Background(),
+			got, err := ListAll(context.Background(),
 				func(context.Context, *string) (page, error) {
 					p := tt.pages[calls]
 					calls++
@@ -477,7 +461,7 @@ type page struct {
 func TestListAllStopsWhenCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	calls := 0
-	_, err := awsx.ListAll(ctx,
+	_, err := ListAll(ctx,
 		func(context.Context, *string) (page, error) {
 			calls++
 			cancel() // the caller gives up while the first page is read
@@ -512,11 +496,11 @@ func TestIsPermanentAPIError(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := awsx.IsPermanentAPIError(tt.err); got != tt.want {
+			if got := IsPermanentAPIError(tt.err); got != tt.want {
 				t.Errorf("IsPermanentAPIError() = %t, want %t", got, tt.want)
 			}
-			if tt.err != nil && tt.want == awsx.IsRetryable(tt.err) && !errors.Is(tt.err, context.DeadlineExceeded) {
-				t.Errorf("IsRetryable() = %t for an API error that is permanent = %t", !tt.want, tt.want)
+			if tt.err != nil && tt.want == isRetryable(tt.err) && !errors.Is(tt.err, context.DeadlineExceeded) {
+				t.Errorf("isRetryable() = %t for an API error that is permanent = %t", !tt.want, tt.want)
 			}
 		})
 	}

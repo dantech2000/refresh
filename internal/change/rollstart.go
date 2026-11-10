@@ -10,7 +10,7 @@ import (
 	"github.com/dantech2000/refresh/internal/awsx"
 )
 
-// StartNodegroupRoll asks EKS to roll the nodegroup onto the latest AMI of
+// startNodegroupRoll asks EKS to roll the nodegroup onto the latest AMI of
 // version, and returns the ID of the update. The ID is "" when EKS
 // accepted the request and returned no update.
 //
@@ -29,7 +29,7 @@ import (
 // update, also when the answer to the first attempt was lost. A later
 // call is a new request with a new token. The error is the error of the
 // SDK: the caller says what it was doing.
-func StartNodegroupRoll(ctx context.Context, c *awsx.Clients, t Target, nodegroup, version string, force bool) (updateID string, err error) {
+func startNodegroupRoll(ctx context.Context, c *awsx.Clients, t Target, nodegroup, version string, force bool) (updateID string, err error) {
 	if version == "" {
 		return "", fmt.Errorf("nodegroup %s/%s: no Kubernetes version to pin the roll to; a roll without one could become a version upgrade, so nothing was sent", t.Cluster, nodegroup)
 	}

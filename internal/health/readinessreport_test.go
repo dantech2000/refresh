@@ -21,7 +21,7 @@ func TestReadinessOfReasons(t *testing.T) {
 	want := []Reason{
 		{Check: "VersionSkew", Outcome: Fail, Message: "1 nodegroup at the kubelet skew limit"},
 		{Check: "Insights", Outcome: Warn, Message: "1 insight warns"},
-		{Check: SupportReason, Outcome: Warn, Message: "the cluster is in extended support"},
+		{Check: supportReason, Outcome: Warn, Message: "the cluster is in extended support"},
 	}
 	if diff := cmp.Diff(want, reasons); diff != "" {
 		t.Errorf("reasons (-want +got):\n%s", diff)

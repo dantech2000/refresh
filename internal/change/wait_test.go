@@ -36,8 +36,8 @@ func startUpdate(t *testing.T, e *env, script fleettest.UpdateScript) string {
 // recorder collects the progress of a wait.
 type recorder struct{ polls []UpdateProgress }
 
-func (r *recorder) options(e *env) WaitOptions {
-	return WaitOptions{Interval: 15 * time.Second, After: e.deps.After, Progress: func(p UpdateProgress) { r.polls = append(r.polls, p) }}
+func (r *recorder) options(e *env) waitOptions {
+	return waitOptions{Interval: 15 * time.Second, After: e.deps.After, Progress: func(p UpdateProgress) { r.polls = append(r.polls, p) }}
 }
 
 // statuses returns the status of each poll, or its error.
@@ -113,7 +113,7 @@ func TestWaitUpdate_TerminalStatuses(t *testing.T) {
 			id := startUpdate(t, e, tt.script)
 			start, before := e.world.Now(), len(e.srv.Requests())
 			var rec recorder
-			err := WaitUpdate(testContext(t), e.deps.AWS.PollClients(east), cni, id, rec.options(e))
+			err := waitUpdate(testContext(t), e.deps.AWS.PollClients(east), cni, id, rec.options(e))
 			tt.check(t, err)
 			if diff := cmp.Diff(tt.wantPolls, rec.statuses()); diff != "" {
 				t.Errorf("polls (-want +got):\n%s", diff)
@@ -147,7 +147,7 @@ func TestWaitUpdate_NotFound(t *testing.T) {
 			}
 		})
 		var rec recorder
-		if err := WaitUpdate(testContext(t), e.deps.AWS.PollClients(east), cni, id, rec.options(e)); err != nil {
+		if err := waitUpdate(testContext(t), e.deps.AWS.PollClients(east), cni, id, rec.options(e)); err != nil {
 			t.Fatalf("error = %v, want none", err)
 		}
 		if diff := cmp.Diff([]string{"error", "error", "Successful"}, rec.statuses()); diff != "" {
@@ -159,7 +159,7 @@ func TestWaitUpdate_NotFound(t *testing.T) {
 		id := startUpdate(t, e, fleettest.UpdateScript{Never: true})
 		e.world.SetFault(fleettest.EKSDescribeUpdate, fleettest.Fault{Code: "ResourceNotFoundException"})
 		start := e.world.Now()
-		err := WaitUpdate(testContext(t), e.deps.AWS.PollClients(east), cni, id, (&recorder{}).options(e))
+		err := waitUpdate(testContext(t), e.deps.AWS.PollClients(east), cni, id, (&recorder{}).options(e))
 		var unobserved *UnobservedError
 		if !errors.As(err, &unobserved) || unobserved.LastStatus != "" || unobserved.UpdateID != id {
 			t.Fatalf("error = %v, want an *UnobservedError for the update that was never seen", err)
@@ -180,7 +180,7 @@ func TestWaitUpdate_NotFound(t *testing.T) {
 				e.world.SetFault(fleettest.EKSDescribeUpdate, fleettest.Fault{Code: "ResourceNotFoundException"})
 			}
 		})
-		err := WaitUpdate(testContext(t), e.deps.AWS.PollClients(east), cni, id, (&recorder{}).options(e))
+		err := waitUpdate(testContext(t), e.deps.AWS.PollClients(east), cni, id, (&recorder{}).options(e))
 		var unobserved *UnobservedError
 		if !errors.As(err, &unobserved) || unobserved.LastStatus != "InProgress" {
 			t.Fatalf("error = %v, want an *UnobservedError after InProgress", err)
@@ -194,7 +194,7 @@ func TestWaitUpdate_ThrottledPoll(t *testing.T) {
 	id := startUpdate(t, e, fleettest.UpdateScript{After: 20 * time.Second})
 	e.world.SetFault(fleettest.EKSDescribeUpdate, fleettest.Fault{Throttle: 2})
 	var rec recorder
-	if err := WaitUpdate(testContext(t), e.deps.AWS.PollClients(east), cni, id, rec.options(e)); err != nil {
+	if err := waitUpdate(testContext(t), e.deps.AWS.PollClients(east), cni, id, rec.options(e)); err != nil {
 		t.Fatalf("error = %v, want none", err)
 	}
 	if diff := cmp.Diff([]string{"error", "error", "Successful"}, rec.statuses()); diff != "" {
@@ -218,7 +218,7 @@ func TestWaitUpdate_AccessDenied(t *testing.T) {
 			e.world.SetFault(fleettest.EKSDescribeUpdate, fleettest.Fault{Deny: true})
 		}
 	})
-	err := WaitUpdate(testContext(t), e.deps.AWS.PollClients(east), cni, id, (&recorder{}).options(e))
+	err := waitUpdate(testContext(t), e.deps.AWS.PollClients(east), cni, id, (&recorder{}).options(e))
 	var unobserved *UnobservedError
 	if !errors.As(err, &unobserved) {
 		t.Fatalf("error = %v, want an *UnobservedError", err)
@@ -247,7 +247,7 @@ func TestWaitUpdate_EmptyAnswer(t *testing.T) {
 		return false
 	})
 	var rec recorder
-	if err := WaitUpdate(testContext(t), deps.AWS.PollClients(east), cni, id, rec.options(e)); err != nil {
+	if err := waitUpdate(testContext(t), deps.AWS.PollClients(east), cni, id, rec.options(e)); err != nil {
 		t.Fatalf("error = %v, want none", err)
 	}
 	if diff := cmp.Diff([]string{"error", "error", "Successful"}, rec.statuses()); diff != "" {
@@ -258,7 +258,7 @@ func TestWaitUpdate_EmptyAnswer(t *testing.T) {
 // A wait with no update ID cannot follow anything.
 func TestWaitUpdate_NoUpdateID(t *testing.T) {
 	e := newEnv(t, newWorld(nil))
-	err := WaitUpdate(testContext(t), e.deps.AWS.PollClients(east), cni, "", (&recorder{}).options(e))
+	err := waitUpdate(testContext(t), e.deps.AWS.PollClients(east), cni, "", (&recorder{}).options(e))
 	var unobserved *UnobservedError
 	if !errors.As(err, &unobserved) {
 		t.Fatalf("error = %v, want an *UnobservedError", err)
@@ -290,7 +290,7 @@ func TestWaitUpdate_ContextEnds(t *testing.T) {
 				}
 				return e.deps.After(d)
 			}
-			err := WaitUpdate(ctx, e.deps.AWS.PollClients(east), cni, id, opts)
+			err := waitUpdate(ctx, e.deps.AWS.PollClients(east), cni, id, opts)
 			if !errors.Is(err, context.Canceled) || !strings.Contains(err.Error(), "(last status InProgress)") {
 				t.Fatalf("error = %v, want the error of the context with the last status", err)
 			}
@@ -304,7 +304,7 @@ func TestWaitUpdate_ContextEnds(t *testing.T) {
 	}
 }
 
-// WaitSettled hands every answer to done, and returns the state that done
+// waitSettled hands every answer to done, and returns the state that done
 // accepted.
 func TestWaitSettled_Addon(t *testing.T) {
 	t.Run("an update that ends ACTIVE", func(t *testing.T) {
@@ -312,11 +312,11 @@ func TestWaitSettled_Addon(t *testing.T) {
 		startUpdate(t, e, fleettest.UpdateScript{After: 40 * time.Second})
 		before := len(e.srv.Requests())
 		var rec recorder
-		got, err := WaitSettled(testContext(t), e.deps.AWS.PollClients(east), cni, addonSettled, rec.options(e))
+		got, err := waitSettled(testContext(t), e.deps.AWS.PollClients(east), cni, addonSettled, rec.options(e))
 		if err != nil {
 			t.Fatalf("error = %v", err)
 		}
-		if diff := cmp.Diff(Settled{Status: "ACTIVE", Version: cniNew}, got); diff != "" {
+		if diff := cmp.Diff(settledResource{Status: "ACTIVE", Version: cniNew}, got); diff != "" {
 			t.Errorf("settled (-want +got):\n%s", diff)
 		}
 		if diff := cmp.Diff([]string{"UPDATING", "UPDATING", "ACTIVE"}, rec.statuses()); diff != "" {
@@ -333,7 +333,7 @@ func TestWaitSettled_Addon(t *testing.T) {
 		issues := []fleettest.Issue{{Code: "ConfigurationConflict", Message: "conflict: a field is managed twice", ResourceIDs: []string{"kube-system/aws-node"}}}
 		startUpdate(t, e, fleettest.UpdateScript{After: 15 * time.Second, ResourceIssues: issues})
 		var rec recorder
-		got, err := WaitSettled(testContext(t), e.deps.AWS.PollClients(east), cni, addonSettled, rec.options(e))
+		got, err := waitSettled(testContext(t), e.deps.AWS.PollClients(east), cni, addonSettled, rec.options(e))
 		if err != nil {
 			t.Fatalf("error = %v", err)
 		}
@@ -346,7 +346,7 @@ func TestWaitSettled_Addon(t *testing.T) {
 		t.Run("an update that ends "+string(status), func(t *testing.T) {
 			e := newEnv(t, newWorld(nil))
 			startUpdate(t, e, fleettest.UpdateScript{After: 15 * time.Second, Result: fleettest.UpdateFailed, ResourceStatus: status})
-			got, err := WaitSettled(testContext(t), e.deps.AWS.PollClients(east), cni, addonSettled, (&recorder{}).options(e))
+			got, err := waitSettled(testContext(t), e.deps.AWS.PollClients(east), cni, addonSettled, (&recorder{}).options(e))
 			if err == nil || err.Error() != "the add-on update failed: status "+string(status) {
 				t.Fatalf("error = %v", err)
 			}
@@ -365,7 +365,7 @@ func TestWaitSettled_Addon(t *testing.T) {
 			}
 		})
 		var rec recorder
-		_, err := WaitSettled(testContext(t), e.deps.AWS.PollClients(east), cni, addonSettled, rec.options(e))
+		_, err := waitSettled(testContext(t), e.deps.AWS.PollClients(east), cni, addonSettled, rec.options(e))
 		var unobserved *UnobservedError
 		if !errors.As(err, &unobserved) || unobserved.LastStatus != "UPDATING" {
 			t.Fatalf("error = %v, want an *UnobservedError after UPDATING", err)
@@ -377,7 +377,7 @@ func TestWaitSettled_Addon(t *testing.T) {
 	t.Run("an add-on that does not exist", func(t *testing.T) {
 		e := newEnv(t, newWorld(nil))
 		gone := Resource{Target: prod, Kind: StepAddon, Name: "gone"}
-		_, err := WaitSettled(testContext(t), e.deps.AWS.PollClients(east), gone, addonSettled, (&recorder{}).options(e))
+		_, err := waitSettled(testContext(t), e.deps.AWS.PollClients(east), gone, addonSettled, (&recorder{}).options(e))
 		var unobserved *UnobservedError
 		if !errors.As(err, &unobserved) {
 			t.Fatalf("error = %v, want an *UnobservedError", err)
@@ -393,27 +393,27 @@ func TestWaitSettled_Addon(t *testing.T) {
 				cancel()
 			}
 		})
-		_, err := WaitSettled(ctx, e.deps.AWS.PollClients(east), cni, addonSettled, (&recorder{}).options(e))
+		_, err := waitSettled(ctx, e.deps.AWS.PollClients(east), cni, addonSettled, (&recorder{}).options(e))
 		if !errors.Is(err, context.Canceled) || !strings.Contains(err.Error(), "waiting for add-on vpc-cni (last status UPDATING)") {
 			t.Fatalf("error = %v", err)
 		}
 	})
 }
 
-// WaitSettled reads a nodegroup with its sizes, and a cluster.
+// waitSettled reads a nodegroup with its sizes, and a cluster.
 func TestWaitSettled_NodegroupAndCluster(t *testing.T) {
 	e := newEnv(t, newWorld(func(c *fleettest.Cluster) {
 		c.Nodegroups[0].Desired, c.Nodegroups[0].Min, c.Nodegroups[0].Max = 4, 2, 6
 	}))
 	poll := e.deps.AWS.PollClients(east)
-	first := func(Settled) (bool, error) { return true, nil }
+	first := func(settledResource) (bool, error) { return true, nil }
 
 	web := Resource{Target: prod, Kind: StepNodegroup, Name: "web"}
-	got, err := WaitSettled(testContext(t), poll, web, first, (&recorder{}).options(e))
+	got, err := waitSettled(testContext(t), poll, web, first, (&recorder{}).options(e))
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := Settled{Status: "ACTIVE", Version: "1.33", Release: "1.33.0-20260101", AMIType: "AL2023_x86_64_STANDARD", Sizes: Sizes{Desired: 4, Min: 2, Max: 6}}
+	want := settledResource{Status: "ACTIVE", Version: "1.33", Release: "1.33.0-20260101", AMIType: "AL2023_x86_64_STANDARD", Sizes: Sizes{Desired: 4, Min: 2, Max: 6}}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("nodegroup (-want +got):\n%s", diff)
 	}
@@ -423,7 +423,7 @@ func TestWaitSettled_NodegroupAndCluster(t *testing.T) {
 	e.world.Edit(func(s *fleettest.State) { s.Cluster(east, "prod").Status = fleettest.StatusUpdating })
 	var seen []string
 	stop := errors.New("stop")
-	_, err = WaitSettled(testContext(t), poll, Resource{Target: prod, Kind: StepControlPlane}, func(s Settled) (bool, error) {
+	_, err = waitSettled(testContext(t), poll, Resource{Target: prod, Kind: StepControlPlane}, func(s settledResource) (bool, error) {
 		seen = append(seen, s.Status+" "+s.Version)
 		if len(seen) == 2 {
 			return false, stop
@@ -446,12 +446,12 @@ func TestWaitSettled_NodegroupAndCluster(t *testing.T) {
 // The default interval and the default clock: a wait with no options
 // uses time.After, which a context that has ended beats.
 func TestWaitOptionsDefaults(t *testing.T) {
-	if got := (WaitOptions{}).interval(); got != DefaultPollInterval {
+	if got := (waitOptions{}).interval(); got != DefaultPollInterval {
 		t.Errorf("interval = %s, want %s", got, DefaultPollInterval)
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if (WaitOptions{}).pause(ctx) {
+	if (waitOptions{}).pause(ctx) {
 		t.Error("pause went on under a context that has ended")
 	}
 }
@@ -482,7 +482,7 @@ func newExpiringEnv(t *testing.T, world *fleettest.World) (*env, *expiringCreden
 // cancelOnPollError returns wait options that cancel the wait at a poll
 // error that the wait went on through, so a wait that does not stop by
 // itself ends the test instead of polling forever.
-func cancelOnPollError(e *env, cancel context.CancelFunc, polls *int) WaitOptions {
+func cancelOnPollError(e *env, cancel context.CancelFunc, polls *int) waitOptions {
 	o := (&recorder{}).options(e)
 	o.Progress = func(p UpdateProgress) {
 		if p.PollError != "" {
@@ -498,7 +498,7 @@ func cancelOnPollError(e *env, cancel context.CancelFunc, polls *int) WaitOption
 // it is sent. The error says that the change may still be running, with
 // its update ID.
 func TestWait_CredentialsFail(t *testing.T) {
-	t.Run("WaitUpdate", func(t *testing.T) {
+	t.Run("waitUpdate", func(t *testing.T) {
 		e, creds := newExpiringEnv(t, newWorld(nil))
 		id := startUpdate(t, e, fleettest.UpdateScript{Never: true})
 		e.onRequest(fleettest.EKSDescribeUpdate, func(n int) {
@@ -509,7 +509,7 @@ func TestWait_CredentialsFail(t *testing.T) {
 		ctx, cancel := context.WithCancel(testContext(t))
 		defer cancel()
 		var retried int
-		err := WaitUpdate(ctx, e.deps.AWS.PollClients(east), cni, id, cancelOnPollError(e, cancel, &retried))
+		err := waitUpdate(ctx, e.deps.AWS.PollClients(east), cni, id, cancelOnPollError(e, cancel, &retried))
 		var unobserved *UnobservedError
 		if !errors.As(err, &unobserved) || !unobserved.Credentials() {
 			t.Fatalf("error = %v, want an *UnobservedError for the credentials (%d polls went on through it)", err, retried)
@@ -520,7 +520,7 @@ func TestWait_CredentialsFail(t *testing.T) {
 			}
 		}
 	})
-	t.Run("WaitSettled", func(t *testing.T) {
+	t.Run("waitSettled", func(t *testing.T) {
 		e, creds := newExpiringEnv(t, newWorld(nil))
 		startUpdate(t, e, fleettest.UpdateScript{Never: true})
 		e.onRequest(fleettest.EKSDescribeAddon, func(n int) {
@@ -531,7 +531,7 @@ func TestWait_CredentialsFail(t *testing.T) {
 		ctx, cancel := context.WithCancel(testContext(t))
 		defer cancel()
 		var retried int
-		_, err := WaitSettled(ctx, e.deps.AWS.PollClients(east), cni, addonSettled, cancelOnPollError(e, cancel, &retried))
+		_, err := waitSettled(ctx, e.deps.AWS.PollClients(east), cni, addonSettled, cancelOnPollError(e, cancel, &retried))
 		var unobserved *UnobservedError
 		if !errors.As(err, &unobserved) || !unobserved.Credentials() || unobserved.LastStatus != "UPDATING" {
 			t.Fatalf("error = %v, want an *UnobservedError for the credentials after UPDATING (%d polls went on through it)", err, retried)

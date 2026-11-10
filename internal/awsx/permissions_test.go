@@ -15,7 +15,7 @@ func TestPermissionErrorListsEveryAction(t *testing.T) {
 			}
 		}
 	}
-	if !strings.Contains(msg, PermissionsDocURL) {
+	if !strings.Contains(msg, permissionsDocURL) {
 		t.Error("the hint does not link the docs table")
 	}
 	if strings.Contains(msg, "`") {

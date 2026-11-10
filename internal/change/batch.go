@@ -148,7 +148,7 @@ func (r *runner) startRoll(cp *ClusterPlan, s Step) StepResult {
 //  6. Otherwise: UpdateNodegroupVersion, with the version of the fresh
 //     read, which is the version of the plan, and the force of the plan.
 //
-// Rows 2 to 5 compare everything that DecideAMIUpdate read for the plan
+// Rows 2 to 5 compare everything that decideAMIUpdate read for the plan
 // and that one DescribeNodegroup returns: the status, the AMI type, and
 // the AMI release version. sendRoll sends the request.
 func (r *runner) submitRoll(cp *ClusterPlan, s Step) StepResult {
@@ -199,7 +199,7 @@ func (r *runner) submitRoll(cp *ClusterPlan, s Step) StepResult {
 // followed.
 func (r *runner) sendRoll(cp *ClusterPlan, res StepResult, s Step, version string) StepResult {
 	res.StartedAt = r.d.now()
-	id, err := StartNodegroupRoll(r.readCtx, r.d.AWS.Clients(cp.Region), cp.Target, s.Ref.Name, version, s.Force)
+	id, err := startNodegroupRoll(r.readCtx, r.d.AWS.Clients(cp.Region), cp.Target, s.Ref.Name, version, s.Force)
 	res, _ = r.submitted(cp, res, id, err)
 	return res
 }
@@ -213,7 +213,7 @@ func orUnknown(s string) string {
 }
 
 // waitTogether waits for every accepted update of a batch on one ticker,
-// with the loop of WaitUpdate (waitUpdates), and turns what that reports
+// with the loop of waitUpdate (waitUpdates), and turns what that reports
 // into the events and the results of the steps, in plan order.
 //
 // A poll error that another poll will not fix settles its own step as
@@ -224,7 +224,7 @@ func orUnknown(s string) string {
 // paces the Auto Scaling watch beside the wait.
 func (r *runner) waitTogether(ctx context.Context, cp *ClusterPlan, ph Phase, started []int, results []StepResult, wait *budget, ticks chan<- struct{}) {
 	clients := r.d.AWS.PollClients(cp.Region)
-	o := WaitOptions{Interval: r.common.Limits.Poll, After: r.d.after, budget: wait}
+	o := waitOptions{Interval: r.common.Limits.Poll, After: r.d.after, budget: wait}
 	polls := make([]*updatePoll, len(started))
 	for n, i := range started {
 		polls[n] = newUpdatePoll(ph.Steps[i].Ref.Resource(), results[i].UpdateID)

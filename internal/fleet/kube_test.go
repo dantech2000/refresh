@@ -9,16 +9,14 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
-	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	k8sruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/client-go/kubernetes/fake"
-	k8stesting "k8s.io/client-go/testing"
+	"k8s.io/client-go/kubernetes"
 
 	"github.com/dantech2000/refresh/internal/apidoc"
 	"github.com/dantech2000/refresh/internal/fleet"
+	"github.com/dantech2000/refresh/internal/fleet/fleettest"
+	"github.com/dantech2000/refresh/internal/kube/kubetest"
 )
 
 // timeoutError is a net.Error that timed out, as the client's own timeout
@@ -68,40 +66,35 @@ func TestKubeFailure(t *testing.T) {
 	}
 }
 
-// kubeObjects are the nodes and pods of the cluster prod: ng-a has two
-// nodes, one of them not Ready, and ng-b has one. A node of no managed
-// nodegroup and pods in several states run beside them.
-func kubeObjects() []k8sruntime.Object {
-	node := func(name, nodegroup string, ready corev1.ConditionStatus) *corev1.Node {
-		n := &corev1.Node{
-			ObjectMeta: metav1.ObjectMeta{Name: name},
-			Status:     corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: ready}}},
-		}
-		if nodegroup != "" {
-			n.Labels = map[string]string{"eks.amazonaws.com/nodegroup": nodegroup}
-		}
-		return n
+// kubeWorld is a world with the cluster prod: ng-a has two nodes, one of
+// them not Ready, and ng-b has one. A node of no managed nodegroup and
+// pods in several states run beside them.
+func kubeWorld() *fleettest.World {
+	pod := func(namespace, name, node, phase string) *fleettest.Pod {
+		return &fleettest.Pod{Namespace: namespace, Name: name, Node: node, Phase: phase}
 	}
-	pod := func(namespace, name, node string, phase corev1.PodPhase) *corev1.Pod {
-		return &corev1.Pod{
-			ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: name},
-			Spec:       corev1.PodSpec{NodeName: node},
-			Status:     corev1.PodStatus{Phase: phase},
-		}
-	}
-	return []k8sruntime.Object{
-		node("a-1", "ng-a", corev1.ConditionTrue),
-		node("a-2", "ng-a", corev1.ConditionFalse),
-		node("b-1", "ng-b", corev1.ConditionTrue),
-		node("karpenter-1", "", corev1.ConditionTrue),
-		pod("default", "web-1", "a-1", corev1.PodRunning),
-		pod("default", "web-2", "a-2", corev1.PodRunning),
-		pod("kube-system", "coredns-1", "a-1", corev1.PodRunning),
-		pod("default", "job-1", "a-1", corev1.PodSucceeded),
-		pod("default", "api-1", "b-1", corev1.PodRunning),
-		pod("default", "batch-1", "karpenter-1", corev1.PodRunning),
-		pod("default", "pending-1", "", corev1.PodPending),
-	}
+	w := fleettest.New()
+	w.Edit(func(s *fleettest.State) {
+		s.Clusters = []*fleettest.Cluster{{
+			Name: "prod", Version: "1.33", Region: east,
+			Nodes: []*fleettest.Node{
+				{Name: "a-1", Nodegroup: "ng-a"},
+				{Name: "a-2", Nodegroup: "ng-a", NotReady: true},
+				{Name: "b-1", Nodegroup: "ng-b"},
+				{Name: "karpenter-1"},
+			},
+			Pods: []*fleettest.Pod{
+				pod("default", "web-1", "a-1", "Running"),
+				pod("default", "web-2", "a-2", "Running"),
+				pod("kube-system", "coredns-1", "a-1", "Running"),
+				pod("default", "job-1", "a-1", "Succeeded"),
+				pod("default", "api-1", "b-1", "Running"),
+				pod("default", "batch-1", "karpenter-1", "Running"),
+				pod("default", "pending-1", "", "Pending"),
+			},
+		}}
+	})
+	return w
 }
 
 // kubeSnapshot is the snapshot that FetchKube fills: ng-a and ng-b were
@@ -142,7 +135,7 @@ func TestFetchKube(t *testing.T) {
 	tests := []struct {
 		name     string
 		need     fleet.KubeNeed
-		forbid   string // the resource whose list is forbidden
+		forbid   fleettest.Operation // the list that is forbidden
 		want     []kubeRow
 		failures []string
 	}{
@@ -166,7 +159,7 @@ func TestFetchKube(t *testing.T) {
 			},
 		},
 		{
-			name: "the node list is forbidden", need: fleet.KubeNeed{Ready: true, Workloads: "ng-a"}, forbid: "nodes",
+			name: "the node list is forbidden", need: fleet.KubeNeed{Ready: true, Workloads: "ng-a"}, forbid: fleettest.KubeListNodes,
 			want: []kubeRow{
 				{Name: "ng-a", ReadyState: fleet.Failed, WorkloadsState: fleet.Failed},
 				{Name: "ng-b", ReadyState: fleet.Failed},
@@ -176,7 +169,7 @@ func TestFetchKube(t *testing.T) {
 			failures: []string{"Nodegroup ng-a AccessDenied prod us-east-1", "Nodegroup ng-b AccessDenied prod us-east-1"},
 		},
 		{
-			name: "the pod list is forbidden", need: fleet.KubeNeed{Ready: true, Workloads: "ng-b"}, forbid: "pods",
+			name: "the pod list is forbidden", need: fleet.KubeNeed{Ready: true, Workloads: "ng-b"}, forbid: fleettest.KubeListPods,
 			want: []kubeRow{
 				{Name: "ng-a", ReadyNodes: 1, ReadyState: fleet.Collected},
 				{Name: "ng-b", ReadyNodes: 1, ReadyState: fleet.Collected, WorkloadsState: fleet.Failed},
@@ -187,11 +180,15 @@ func TestFetchKube(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			client := fake.NewClientset(kubeObjects()...)
+			w := kubeWorld()
 			if tt.forbid != "" {
-				client.PrependReactor("list", tt.forbid, func(k8stesting.Action) (bool, k8sruntime.Object, error) {
-					return true, nil, apierrors.NewForbidden(schema.GroupResource{Resource: tt.forbid}, "", errors.New("RBAC"))
-				})
+				w.SetFault(tt.forbid, fleettest.Fault{Deny: true})
+			}
+			srv := kubetest.NewServer(w, east, "prod")
+			t.Cleanup(srv.Close)
+			client, err := kubernetes.NewForConfig(srv.Config())
+			if err != nil {
+				t.Fatal(err)
 			}
 			at := time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC)
 			snap := kubeSnapshot()

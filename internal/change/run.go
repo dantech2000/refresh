@@ -28,7 +28,7 @@ import (
 //
 // Run computes the plan, asks at most one question before the first
 // submit, and computes the plan again after every answer of a person: it
-// compares the two with Diff before it submits anything. Nothing is
+// compares the two with diffPlans before it submits anything. Nothing is
 // submitted before every question is answered. An Expect that is not a
 // plan of req is an error before anything is read (ErrOtherRequest).
 //
@@ -257,8 +257,8 @@ func (r *runner) releaseWait(wait *budget) {
 // that the budget has left and checks the budget after each answer, on
 // the clock of the run: the last poll is due at the deadline, and none
 // comes after it. See budget for the answer of that poll.
-func (r *runner) waitOptions(s Step, wait *budget) WaitOptions {
-	return WaitOptions{
+func (r *runner) waitOptions(s Step, wait *budget) waitOptions {
+	return waitOptions{
 		Interval: r.common.Limits.Poll,
 		After:    r.d.after,
 		Progress: func(p UpdateProgress) {

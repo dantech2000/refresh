@@ -2,8 +2,6 @@ package awsx
 
 import (
 	"context"
-	crand "crypto/rand"
-	"encoding/hex"
 	"errors"
 	"io"
 	"math/rand/v2"
@@ -27,7 +25,8 @@ const (
 	// Standard is for describe, list, and update calls: up to 5 attempts.
 	// For an update call the SDK fills a client request token once, so
 	// every attempt carries the same token and a retry after a lost answer
-	// starts nothing new.
+	// starts nothing new. The SDK writes that token into the input struct,
+	// so a request that must start something new needs a new input.
 	Standard Policy = iota
 	// Sweep is for every call inside the region callback of a default
 	// sweep. It is Standard with a short dial timeout, and a connection
@@ -71,10 +70,10 @@ func newRetryer(policy Policy, backoff retry.BackoffDelayer) aws.Retryer {
 	// A failure to get credentials is not retried here, although it can be
 	// transient: the credential client has made its own attempts. A wait
 	// loop stops on it too (IsIdentityFailure).
-	retryable := func(err error) bool { return !IsIdentityFailure(err) && IsRetryable(err) }
+	retryable := func(err error) bool { return !IsIdentityFailure(err) && isRetryable(err) }
 	if policy == Sweep {
 		retryable = func(err error) bool {
-			return !IsIdentityFailure(err) && !IsDialFailure(err) && IsRetryable(err)
+			return !IsIdentityFailure(err) && !IsDialFailure(err) && isRetryable(err)
 		}
 	}
 	if backoff == nil {
@@ -119,11 +118,11 @@ func backoffCeiling(attempt int) time.Duration {
 	return min(ceiling, maxBackoff)
 }
 
-// IsRetryable reports whether err is a transient condition that is worth
+// isRetryable reports whether err is a transient condition that is worth
 // another attempt, or another poll: throttling, a failure on the AWS side,
 // or a network failure. A permanent error such as an access denial or a
 // validation failure is not, and neither is a cancelled or expired context.
-func IsRetryable(err error) bool {
+func isRetryable(err error) bool {
 	if err == nil {
 		return false
 	}
@@ -224,26 +223,5 @@ func nameNotFound(err error) bool {
 // API error are not permanent: a long wait keeps polling through them.
 func IsPermanentAPIError(err error) bool {
 	var ae smithy.APIError
-	return errors.As(err, &ae) && !IsRetryable(err)
-}
-
-// IdempotencyToken returns a random client request token. The SDK fills a
-// token by itself for one call. A caller sets this one when several calls
-// must count as the same request, such as a submit that it repeats after a
-// restart.
-//
-// The SDK writes the token that it generates into the input struct of the
-// call. A second call with the same input struct therefore sends the same
-// token, and AWS answers with the first update. Build a new input for each
-// request that must start something new.
-//
-// The token is 40 hex characters: EKS takes 33 to 126 characters for the
-// token of UpdateClusterVersion.
-func IdempotencyToken() string {
-	b := make([]byte, 20)
-	if _, err := crand.Read(b); err != nil {
-		// What matters is that the token is unique.
-		return "refresh-token-" + time.Now().UTC().Format("20060102T150405.000000000")
-	}
-	return hex.EncodeToString(b)
+	return errors.As(err, &ae) && !isRetryable(err)
 }

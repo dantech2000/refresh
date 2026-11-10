@@ -22,6 +22,15 @@ type scripted struct {
 
 func newScripted() *scripted { return &scripted{ops: make(chan func(Hooks))} }
 
+// start is Start over any run: the tests of the state table script one
+// that calls the hooks in an order of their own, with no network.
+func start(kind Kind, target Target, now func() time.Time, checkpoints bool, run func(Hooks) (Result, error)) *Handle {
+	h := newHandle(kind, target, false, now)
+	h.checkpoints = checkpoints
+	go h.run(run)
+	return h
+}
+
 func (s *scripted) run(h Hooks) (Result, error) {
 	for op := range s.ops {
 		op(h)
@@ -125,7 +134,7 @@ func TestHandle_StateTable(t *testing.T) {
 		}
 
 		// A checkpoint with nothing asked goes on; the phase then runs.
-		if cp := <-checkpointAsync(s, StepRef{Phase: plan.Clusters[0].Phases[0].Ref}); cp.Stop || cp.Waited {
+		if cp := <-checkpointAsync(s, StepRef{Phase: plan.Clusters[0].Phases[0].Ref}); cp.Stop {
 			t.Fatalf("the first checkpoint = %+v, want go on", cp)
 		}
 		s.do(func(hk Hooks) {
@@ -143,8 +152,8 @@ func TestHandle_StateTable(t *testing.T) {
 		if err := h.Resume(); err != nil {
 			t.Fatal(err)
 		}
-		if cp := <-held; cp.Stop || !cp.Waited {
-			t.Fatalf("the checkpoint after a resume = %+v, want Waited", cp)
+		if cp := <-held; cp.Stop {
+			t.Fatalf("the checkpoint after a resume = %+v, want no stop", cp)
 		}
 		wantState(t, h, Running)
 		if err := h.Resume(); !errors.Is(err, ErrNotPaused) {
@@ -306,7 +315,7 @@ func TestHandle_StopWhileAskingOrPaused(t *testing.T) {
 		if err := h.Stop(); err != nil {
 			t.Fatal(err)
 		}
-		if cp := <-held; !cp.Stop || !cp.Waited {
+		if cp := <-held; !cp.Stop {
 			t.Fatalf("the checkpoint of a stop while paused = %+v", cp)
 		}
 		s.end(Result{Status: Stopped})

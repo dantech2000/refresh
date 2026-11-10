@@ -76,7 +76,7 @@ func (r *runner) runAddonStep(cp *ClusterPlan, s Step) StepResult {
 	defer wait.stop()
 	poll := r.d.AWS.PollClients(cp.Region)
 	if res.Attached {
-		settled, err := WaitSettled(ctx, poll, resource, addonSettled, r.waitOptions(s, wait))
+		settled, err := waitSettled(ctx, poll, resource, addonSettled, r.waitOptions(s, wait))
 		if err == nil && fleet.CompareAddonVersions(settled.Version, s.To) != 0 {
 			err = fmt.Errorf("add-on %s settled at %s, not %s", s.Ref.Name, settled.Version, s.To)
 		}
@@ -85,7 +85,7 @@ func (r *runner) runAddonStep(cp *ClusterPlan, s Step) StepResult {
 		}
 		return r.confirmAddon(cp, res, s, settled, nil)
 	}
-	if err := WaitUpdate(ctx, poll, resource, res.UpdateID, r.waitOptions(s, wait)); err != nil {
+	if err := waitUpdate(ctx, poll, resource, res.UpdateID, r.waitOptions(s, wait)); err != nil {
 		return r.waitFailed(ctx, cp, res, err)
 	}
 	settled, err := describe(ctx, clients, resource)
@@ -172,7 +172,7 @@ func submitAddon(ctx context.Context, c *awsx.Clients, r Resource, version strin
 
 // addonSettled is the done function of a wait for an add-on that is
 // already changing: ACTIVE is done, and a failed status is an error.
-func addonSettled(s Settled) (bool, error) {
+func addonSettled(s settledResource) (bool, error) {
 	switch s.Status {
 	case string(ekstypes.AddonStatusActive):
 		return true, nil
@@ -191,7 +191,7 @@ func addonSettled(s Settled) (bool, error) {
 //   - The version is not the target: the step failed.
 //   - The add-on is not ACTIVE, or has a health issue: the step
 //     succeeded with an issue, which is exit code 5.
-func (r *runner) confirmAddon(cp *ClusterPlan, res StepResult, s Step, got Settled, err error) StepResult {
+func (r *runner) confirmAddon(cp *ClusterPlan, res StepResult, s Step, got settledResource, err error) StepResult {
 	name := s.Ref.Name
 	res.Status, res.FinishedAt = StepSucceeded, r.d.now()
 	row := addonCheck + "/" + name

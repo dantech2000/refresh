@@ -101,7 +101,7 @@ ignores all three.
   # Roll every cluster of two regions
   refresh nodegroup update --all-clusters -r us-east-1,us-west-2 --yes`,
 		Args:              cobra.MatchAll(cobra.ArbitraryArgs, cmdutil.NoEmptyArgs),
-		ValidArgsFunction: fleetcmd.CompleteNodegroupNames(f, &o.cluster),
+		ValidArgsFunction: fleetcmd.CompleteNodegroups(f, &o.cluster, -1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := o.complete(args); err != nil {
 				return err

@@ -13,31 +13,27 @@ import (
 	"github.com/dantech2000/refresh/internal/fleet"
 )
 
-// Availability checks that EC2 offers every instance type of the target
-// nodegroups in each availability zone of their subnets. New nodes cannot
-// launch in a zone that does not offer their type, so a roll or a scale-up
-// can hang there.
+// InstanceTypeNotices checks that EC2 offers every instance type of the
+// target nodegroups in each availability zone of their subnets. New nodes
+// cannot launch in a zone that does not offer their type, so a roll or a
+// scale-up can hang there.
 //
-// It is advice beside the gate, and no part of Preflight: a change runs it
-// on its own and shows a warning of it as a notice. Details has one line
-// for each nodegroup with a missing offering. A read that fails gives no
-// warning and no failure: the result is Skipped. It checks that a type is
-// offered, and not that EC2 has capacity for it now: only a launch shows
-// that.
+// It is advice beside the gate, and no check of the gate: a change shows
+// what it finds as notices. It returns one line for each nodegroup with a
+// missing offering, and the error of a read that failed. It checks that a
+// type is offered, and not that EC2 has capacity for it now: only a launch
+// shows that.
 //
 // It makes one DescribeSubnets call and one paged
-// DescribeInstanceTypeOfferings call for all the targets together.
-func Availability() Check {
-	return Check{Name: "InstanceTypes", Run: runAvailability}
-}
-
-func runAvailability(ctx context.Context, in *Input) Result {
+// DescribeInstanceTypeOfferings call for all the targets together, and
+// none when no target reports its instance types and its subnets.
+func InstanceTypeNotices(ctx context.Context, c *awsx.Clients, snap *fleet.Snapshot, targetNames []string) ([]string, error) {
 	var targets []fleet.Nodegroup
 	var subnetIDs, types []string
-	for _, n := range in.Snapshot.Nodegroups {
+	for _, n := range snap.Nodegroups {
 		// A nodegroup with a custom launch template reports no instance
 		// types.
-		if !slices.Contains(in.Targets, n.Name) || len(n.InstanceTypes) == 0 || len(n.Subnets) == 0 {
+		if !slices.Contains(targetNames, n.Name) || len(n.InstanceTypes) == 0 || len(n.Subnets) == 0 {
 			continue
 		}
 		targets = append(targets, n)
@@ -45,17 +41,17 @@ func runAvailability(ctx context.Context, in *Input) Result {
 		types = append(types, n.InstanceTypes...)
 	}
 	if len(targets) == 0 {
-		return Result{Outcome: Skipped, Message: "no target reports its instance types and its subnets"}
+		return nil, nil
 	}
 	subnetIDs, types = sortedSet(subnetIDs), sortedSet(types)
 	subnets, err := awsx.ListAll(ctx,
 		func(ctx context.Context, token *string) (*ec2.DescribeSubnetsOutput, error) {
-			return in.Clients.EC2.DescribeSubnets(ctx, &ec2.DescribeSubnetsInput{SubnetIds: subnetIDs, NextToken: token})
+			return c.EC2.DescribeSubnets(ctx, &ec2.DescribeSubnetsInput{SubnetIds: subnetIDs, NextToken: token})
 		},
 		func(out *ec2.DescribeSubnetsOutput) ([]ec2types.Subnet, *string) { return out.Subnets, out.NextToken },
 	)
 	if err != nil {
-		return Result{Outcome: Skipped, Message: "the subnets of the targets could not be read"}
+		return nil, err
 	}
 	zoneOf := map[string]string{}
 	for _, s := range subnets {
@@ -63,7 +59,7 @@ func runAvailability(ctx context.Context, in *Input) Result {
 	}
 	offerings, err := awsx.ListAll(ctx,
 		func(ctx context.Context, token *string) (*ec2.DescribeInstanceTypeOfferingsOutput, error) {
-			return in.Clients.EC2.DescribeInstanceTypeOfferings(ctx, &ec2.DescribeInstanceTypeOfferingsInput{
+			return c.EC2.DescribeInstanceTypeOfferings(ctx, &ec2.DescribeInstanceTypeOfferingsInput{
 				LocationType: ec2types.LocationTypeAvailabilityZone,
 				Filters:      []ec2types.Filter{{Name: aws.String("instance-type"), Values: types}},
 				NextToken:    token,
@@ -74,13 +70,13 @@ func runAvailability(ctx context.Context, in *Input) Result {
 		},
 	)
 	if err != nil {
-		return Result{Outcome: Skipped, Message: "the instance-type offerings could not be read"}
+		return nil, err
 	}
 	offered := map[string]bool{}
 	for _, o := range offerings {
 		offered[string(o.InstanceType)+"\x00"+aws.ToString(o.Location)] = true
 	}
-	r := Result{Outcome: Pass, Message: "every instance type is offered in each availability zone"}
+	var notices []string
 	for _, n := range targets {
 		var zones []string
 		for _, id := range n.Subnets {
@@ -99,14 +95,10 @@ func runAvailability(ctx context.Context, in *Input) Result {
 		if len(missing) == 0 {
 			continue
 		}
-		r.Findings = append(r.Findings, n.Name)
-		r.Details = append(r.Details, "EC2 does not offer every instance type of nodegroup "+n.Name+" in each of its availability zones ("+
+		notices = append(notices, "EC2 does not offer every instance type of nodegroup "+n.Name+" in each of its availability zones ("+
 			strings.Join(missing, ", ")+"); new nodes may fail to launch there. This checks the offering, and not the capacity that is free now")
 	}
-	if len(r.Details) > 0 {
-		r.Outcome, r.Message = Warn, strings.Join(r.Details, "; ")
-	}
-	return r
+	return notices, nil
 }
 
 // sortedSet returns the distinct values of in, sorted.

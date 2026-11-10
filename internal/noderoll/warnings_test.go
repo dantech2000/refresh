@@ -128,7 +128,7 @@ func TestObserver_ScopesWarningEvents(t *testing.T) {
 		warning("e1", "FailedDraining", "ip-1", clock.now()),
 		warning("e2", "DiskPressure", "ip-elsewhere", clock.now()),
 	)
-	s := snapshot(t, listing(t, client, Identity{TargetAMI: newAMI}, clock))
+	s := snapshot(t, listing(t, client, Identity{}, clock))
 	if len(s.Warnings) != 1 {
 		t.Fatalf("%d warnings, want the one about the node of the nodegroup: %+v", len(s.Warnings), s.Warnings)
 	}
@@ -176,7 +176,7 @@ func TestObserver_WarningEventsPaginated(t *testing.T) {
 	clock := newClock()
 	client := fake.NewClientset(mkNode("ip-1", oldAMI, true, false))
 	calls := pagedEvents(t, client, pages, clock.now())
-	s := snapshot(t, listing(t, client, Identity{TargetAMI: newAMI}, clock))
+	s := snapshot(t, listing(t, client, Identity{}, clock))
 	seen := *calls
 	if len(seen) != pages {
 		t.Fatalf("%d event lists, want %d: one per page", len(seen), pages)
@@ -203,7 +203,7 @@ func TestObserver_WarningEventsPageCap(t *testing.T) {
 	clock := newClock()
 	client := fake.NewClientset(mkNode("ip-1", oldAMI, true, false))
 	calls := pagedEvents(t, client, -1, clock.now()) // pages without end
-	s := snapshot(t, listing(t, client, Identity{TargetAMI: newAMI}, clock))
+	s := snapshot(t, listing(t, client, Identity{}, clock))
 	if n := len(*calls); n != warningEventMaxPages {
 		t.Fatalf("%d event lists, want the cap %d", n, warningEventMaxPages)
 	}
@@ -221,7 +221,7 @@ func TestObserver_WarningEventsRefreshInterval(t *testing.T) {
 	clock := newClock()
 	client := fake.NewClientset(mkNode("ip-1", oldAMI, true, false))
 	calls := pagedEvents(t, client, 1, clock.now())
-	obs := listing(t, client, Identity{TargetAMI: newAMI}, clock)
+	obs := listing(t, client, Identity{}, clock)
 
 	for range 4 {
 		if s := snapshot(t, obs); len(s.Warnings) != 1 {
@@ -247,7 +247,7 @@ func TestObserver_WarningEventsRefreshOnDrainingChange(t *testing.T) {
 	clock := newClock()
 	client := fake.NewClientset(mkNode("ip-1", oldAMI, true, false), mkNode("ip-2", oldAMI, true, false))
 	calls := pagedEvents(t, client, 1, clock.now())
-	obs := listing(t, client, Identity{TargetAMI: newAMI}, clock)
+	obs := listing(t, client, Identity{}, clock)
 
 	snapshot(t, obs)
 	cordon(t, client, "ip-2")

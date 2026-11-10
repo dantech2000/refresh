@@ -44,14 +44,14 @@ func draining(name string, remaining, total int) NodeView {
 func TestTracker_DerivesLifecycleEvents(t *testing.T) {
 	tr := NewTracker()
 	// The starting point: three old nodes that are Ready. No events.
-	tr.Observe(snapOf(oldReady("a"), oldReady("b"), oldReady("c")))
+	tr.Observe(snapOf(oldReady("a"), oldReady("b"), oldReady("c")), time.Time{})
 	if got := tr.Recent(0); len(got) != 0 {
 		t.Fatalf("the first snapshot gave events: %v", got)
 	}
 	// A new node joins, and an old one is cordoned.
-	tr.Observe(snapOf(draining("a", 4, 4), oldReady("b"), oldReady("c"), newJoining("d")))
+	tr.Observe(snapOf(draining("a", 4, 4), oldReady("b"), oldReady("c"), newJoining("d")), time.Time{})
 	// The new node is Ready, and the drained node is gone.
-	tr.Observe(snapOf(oldReady("b"), oldReady("c"), newReady("d")))
+	tr.Observe(snapOf(oldReady("b"), oldReady("c"), newReady("d")), time.Time{})
 
 	// The node that is gone comes before the changes of the others.
 	want := []Event{
@@ -73,9 +73,9 @@ func TestTracker_KnownNodeNotReady(t *testing.T) {
 		return NodeView{Name: name, Phase: PhaseJoining}
 	}
 	tr := NewTracker()
-	tr.Observe(snapOf(oldReady("a")))
-	tr.Observe(snapOf(notReady("a"), newJoining("b")))
-	tr.Observe(snapOf(oldReady("a"), newJoining("b")))
+	tr.Observe(snapOf(oldReady("a")), time.Time{})
+	tr.Observe(snapOf(notReady("a"), newJoining("b")), time.Time{})
+	tr.Observe(snapOf(oldReady("a"), newJoining("b")), time.Time{})
 	want := []Event{
 		{Node: "a", Kind: EvtNotReady},
 		{Node: "b", Kind: EvtJoining},
@@ -107,8 +107,8 @@ func TestRecent(t *testing.T) {
 func TestTracker_TerminatedEventsSorted(t *testing.T) {
 	for range 20 { // the order of a map changes from run to run
 		tr := NewTracker()
-		tr.Observe(snapOf(oldReady("n-c"), oldReady("n-a"), oldReady("n-d"), oldReady("n-b")))
-		tr.Observe(snapOf())
+		tr.Observe(snapOf(oldReady("n-c"), oldReady("n-a"), oldReady("n-d"), oldReady("n-b")), time.Time{})
+		tr.Observe(snapOf(), time.Time{})
 		want := []Event{
 			{Node: "n-a", Kind: EvtTerminated}, {Node: "n-b", Kind: EvtTerminated},
 			{Node: "n-c", Kind: EvtTerminated}, {Node: "n-d", Kind: EvtTerminated},
@@ -123,13 +123,13 @@ func TestTracker_TerminatedEventsSorted(t *testing.T) {
 // newest last.
 func TestTracker_EventHistoryBounded(t *testing.T) {
 	tr := NewTracker()
-	tr.Observe(snapOf(oldReady("a")))
+	tr.Observe(snapOf(oldReady("a")), time.Time{})
 	total := trackerEventCapacity*2 + 7
 	for i := range total {
 		if i%2 == 0 {
-			tr.Observe(snapOf(draining("a", 1, 1)))
+			tr.Observe(snapOf(draining("a", 1, 1)), time.Time{})
 		} else {
-			tr.Observe(snapOf(oldReady("a")))
+			tr.Observe(snapOf(oldReady("a")), time.Time{})
 		}
 	}
 	all := tr.Recent(0)
@@ -145,13 +145,13 @@ func TestTracker_EventHistoryBounded(t *testing.T) {
 	}
 }
 
-// ObserveAt gives each event the time of the snapshot that showed it.
-func TestObserveAt(t *testing.T) {
+// Observe gives each event the time of the snapshot that showed it.
+func TestObserveStampsEvents(t *testing.T) {
 	first := time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)
 	tr := NewTracker()
-	tr.ObserveAt(snapOf(oldReady("a")), first)
-	tr.ObserveAt(snapOf(draining("a", 1, 1)), first.Add(time.Second))
-	tr.ObserveAt(snapOf(), first.Add(2*time.Second))
+	tr.Observe(snapOf(oldReady("a")), first)
+	tr.Observe(snapOf(draining("a", 1, 1)), first.Add(time.Second))
+	tr.Observe(snapOf(), first.Add(2*time.Second))
 	want := []Event{
 		{Node: "a", Kind: EvtDraining, At: first.Add(time.Second)},
 		{Node: "a", Kind: EvtTerminated, At: first.Add(2 * time.Second)},

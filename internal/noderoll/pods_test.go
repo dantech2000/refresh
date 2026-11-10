@@ -25,7 +25,7 @@ func TestObserver_PodEviction(t *testing.T) {
 		pod("elsewhere", "ip-other", corev1.PodRunning, false, false), // on another node
 	)
 	enforcePodFieldSelector(t, client) // the fake ignores the field selector
-	obs := listing(t, client, Identity{TargetAMI: newAMI}, newClock())
+	obs := listing(t, client, Identity{}, newClock())
 
 	n := nodeOf(snapshot(t, obs), "ip-1")
 	if n.Phase != PhaseDraining {
@@ -99,7 +99,7 @@ func TestObserver_PodReadsScopedToDrainingNodes(t *testing.T) {
 		pod("d", "ip-3", corev1.PodRunning, false, false),
 	)
 	rec := enforcePodFieldSelector(t, client)
-	s := snapshot(t, listing(t, client, Identity{TargetAMI: newAMI}, newClock()))
+	s := snapshot(t, listing(t, client, Identity{}, newClock()))
 
 	want := []string{podsOnNodeSelector("ip-1"), podsOnNodeSelector("ip-3")}
 	if diff := cmp.Diff(want, rec.calls()); diff != "" {
@@ -123,7 +123,7 @@ func TestObserver_PodReadsScopedToDrainingNodes(t *testing.T) {
 	// No node drains: no pod is read.
 	quiet := fake.NewClientset(mkNode("ip-9", oldAMI, true, false))
 	qrec := enforcePodFieldSelector(t, quiet)
-	snapshot(t, listing(t, quiet, Identity{TargetAMI: newAMI}, newClock()))
+	snapshot(t, listing(t, quiet, Identity{}, newClock()))
 	if calls := qrec.calls(); len(calls) != 0 {
 		t.Errorf("pod lists with no draining node = %q, want none", calls)
 	}
@@ -140,7 +140,7 @@ func TestObserver_PodCountsThrottledWhenWatching(t *testing.T) {
 	)
 	rec := enforcePodFieldSelector(t, client)
 	clock := newClock()
-	obs := listing(t, client, Identity{TargetAMI: newAMI}, clock)
+	obs := listing(t, client, Identity{}, clock)
 	obs.drains.refresh = watchPodRefresh // as for an observer that watches
 
 	for range 3 {

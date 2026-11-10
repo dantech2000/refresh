@@ -177,9 +177,9 @@ type RefusalError struct {
 
 func (e *RefusalError) Error() string { return e.Message }
 
-// VersionOffer is what EKS says about one Kubernetes version: the answer
+// versionOffered is what EKS says about one Kubernetes version: the answer
 // of DescribeClusterVersions for it.
-type VersionOffer struct {
+type versionOffered struct {
 	// Offered is false when EKS does not list the version.
 	Offered bool
 	// Tier is the support tier of the version now. Only a rollback reads
@@ -189,9 +189,9 @@ type VersionOffer struct {
 	Err error
 }
 
-// InsightsRead is the EKS cluster insights of one category as a planner
+// insightsRead is the EKS cluster insights of one category as a planner
 // reads them, or the error of reading them.
-type InsightsRead struct {
+type insightsRead struct {
 	// Insights are the insights of the category, of every status.
 	Insights []apidoc.Insight
 	// Err is the error of ListInsights.

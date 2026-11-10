@@ -81,11 +81,10 @@ func discover(ctx context.Context, d Deps, req RollRequest) (*fleet.SweepResult,
 	defer read.stop()
 	regions := req.Fleet.Regions
 	type outcome struct {
-		ran   bool
 		names []string
 		err   error
 	}
-	outcomes := fanout.ForEach(ctx, regions.Names, max(len(regions.Names), 1), func(ctx context.Context, region string) outcome {
+	outcomes, started := fanout.ForEachIn(ctx, nil, regions.Names, func(ctx context.Context, region string) outcome {
 		// Only a default sweep gives up on a region after one failed
 		// dial. A region that the user named gets the full retries.
 		clients := d.AWS.Clients(region)
@@ -94,13 +93,13 @@ func discover(ctx context.Context, d Deps, req RollRequest) (*fleet.SweepResult,
 		}
 		names, err := d.Fetch.Clusters(ctx, clients)
 		slices.Sort(names)
-		return outcome{ran: true, names: names, err: err}
+		return outcome{names: names, err: err}
 	})
 	sweep := &fleet.SweepResult{Regions: regions}
 	var targets []Target
 	for i, region := range regions.Names {
-		o := outcomes[i]
-		if !o.ran {
+		o, ran := outcomes[i], i < started
+		if !ran {
 			o.err = context.Cause(ctx)
 		}
 		switch {
@@ -109,7 +108,7 @@ func discover(ctx context.Context, d Deps, req RollRequest) (*fleet.SweepResult,
 			for _, name := range o.names {
 				targets = append(targets, Target{Region: region, Cluster: name})
 			}
-		case o.ran && regions.Default && awsx.IsRegionInaccessible(o.err):
+		case ran && regions.Default && awsx.IsRegionInaccessible(o.err):
 			sweep.Skipped = append(sweep.Skipped, region)
 		default:
 			sweep.Failures = append(sweep.Failures, fleet.FailureFromError(apidoc.FailureRegion, region, o.err))
@@ -171,7 +170,7 @@ const (
 // Each cluster has its own read budget, which starts here. The clusters
 // before this one took time, so every cluster after the first is planned
 // again, and the new plan is compared with the one that was confirmed, by
-// the table of Diff:
+// the table of diffPlans:
 //
 //   - a difference that only says that less is to do: a notice.
 //   - a difference that needs an answer, such as another reason for a
@@ -220,7 +219,7 @@ func (r *runner) turn(p *Plan, i int) (outcome turnOutcome, why string) {
 			r.addFailures(unplannedCluster(prev.Target, err).Failures)
 			return turnUnread, ""
 		}
-		diff := Diff(single(p, &prev), single(p, cur))
+		diff := diffPlans(single(p, &prev), single(p, cur))
 		p.Clusters[i] = *cur
 		yes := r.common.Policy.Yes
 		for _, c := range diff {

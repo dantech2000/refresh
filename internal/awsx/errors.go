@@ -98,14 +98,14 @@ func IsCredentialError(err error) bool {
 	return containsAny(err.Error(), credentialFallbackPatterns)
 }
 
-// IsNoCredentials reports whether the credential chain found no
+// isNoCredentials reports whether the credential chain found no
 // credentials: it ran down to its last resort, the EC2 instance metadata
 // service, and that call failed. Off EC2 that most often means no profile
 // was chosen (`aws sso login --profile X` caches a login, but refresh uses
 // profile X only when told to); on EC2, a missing instance role or an
 // unreachable metadata service. The SDK gives IMDS a short timeout of its
 // own, so its "deadline exceeded" is this, not the --timeout.
-func IsNoCredentials(err error) bool {
+func isNoCredentials(err error) bool {
 	// An IMDS failure can sit inside another operation error (an
 	// AssumeRole profile whose credential_source is Ec2InstanceMetadata):
 	// look inside each operation error errors.As finds.
@@ -122,9 +122,9 @@ func IsNoCredentials(err error) bool {
 	return false
 }
 
-// IsPermissionError reports whether err is an IAM denial: a permission-class
+// isPermissionError reports whether err is an IAM denial: a permission-class
 // API error code, or an HTTP 403 response.
-func IsPermissionError(err error) bool {
+func isPermissionError(err error) bool {
 	if err == nil {
 		return false
 	}
@@ -134,13 +134,13 @@ func IsPermissionError(err error) bool {
 	return httpStatus(err) == http.StatusForbidden
 }
 
-// IsRegionError reports whether err points at AWS region misconfiguration: a
+// isRegionError reports whether err points at AWS region misconfiguration: a
 // missing region, an AWS endpoint host that does not resolve (NXDOMAIN), or
 // (fallback) an endpoint resolver's region error. Matching is deliberately
 // narrow: many unrelated AWS errors merely mention a region name ("user is not
 // authorized ... in region us-east-1"), and those must not be diagnosed as
 // region misconfiguration.
-func IsRegionError(err error) bool {
+func isRegionError(err error) bool {
 	if err == nil {
 		return false
 	}
@@ -187,7 +187,7 @@ func isAWSHost(host string) bool {
 	return false
 }
 
-// IsNetworkError reports whether err is a transport failure that never got an
+// isNetworkError reports whether err is a transport failure that never got an
 // API response: a failed HTTP round trip (*url.Error), a dial/read/write
 // failure (*net.OpError), a DNS failure, a timeout, a refused or reset
 // connection, or a response cut short. Context cancellation and deadlines are
@@ -195,7 +195,7 @@ func isAWSHost(host string) bool {
 // network error, also when it reports itself as context.DeadlineExceeded:
 // the request never reached AWS. A DNS lookup that the deadline cut is
 // not, as in Classify.
-func IsNetworkError(err error) bool {
+func isNetworkError(err error) bool {
 	if err == nil {
 		return false
 	}
@@ -271,15 +271,6 @@ func formatted(err error, format string, args ...any) error {
 	return &formattedError{msg: fmt.Sprintf(strings.ReplaceAll(format, "%w", "%v"), args...), err: err}
 }
 
-// DefaultTimeoutFlag is the flag FormatAWSError's timeout hint names: the
-// global API timeout.
-const DefaultTimeoutFlag = "--timeout"
-
-// deadlineHint is the remediation text of a timed-out operation.
-func deadlineHint(flag string) string {
-	return fmt.Sprintf("(increase %s to allow more time)", flag)
-}
-
 // FormatAWSError provides user-friendly error messages for AWS errors. Every
 // returned error wraps err.
 //
@@ -305,22 +296,22 @@ func FormatAWSError(err error, operation string) error {
 	// Before the timeout and network checks: the chain found nothing and
 	// asked IMDS last, so its timeout or dial failure is the symptom, not
 	// the cause.
-	if IsNoCredentials(err) {
-		return FormatNoCredentials(err, nil)
+	if isNoCredentials(err) {
+		return formatNoCredentials(err, nil)
 	}
 	// Before the API error switch: an expired SSO session comes back as an
 	// SSO OIDC API error (InvalidGrantException) that says nothing useful.
 	if isSSOEndpointNotFound(err) {
 		return formatSSORegionError(err)
 	}
-	if IsSSONotLoggedIn(err) {
+	if isSSONotLoggedIn(err) {
 		// A call of a client from Load carries the profile to log in with.
 		var login *ssoLoginError
 		profile := ""
 		if errors.As(err, &login) {
 			profile = login.profile
 		}
-		return FormatSSONotLoggedIn(err, profile)
+		return formatSSONotLoggedIn(err, profile)
 	}
 	// A connect timeout also reports itself as context.DeadlineExceeded,
 	// but a longer --timeout does not help an endpoint that cannot be
@@ -331,7 +322,7 @@ func FormatAWSError(err error, operation string) error {
 		return formatNetworkError(err, operation)
 	}
 	if isContextDeadline(err) {
-		return &formattedError{msg: fmt.Sprintf("timed out while %s %s", operation, deadlineHint(DefaultTimeoutFlag)), err: err}
+		return &formattedError{msg: fmt.Sprintf("timed out while %s (increase --timeout to allow more time)", operation), err: err}
 	}
 
 	var ae smithy.APIError
@@ -362,16 +353,16 @@ func FormatAWSError(err error, operation string) error {
 	if IsCredentialError(err) {
 		return formatCredentialError(err)
 	}
-	if IsRegionError(err) {
+	if isRegionError(err) {
 		return formatRegionError(err, operation)
 	}
-	if IsNetworkError(err) {
+	if isNetworkError(err) {
 		return formatNetworkError(err, operation)
 	}
 	if isUnreadable403(err) {
 		return formatUnreadable403(err, operation)
 	}
-	if IsPermissionError(err) {
+	if isPermissionError(err) {
 		return formatPermissionError(err, operation)
 	}
 
@@ -545,10 +536,10 @@ Check the profile in the AWS config:
   sso_role_name            a permission set assigned to you in that account; the AWS access portal lists yours`, Summary(err))
 }
 
-// IsSSONotLoggedIn reports an SSO profile with no usable login: no cached
+// isSSONotLoggedIn reports an SSO profile with no usable login: no cached
 // token (never logged in, or logged in with another profile style), or an
 // expired one that could not be refreshed.
-func IsSSONotLoggedIn(err error) bool {
+func isSSONotLoggedIn(err error) bool {
 	var tokenErr *ssocreds.InvalidTokenError
 	if errors.As(err, &tokenErr) {
 		return true
@@ -582,10 +573,10 @@ func IsSSONotLoggedIn(err error) bool {
 		strings.Contains(filepath.ToSlash(pathErr.Path), "/.aws/sso/cache/")
 }
 
-// FormatSSONotLoggedIn says to log in to IAM Identity Center for profile
+// formatSSONotLoggedIn says to log in to IAM Identity Center for profile
 // ("" when it is not known). err may already be formatted: the cause comes
 // from the SSO error inside it.
-func FormatSSONotLoggedIn(err error, profile string) error {
+func formatSSONotLoggedIn(err error, profile string) error {
 	name := profile
 	if name == "" {
 		name = "<name>"
@@ -616,13 +607,13 @@ Cause: %s
 
 Check:
   the secret access key    a wrong secret is refused this way; aws sts get-caller-identity tells
-  the permissions          refresh's IAM actions are listed at %s`, operation, Summary(err), PermissionsDocURL)
+  the permissions          refresh's IAM actions are listed at %s`, operation, Summary(err), permissionsDocURL)
 }
 
-// FormatNoCredentials explains a credential chain that found nothing
-// (IsNoCredentials). ssoProfiles, when given, are the SSO profiles in the
+// formatNoCredentials explains a credential chain that found nothing
+// (isNoCredentials). ssoProfiles, when given, are the SSO profiles in the
 // AWS config file, to pick one from.
-func FormatNoCredentials(err error, ssoProfiles []string) error {
+func formatNoCredentials(err error, ssoProfiles []string) error {
 	msg := fmt.Sprintf(`no AWS credentials found
 Cause: the credential chain found no keys or profile with credentials, and ended at the EC2 instance metadata service, which gave none (%s)
 
@@ -662,7 +653,7 @@ AWS: %s
 
 Permissions refresh uses (grant the ones for the commands you run):
 %s
-See %s`, operation, Summary(err), permissionHint(), PermissionsDocURL)
+See %s`, operation, Summary(err), permissionHint(), permissionsDocURL)
 }
 
 // ssoLoginError is an SSO login failure of an API call, with the profile to

@@ -50,7 +50,7 @@ func TestCredentialChainFollowsTheStandardPolicy(t *testing.T) {
 		{name: "throttled forever", body: stsThrottled, status: 400, want: 5, wantErr: IsThrottling},
 		{name: "throttled forever, AWS_MAX_ATTEMPTS=2", body: stsThrottled, status: 400, maxAttempts: "2", want: 5, wantErr: IsThrottling},
 		{name: "throttled forever, AWS_MAX_ATTEMPTS=9", body: stsThrottled, status: 400, maxAttempts: "9", want: 5, wantErr: IsThrottling},
-		{name: "access denied", body: stsDenied, status: 403, want: 1, wantErr: IsPermissionError},
+		{name: "access denied", body: stsDenied, status: 403, want: 1, wantErr: isPermissionError},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -69,7 +69,7 @@ func TestCredentialChainFollowsTheStandardPolicy(t *testing.T) {
 			t.Setenv("AWS_ENDPOINT_URL_STS", sts.URL)
 			t.Setenv("AWS_MAX_ATTEMPTS", tt.maxAttempts)
 
-			_, err := load(context.Background(), Options{Profile: "role"}, NewHTTPClient(8), zeroBackoff{})
+			_, err := load(context.Background(), Options{Profile: "role"}, defaultHTTPClient(8), zeroBackoff{})
 
 			if err == nil || !tt.wantErr(err) {
 				t.Errorf("load() error = %v, which is not the kind this answer gives", err)
@@ -172,7 +172,7 @@ func TestCredentialRefreshIsNotRetriedByTheOperation(t *testing.T) {
 			}
 			t.Setenv("AWS_ENDPOINT_URL", srv.URL)
 			t.Setenv("AWS_ENDPOINT_URL_STS", stsURL)
-			cfg, err := load(context.Background(), Options{Profile: "role"}, NewHTTPClient(8), zeroBackoff{})
+			cfg, err := load(context.Background(), Options{Profile: "role"}, defaultHTTPClient(8), zeroBackoff{})
 			if err != nil {
 				t.Fatalf("load() error = %v", err)
 			}
@@ -197,8 +197,8 @@ func TestCredentialRefreshIsNotRetriedByTheOperation(t *testing.T) {
 			}
 			// The failure is transient as an API error, and marked: a
 			// wait loop stops on the mark, not on the class.
-			if IsPermanentAPIError(err) || !IsRetryable(err) {
-				t.Errorf("the failed refresh is permanent = %t, retryable = %t; want a transient failure", IsPermanentAPIError(err), IsRetryable(err))
+			if IsPermanentAPIError(err) || !isRetryable(err) {
+				t.Errorf("the failed refresh is permanent = %t, retryable = %t; want a transient failure", IsPermanentAPIError(err), isRetryable(err))
 			}
 			if !IsIdentityFailure(err) {
 				t.Error("the error is not marked as a failure to get credentials")
@@ -242,7 +242,7 @@ func TestRejectedEnvironmentKeysGetTheProfileNote(t *testing.T) {
 			t.Setenv("AWS_ENDPOINT_URL", refuse.URL)
 			t.Setenv("AWS_PROFILE", tt.profile)
 			tt.opts.Region = "us-east-1"
-			cfg, err := load(context.Background(), tt.opts, NewHTTPClient(8), zeroBackoff{})
+			cfg, err := load(context.Background(), tt.opts, defaultHTTPClient(8), zeroBackoff{})
 			if err != nil {
 				t.Fatalf("load() error = %v: keys that resolve must load", err)
 			}
@@ -259,7 +259,7 @@ func TestRejectedEnvironmentKeysGetTheProfileNote(t *testing.T) {
 			}
 			// Formatting again, and the helper for errors from elsewhere,
 			// add no second note.
-			again := NoteKeysShadowProfile(context.Background(), cfg, FormatAWSError(formatted, "listing clusters"))
+			again := noteKeysShadowProfile(context.Background(), cfg, FormatAWSError(formatted, "listing clusters"))
 			if got := strings.Count(again.Error(), note); got > 1 {
 				t.Errorf("the note appears %d times after a second formatting", got)
 			}

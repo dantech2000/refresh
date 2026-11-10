@@ -399,11 +399,11 @@ func actionStatus(a apidoc.StepAction) view.Status {
 
 func gateDocStatus(d apidoc.GateDecision) view.Status {
 	switch d {
-	case "Go":
+	case apidoc.GateGo:
 		return view.Healthy
-	case "Ask":
+	case apidoc.GateAsk:
 		return view.Warn
-	case "Block":
+	case apidoc.GateBlock:
 		return view.Fail
 	}
 	return view.Unknown

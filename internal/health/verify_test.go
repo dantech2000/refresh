@@ -278,8 +278,8 @@ func TestVerify_ReusedNodeName(t *testing.T) {
 // Phase Pending covers a pod that waits for the scheduler and a pod that is
 // bound and pulls its images. After a roll, every moved pod goes through
 // the second, which is progress. A pod is stuck when the scheduler marked
-// it Unschedulable, or when a container waits with a reason that does not
-// pass without a change, such as an image that cannot be pulled.
+// it Unschedulable, or when a container waits with a reason that usually
+// needs a change, such as an image that cannot be pulled.
 func TestVerify_NewPendingPods(t *testing.T) {
 	ctx := testContext(t)
 	pod := func(node string, conditions ...corev1.PodCondition) *corev1.Pod {

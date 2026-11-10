@@ -44,7 +44,7 @@ func (r *runner) prepare() (*Plan, Result, error) {
 		// flags: the nodes and the add-ons would go to a version that
 		// nobody confirmed.
 		if prev != nil {
-			if changed := RollbackTargetChanged(prev, p); changed != nil {
+			if changed := rollbackTargetChanged(prev, p); changed != nil {
 				// A refusal is a result of the run, and not an error of Run.
 				r.announce(p)
 				res := r.unstarted(p, Refused, ending{code: exitcode.Blocked})
@@ -55,7 +55,7 @@ func (r *runner) prepare() (*Plan, Result, error) {
 		}
 		var diff []Change
 		if prev != nil {
-			diff = Diff(prev, p)
+			diff = diffPlans(prev, p)
 		}
 		if prev == nil || len(diff) > 0 {
 			r.announce(p)

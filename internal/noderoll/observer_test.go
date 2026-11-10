@@ -25,7 +25,7 @@ func TestObserver_RollTransitions(t *testing.T) {
 		mkNode("ip-3", oldAMI, true, false),
 		other,
 	)
-	obs := listing(t, client, Identity{TargetAMI: newAMI}, newClock())
+	obs := listing(t, client, Identity{}, newClock())
 
 	// Before the roll.
 	s := snapshot(t, obs)
@@ -118,7 +118,7 @@ func TestReusedNodeNameIsANewNode(t *testing.T) {
 	if nodeOf(snap, name).OnTarget {
 		t.Fatalf("the node that is there as Attach lists counts as new: %+v", snap.Nodes)
 	}
-	tr.Observe(snap)
+	tr.Observe(snap, time.Time{})
 
 	deleteNode(t, client, name)
 	createNode(t, client, node("uid-new", false, start.Add(time.Minute)))
@@ -126,7 +126,7 @@ func TestReusedNodeNameIsANewNode(t *testing.T) {
 	if !nodeOf(snap, name).OnTarget {
 		t.Errorf("the new node with the old name counts as old: %+v", snap.Nodes)
 	}
-	tr.Observe(snap)
+	tr.Observe(snap, time.Time{})
 	want := []Event{{Node: name, Kind: EvtTerminated}, {Node: name, Kind: EvtJoining}}
 	if diff := cmp.Diff(want, tr.Recent(0)); diff != "" {
 		t.Errorf("events (-want +got):\n%s", diff)
@@ -255,21 +255,14 @@ func TestAttach_Modes(t *testing.T) {
 			created: map[string]time.Time{"a": before, "b": after, "c": before},
 			wantNew: []string{"c"},
 		},
-		{
-			name:    "a target AMI changes nothing: the image label is not read",
-			id:      Identity{TargetAMI: oldAMI},
-			nodes:   []string{"a", "b"},
-			later:   "c",
-			created: map[string]time.Time{"a": before, "b": before, "c": after},
-			wantNew: []string{"c"},
-		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			node := func(name string) *corev1.Node {
 				n := versioned(name, tt.kubelet[name], tt.created[name])
-				// Every node has the image label of the old AMI.
-				n.Labels[LabelImage] = oldAMI
+				// Every node has the image label of the old AMI: the
+				// observer does not read it.
+				n.Labels[labelImage] = oldAMI
 				return n
 			}
 			client := fake.NewClientset()

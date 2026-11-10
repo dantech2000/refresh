@@ -6,13 +6,13 @@ import "github.com/dantech2000/refresh/internal/fleet"
 // names the AMI. EKS cannot pick a recommended AMI for it.
 const amiTypeCustom = "CUSTOM"
 
-// RollDecision is what a roll does with one nodegroup, and why.
-type RollDecision struct {
+// rollDecision is what a roll does with one nodegroup, and why.
+type rollDecision struct {
 	Action Action
 	Reason Reason
 }
 
-// DecideAMIUpdate is the one decision table of a nodegroup roll. The plan
+// decideAMIUpdate is the one decision table of a nodegroup roll. The plan
 // of a dry run and the plan of a real run both come from it, so a dry run
 // names the action that the real run takes. It is a pure function of the
 // nodegroup as the snapshot read it. The first row that matches decides.
@@ -35,26 +35,26 @@ type RollDecision struct {
 // No row reads --force. --force goes past drain blockers and does nothing
 // else: it never rolls a nodegroup that is on the latest AMI, and it
 // never rolls a custom AMI. Only reroll does the first.
-func DecideAMIUpdate(ng fleet.Nodegroup, reroll bool) RollDecision {
+func decideAMIUpdate(ng fleet.Nodegroup, reroll bool) rollDecision {
 	current, latest := "", ""
 	if ng.AMI.State == fleet.Collected {
 		current, latest = ng.AMI.Current, ng.AMI.Latest
 	}
 	switch {
 	case ng.AMIType == amiTypeCustom:
-		return RollDecision{Action: Manual, Reason: CustomAMI}
+		return rollDecision{Action: Manual, Reason: CustomAMI}
 	case nodegroupInFlight(ng.Status):
-		return RollDecision{Action: Skip, Reason: InFlight}
+		return rollDecision{Action: Skip, Reason: InFlight}
 	case !fleet.KnownAMIType(ng.AMIType):
-		return RollDecision{Action: Skip, Reason: AMITypeUnknown}
+		return rollDecision{Action: Skip, Reason: AMITypeUnknown}
 	case current == "" || latest == "":
-		return RollDecision{Action: Submit, Reason: AMIUnknown}
+		return rollDecision{Action: Submit, Reason: AMIUnknown}
 	case current == latest && reroll:
-		return RollDecision{Action: Submit, Reason: Reroll}
+		return rollDecision{Action: Submit, Reason: Reroll}
 	case current == latest:
-		return RollDecision{Action: Skip, Reason: AlreadyLatest}
+		return rollDecision{Action: Skip, Reason: AlreadyLatest}
 	}
-	return RollDecision{Action: Submit, Reason: AMIOutdated}
+	return rollDecision{Action: Submit, Reason: AMIOutdated}
 }
 
 // redecideRoll decides again about a roll that the plan would submit, with
@@ -77,12 +77,12 @@ func DecideAMIUpdate(ng fleet.Nodegroup, reroll bool) RollDecision {
 //
 // The caller handles a nodegroup that is changing, that is not ACTIVE, or
 // that has another Kubernetes version before it asks: see submitRoll.
-func redecideRoll(fromRelease string, fresh Settled) (d RollDecision, changed bool) {
+func redecideRoll(fromRelease string, fresh settledResource) (d rollDecision, changed bool) {
 	switch {
 	case fresh.AMIType == amiTypeCustom:
-		return RollDecision{Action: Manual, Reason: CustomAMI}, true
+		return rollDecision{Action: Manual, Reason: CustomAMI}, true
 	case fresh.Release != fromRelease:
-		return RollDecision{Action: Skip, Reason: AlreadyLatest}, true
+		return rollDecision{Action: Skip, Reason: AlreadyLatest}, true
 	}
-	return RollDecision{}, false
+	return rollDecision{}, false
 }

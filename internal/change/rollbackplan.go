@@ -35,18 +35,18 @@ const (
 	supportExtended  = "EXTENDED"
 )
 
-// RollbackInputs is what PlanRollback reads beside the snapshot. The
+// rollbackReads is what rollbackPlan reads beside the snapshot. The
 // planner makes no call of its own: its caller reads from AWS inside the
-// three functions, and PlanRollback calls each one only when the plan
+// three functions, and rollbackPlan calls each one only when the plan
 // needs it.
-type RollbackInputs struct {
+type rollbackReads struct {
 	// Now is the time of the plan. The rollback window is judged at it.
 	Now time.Time
 	// Version says whether EKS offers a Kubernetes version, and in which
 	// support tier: one DescribeClusterVersions call. It is called once,
 	// for the version to roll back to, and not at all when a rollback is
 	// in progress or done.
-	Version func(v fleet.Version) VersionOffer
+	Version func(v fleet.Version) versionOffered
 	// AddonVersions returns the versions of an add-on that a Kubernetes
 	// version can run, newest first, and none when EKS publishes none:
 	// fleet.Fetcher.AddonVersions. It is called once for each add-on, for
@@ -55,10 +55,10 @@ type RollbackInputs struct {
 	// Insights returns the ROLLBACK_READINESS insights of the cluster. No
 	// refresh is started for them: EKS evaluates them anew when the
 	// rollback starts. It is called under the same condition as Version.
-	Insights func() InsightsRead
+	Insights func() insightsRead
 }
 
-// PlanRollback derives the plan to roll a cluster back one minor version
+// rollbackPlan derives the plan to roll a cluster back one minor version
 // from a snapshot with the nodegroups, the add-ons, and the update
 // history of the cluster. A step that live state already meets is Skip,
 // so the same request after a stopped run goes on where it ended, and
@@ -67,13 +67,13 @@ type RollbackInputs struct {
 //
 // The phases are Nodegroups, Addons, and ControlPlane, with no hop in
 // their refs. The control-plane step carries Force when the request skips
-// the insights. Like PlanUpgrade, it applies no busy rule and no health
+// the insights. Like upgradePlan, it applies no busy rule and no health
 // gate.
 //
 // The error is a RefusalError for a timeout out of bounds and for a
 // cluster with no minor version to return to, and a NotFoundError for a
 // --skip-nodegroup name that the cluster does not have.
-func PlanRollback(snap *fleet.Snapshot, req RollbackRequest, in RollbackInputs) (*Plan, error) {
+func rollbackPlan(snap *fleet.Snapshot, req RollbackRequest, in rollbackReads) (*Plan, error) {
 	if err := ValidateRollbackTimeout(req.RollbackTimeout); err != nil {
 		return nil, err
 	}
@@ -131,11 +131,11 @@ func PlanRollback(snap *fleet.Snapshot, req RollbackRequest, in RollbackInputs) 
 	return p.plan(), nil
 }
 
-// rollbackPlanner holds one run of PlanRollback.
+// rollbackPlanner holds one run of rollbackPlan.
 type rollbackPlanner struct {
 	snap *fleet.Snapshot
 	req  RollbackRequest
-	in   RollbackInputs
+	in   rollbackReads
 	planWriter
 	// live is the version that the control plane runs.
 	live fleet.Version
@@ -145,14 +145,14 @@ func (p *rollbackPlanner) plan() *Plan {
 	return &Plan{Kind: ClusterRollback, Request: p.req, Clusters: []ClusterPlan{*p.cp}, At: p.in.Now}
 }
 
-// RollbackControlPlaneBlockers checks the snapshot that a run reads
+// rollbackControlPlaneBlockers checks the snapshot that a run reads
 // right before the control plane rolls back: every managed nodegroup must
 // be at the target or below it, because nodes newer than the control
 // plane are outside the Kubernetes version skew policy. A nodegroup that
 // the run did not roll back and that is still above the target blocks the
 // phase: a skipped one, one with a custom AMI, or one whose roll failed.
 // A nodegroup that could not be read is an Unread blocker.
-func RollbackControlPlaneBlockers(snap *fleet.Snapshot, target fleet.Version) []Blocker {
+func rollbackControlPlaneBlockers(snap *fleet.Snapshot, target fleet.Version) []Blocker {
 	ref := &StepRef{
 		Phase: PhaseRef{Target: Target{Region: snap.Cluster.Region, Cluster: snap.Cluster.Name}, Kind: PhaseControlPlane},
 		Kind:  StepControlPlane,
@@ -174,13 +174,13 @@ func RollbackControlPlaneBlockers(snap *fleet.Snapshot, target fleet.Version) []
 	return out
 }
 
-// RollbackTargetChanged compares the plan that a person reviewed with
+// rollbackTargetChanged compares the plan that a person reviewed with
 // the plan computed now, before the first change of a rollback. It
 // returns a RefusalError when they return to different versions: the
 // nodes and the add-ons would go to a version that nobody confirmed. No
-// answer and no flag accepts that. Diff reports every other difference,
+// answer and no flag accepts that. diffPlans reports every other difference,
 // and a blocker of the new plan refuses the run on its own.
-func RollbackTargetChanged(reviewed, fresh *Plan) error {
+func rollbackTargetChanged(reviewed, fresh *Plan) error {
 	for i := range fresh.Clusters {
 		cur := &fresh.Clusters[i]
 		for j := range reviewed.Clusters {

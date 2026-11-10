@@ -176,7 +176,7 @@ func TestHopReadiness_BlocksLaterHop(t *testing.T) {
 
 	w.apply(&ClusterPlan{Phases: hopOf(cp, "1.32")}, nil)
 	w.insights = []apidoc.Insight{insightFor("Deprecated APIs removed in 1.33", insightError, "1.33")}
-	r := HopReadiness(w.snapshot(), ver("1.33"), false, w.upgradeInsights)
+	r := readinessForHop(w.snapshot(), ver("1.33"), false, w.upgradeInsights)
 	if r.Blocker == nil || r.Blocker.Kind != BlockerNotReady || !strings.Contains(r.Blocker.Message, "Deprecated APIs removed in 1.33") {
 		t.Fatalf("readiness of 1.33 = %+v, want the blocking insight named", r)
 	}
@@ -186,7 +186,7 @@ func TestHopReadiness_BlocksLaterHop(t *testing.T) {
 
 	// A control plane that is at the hop already needs no check.
 	calls := w.insightCalls
-	if r := HopReadiness(w.snapshot(), ver("1.32"), false, w.upgradeInsights); r.Blocker != nil || w.insightCalls != calls {
+	if r := readinessForHop(w.snapshot(), ver("1.32"), false, w.upgradeInsights); r.Blocker != nil || w.insightCalls != calls {
 		t.Fatalf("readiness of the live version = %+v after %d more reads; want none", r, w.insightCalls-calls)
 	}
 }
@@ -204,14 +204,14 @@ func TestHopReadiness_LaterHopWithoutInsightsBlocks(t *testing.T) {
 	}
 	w.apply(&ClusterPlan{Phases: hopOf(cp, "1.32")}, nil)
 
-	r := HopReadiness(w.snapshot(), ver("1.33"), false, w.upgradeInsights)
+	r := readinessForHop(w.snapshot(), ver("1.33"), false, w.upgradeInsights)
 	if r.Blocker == nil || !strings.Contains(r.Blocker.Message, "insights for 1.33 not available yet") {
 		t.Fatalf("readiness of 1.33 = %+v, want the missing insights named", r)
 	}
 	if w.insightCalls != 2 {
 		t.Fatalf("the insights were asked for %d times; want 2: in the plan, then live before the second hop", w.insightCalls)
 	}
-	r = HopReadiness(w.snapshot(), ver("1.33"), true, w.upgradeInsights)
+	r = readinessForHop(w.snapshot(), ver("1.33"), true, w.upgradeInsights)
 	if r.Blocker != nil || len(r.Notices) != 1 || w.insightCalls != 2 {
 		t.Fatalf("readiness with --skip-insights-check = %+v after %d reads", r, w.insightCalls)
 	}
@@ -221,7 +221,7 @@ func TestHopReadiness_LaterHopWithoutInsightsBlocks(t *testing.T) {
 // now, and reads no insight for a hop that the skew blocks.
 func TestHopReadiness_Skew(t *testing.T) {
 	w := worldOf("1.32", "old", "1.29", "cur", "1.32")
-	r := HopReadiness(w.snapshot(), ver("1.33"), false, w.upgradeInsights)
+	r := readinessForHop(w.snapshot(), ver("1.33"), false, w.upgradeInsights)
 	if r.Blocker == nil || !strings.Contains(r.Blocker.Message, "nodegroup old at 1.29 would exceed the kubelet skew limit (3 minors) against 1.33") ||
 		strings.Contains(r.Blocker.Message, "cur") {
 		t.Fatalf("readiness = %+v, want the skew of old alone", r)

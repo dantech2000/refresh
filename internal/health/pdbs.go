@@ -17,10 +17,6 @@ import (
 	"github.com/dantech2000/refresh/internal/fleet"
 )
 
-// systemNamespaces are left out of the coverage count. "default" is not
-// one of them: real workloads run there.
-var systemNamespaces = map[string]bool{"kube-system": true, "kube-public": true, "kube-node-lease": true}
-
 // maxDisruptedPods is MaxDisruptedPodSize of the eviction API: above it,
 // the API refuses every eviction of the budget.
 const maxDisruptedPods = 2000
@@ -71,12 +67,39 @@ func newPDB(in policyv1.PodDisruptionBudget) pdb {
 
 func (p pdb) id() string { return p.namespace + "/" + p.name }
 
-// refusesAll returns, in a few words, why the eviction API refuses every
-// pod that the budget gates whatever its counts say, or "" when it does
-// not. refusal gives the reason with its numbers. The
-// rules are those of checkAndDecrement in
-// kubernetes/kubernetes pkg/registry/core/pod/storage/eviction.go at
-// v1.37.2 (the Kubernetes of the client-go in go.mod), in its order:
+// refusal is a rule by which the eviction API refuses every pod that a
+// budget gates, whatever its counts say. The zero value is no such rule.
+type refusal int
+
+// The rules of refusesAll.
+const (
+	refusesNone refusal = iota
+	refusesUnprocessed
+	refusesNegative
+	refusesTooManyDisrupted
+	refusesSyncFailed
+)
+
+// String is the rule in a few words, as the message of the check words it.
+func (r refusal) String() string {
+	switch r {
+	case refusesUnprocessed:
+		return "not processed since its last change"
+	case refusesNegative:
+		return "negative disruption count"
+	case refusesTooManyDisrupted:
+		return fmt.Sprintf("more than %d disrupted pods", maxDisruptedPods)
+	case refusesSyncFailed:
+		return "sync failed"
+	}
+	return ""
+}
+
+// refusesAll returns the rule by which the eviction API refuses every pod
+// that the budget gates, or refusesNone. The rules are those of
+// checkAndDecrement in kubernetes/kubernetes
+// pkg/registry/core/pod/storage/eviction.go at v1.37.2 (the Kubernetes of
+// the client-go in go.mod), in its order:
 //
 //   - status.observedGeneration < metadata.generation: 429, "the
 //     disruption budget is still being processed by the server";
@@ -90,54 +113,64 @@ func (p pdb) id() string { return p.namespace + "/" + p.name }
 // here. The API reads that condition only to word its 429, since the
 // controller writes disruptionsAllowed 0 when a sync fails; the counts
 // of such a status are not to be trusted, so the check fails closed.
-func (p pdb) refusesAll() string {
-	short, _ := p.refusal()
-	return short
-}
-
-// refusal returns the short reason of refusesAll and the reason with its
-// numbers, or two empty strings.
-func (p pdb) refusal() (short, long string) {
+func (p pdb) refusesAll() refusal {
 	switch {
 	case p.observed < p.generation:
-		return "not processed since its last change", fmt.Sprintf("not processed by the disruption controller since its last change: generation %d, observed %d; evictions are refused", p.generation, p.observed)
+		return refusesUnprocessed
 	case p.allowed < 0:
-		return "negative disruption count", fmt.Sprintf("%d disruptions allowed; evictions are refused", p.allowed)
+		return refusesNegative
 	case p.disrupted > maxDisruptedPods:
-		return fmt.Sprintf("more than %d disrupted pods", maxDisruptedPods), fmt.Sprintf("%d evictions not yet confirmed by the disruption controller, more than %d; evictions are refused", p.disrupted, maxDisruptedPods)
+		return refusesTooManyDisrupted
 	case p.syncFailed:
-		return "sync failed", fmt.Sprintf("the disruption controller failed to sync it, %d disruptions allowed; evictions are refused", p.allowed)
+		return refusesSyncFailed
 	}
-	return "", ""
+	return refusesNone
+}
+
+// refusalText returns the rule of refusesAll with its numbers, or "".
+func (p pdb) refusalText() string {
+	switch p.refusesAll() {
+	case refusesUnprocessed:
+		return fmt.Sprintf("not processed by the disruption controller since its last change: generation %d, observed %d; evictions are refused", p.generation, p.observed)
+	case refusesNegative:
+		return fmt.Sprintf("%d disruptions allowed; evictions are refused", p.allowed)
+	case refusesTooManyDisrupted:
+		return fmt.Sprintf("%d evictions not yet confirmed by the disruption controller, more than %d; evictions are refused", p.disrupted, maxDisruptedPods)
+	case refusesSyncFailed:
+		return fmt.Sprintf("the disruption controller failed to sync it, %d disruptions allowed; evictions are refused", p.allowed)
+	}
+	return ""
 }
 
 // refuses reports whether the eviction API refuses a pod that the budget
 // gates: a rule of refusesAll holds, or the budget allows no disruption.
 // The API does not look at expectedPods.
 func (p pdb) refuses() bool {
-	return p.refusesAll() != "" || p.allowed == 0
+	return p.refusesAll() != refusesNone || p.allowed == 0
 }
 
 // atRisk is refuses without a pod read: a synced budget that allows no
 // disruption counts only while its status counts pods.
 func (p pdb) atRisk() bool {
-	return p.refusesAll() != "" || (p.allowed == 0 && p.expected > 0)
+	return p.refusesAll() != refusesNone || (p.allowed == 0 && p.expected > 0)
 }
 
 // allowedNow is the number of pods the budget lets go: 0 when a rule of
 // refusesAll holds.
 func (p pdb) allowedNow() int32 {
-	if p.refusesAll() != "" {
+	if p.refusesAll() != refusesNone {
 		return 0
 	}
 	return max(p.allowed, 0)
 }
 
-func (p pdb) summary() string {
-	if _, why := p.refusal(); why != "" {
-		return p.id() + " (" + why + ")"
+// blocker returns the finding of a budget that blocks a drain.
+func (p pdb) blocker() finding {
+	text := fmt.Sprintf("%s (%d/%d pods healthy, 0 disruptions allowed)", p.id(), p.healthy, p.expected)
+	if why := p.refusalText(); why != "" {
+		text = p.id() + " (" + why + ")"
 	}
-	return fmt.Sprintf("%s (%d/%d pods healthy, 0 disruptions allowed)", p.id(), p.healthy, p.expected)
+	return finding{name: p.id(), text: text, refused: p.refusesAll()}
 }
 
 // matches reports whether the selector of p selects the pod.
@@ -193,18 +226,12 @@ func DrainBlockers() Check {
 }
 
 func runDrainBlockers(_ context.Context, in *Input) Result {
-	cluster := in.Snapshot.Cluster.Name
 	if len(in.Targets) > 0 {
 		together(func() { _, _ = in.reads.PDBs() }, func() { _, _ = in.reads.Nodes() })
 	}
-	list, err := in.reads.PDBs()
-	if err != nil {
-		f := kubeFailure(cluster, "listing PodDisruptionBudgets", err)
-		return Result{Outcome: Unreadable, Message: "could not list the PodDisruptionBudgets: " + f.Error, Failures: []apidoc.Failure{f}}
-	}
-	budgets := make([]pdb, len(list.Items))
-	for i, p := range list.Items {
-		budgets[i] = newPDB(p)
+	budgets, r := listBudgets(in)
+	if r != nil {
+		return *r
 	}
 	targets, scoped, r := targetNodes(in)
 	if r != nil {
@@ -258,18 +285,18 @@ func targetsDesired(snap *fleet.Snapshot, targets []string) (int32, bool) {
 // findDrainBlockers is the rule over the budgets. Scoped, it reads the
 // pods of each namespace that has a budget that refuses evictions, to see
 // whether the budget gates a pod on a target node; unscoped, an at-risk
-// budget counts without a pod read, as the old check counted it. With
-// withMulti it also names the pods that more than one budget selects,
-// which needs the pods of each namespace with more than one budget. A scale-down leaves that
-// rule out: EKS ends its evictions after 15 minutes and terminates the
-// node anyway (see ScaleDownBlockers), so an eviction that fails does not
-// stop it.
+// budget counts without a pod read, as the old check counted it.
+//
+// With withMulti it also names the pods that more than one budget
+// selects, which needs the pods of each namespace with more than one
+// budget. A scale-down leaves that rule out: EKS ends its evictions after
+// 15 minutes and terminates the node anyway (see ScaleDownBlockers), so an
+// eviction that fails does not stop it.
 func findDrainBlockers(in *Input, budgets []pdb, targets map[string]bool, scoped, withMulti bool) Result {
 	byNamespace := groupByNamespace(budgets)
 	var (
 		blockers []finding
 		multi    []finding
-		refused  = map[string]string{}
 		failures []apidoc.Failure
 		unread   []string
 		reads    []func()
@@ -300,20 +327,18 @@ func findDrainBlockers(in *Input, budgets []pdb, targets map[string]bool, scoped
 			switch {
 			case !scoped:
 				if p.atRisk() {
-					blockers = append(blockers, finding{p.id(), p.summary()})
-					refused[p.id()] = p.refusesAll()
+					blockers = append(blockers, p.blocker())
 				}
 			case !p.refuses():
 			case pods != nil && slices.ContainsFunc(pods.Items, func(pod corev1.Pod) bool { return targets[pod.Spec.NodeName] && p.gates(&pod) }):
-				blockers = append(blockers, finding{p.id(), p.summary()})
-				refused[p.id()] = p.refusesAll()
+				blockers = append(blockers, p.blocker())
 			}
 		}
 		if withMulti && len(list) > 1 && pods != nil {
 			multi = append(multi, multiPDBPods(list, pods.Items, targets, scoped)...)
 		}
 	}
-	return drainBlockersResult(blockers, multi, refused, unread, failures, scoped)
+	return drainBlockersResult(blockers, multi, unread, failures, scoped)
 }
 
 // multiPDBPods names the pods of a namespace that more than one of its
@@ -334,31 +359,29 @@ func multiPDBPods(list []pdb, pods []corev1.Pod, targets map[string]bool, scoped
 		}
 		if len(matched) > 1 {
 			name := pod.Namespace + "/" + pod.Name
-			out = append(out, finding{name, fmt.Sprintf("pod %s is covered by %d PDBs (%s); the eviction API refuses such pods", name, len(matched), strings.Join(matched, ", "))})
+			out = append(out, finding{name: name, text: fmt.Sprintf("pod %s is covered by %d PDBs (%s); the eviction API refuses such pods", name, len(matched), strings.Join(matched, ", "))})
 		}
 	}
 	return out
 }
 
-// drainBlockersResult words the outcome of the drain-blocker check.
-// refused has the short reason of each blocker that refuses evictions
-// whatever its count, as refusesAll gives it; a blocker without one
-// allows 0 disruptions.
-func drainBlockersResult(blockers, multi []finding, refused map[string]string, unread []string, failures []apidoc.Failure, scoped bool) Result {
+// drainBlockersResult words the outcome of the drain-blocker check. A
+// blocker whose refused is refusesNone allows 0 disruptions.
+func drainBlockersResult(blockers, multi []finding, unread []string, failures []apidoc.Failure, scoped bool) Result {
 	r := Result{Failures: failures, Findings: findingNames(slices.Concat(blockers, multi))}
 	for _, b := range slices.Concat(blockers, multi) {
 		r.Details = append(r.Details, "drain blocker: "+b.text)
 	}
-	blocking := findingNames(blockers)
 	switch {
 	case len(blockers)+len(multi) > 0:
 		var parts []string
 		var zero []string
-		for _, name := range blocking {
-			if why := refused[name]; why != "" {
-				parts = append(parts, "PDB "+name+" refuses evictions ("+why+")")
+		byName := slices.SortedFunc(slices.Values(blockers), func(a, b finding) int { return strings.Compare(a.name, b.name) })
+		for _, b := range byName {
+			if b.refused != refusesNone {
+				parts = append(parts, "PDB "+b.name+" refuses evictions ("+b.refused.String()+")")
 			} else {
-				zero = append(zero, name)
+				zero = append(zero, b.name)
 			}
 		}
 		switch {
@@ -410,20 +433,15 @@ func runScaleDown(in *Input, nodegroup string, remove int32) Result {
 	cluster := in.Snapshot.Cluster.Name
 	// The two lists in one round trip, as runDrainBlockers makes them.
 	together(func() { _, _ = in.reads.PDBs() }, func() { _, _ = in.reads.Nodes() })
-	list, err := in.reads.PDBs()
-	if err != nil {
-		f := kubeFailure(cluster, "listing PodDisruptionBudgets", err)
-		return Result{Outcome: Unreadable, Message: "could not list the PodDisruptionBudgets: " + f.Error, Failures: []apidoc.Failure{f}}
+	budgets, done := listBudgets(in)
+	if done != nil {
+		return *done
 	}
 	scoped := *in
 	scoped.Targets = []string{nodegroup}
 	nodes, isScoped, done := targetNodes(&scoped)
 	if done != nil {
 		return *done
-	}
-	budgets := make([]pdb, len(list.Items))
-	for i, p := range list.Items {
-		budgets[i] = newPDB(p)
 	}
 	if !isScoped {
 		// Without the nodes of the nodegroup the rule of a roll applies:
@@ -455,7 +473,7 @@ func runScaleDown(in *Input, nodegroup string, remove int32) Result {
 		if loss := worstCaseLoss(perNode, int(remove)); loss > p.allowedNow() {
 			r.Findings = append(r.Findings, p.id())
 			counts := fmt.Sprintf("%d/%d pods healthy, %d allowed", p.healthy, p.expected, p.allowedNow())
-			if _, why := p.refusal(); why != "" {
+			if why := p.refusalText(); why != "" {
 				counts = why
 			}
 			r.Details = append(r.Details, fmt.Sprintf("drain blocker: %s (%s; covered pods run on %d of the nodes, so removing %d can take down %d)",
@@ -475,6 +493,21 @@ func runScaleDown(in *Input, nodegroup string, remove int32) Result {
 	return r
 }
 
+// listBudgets returns the PodDisruptionBudgets of the cluster, or the
+// Unreadable result of a list that failed.
+func listBudgets(in *Input) ([]pdb, *Result) {
+	list, err := in.reads.PDBs()
+	if err != nil {
+		f := kubeFailure(in.Snapshot.Cluster.Name, "listing PodDisruptionBudgets", err)
+		return nil, &Result{Outcome: Unreadable, Message: "could not list the PodDisruptionBudgets: " + f.Error, Failures: []apidoc.Failure{f}}
+	}
+	budgets := make([]pdb, len(list.Items))
+	for i, p := range list.Items {
+		budgets[i] = newPDB(p)
+	}
+	return budgets, nil
+}
+
 // groupByNamespace returns the budgets by namespace.
 func groupByNamespace(budgets []pdb) map[string][]pdb {
 	out := map[string][]pdb{}
@@ -487,13 +520,7 @@ func groupByNamespace(budgets []pdb) map[string][]pdb {
 // worstCaseLoss returns the number of pods on the k nodes of perNode that
 // hold the most pods.
 func worstCaseLoss(perNode map[string]int32, k int) int32 {
-	counts := slices.Sorted(func(yield func(int32) bool) {
-		for _, c := range perNode {
-			if !yield(c) {
-				return
-			}
-		}
-	})
+	counts := slices.Sorted(maps.Values(perNode))
 	slices.Reverse(counts)
 	var loss int32
 	for _, c := range counts[:min(k, len(counts))] {
@@ -509,36 +536,26 @@ func PDBCoverage() Check {
 }
 
 func runPDBCoverage(_ context.Context, in *Input) Result {
-	cluster := in.Snapshot.Cluster.Name
 	together(func() { _, _ = in.reads.PDBs() }, func() { _, _ = in.reads.Deployments() })
-	budgets, err := in.reads.PDBs()
-	if err != nil {
-		f := kubeFailure(cluster, "listing PodDisruptionBudgets", err)
-		return Result{Outcome: Unreadable, Message: "could not list the PodDisruptionBudgets: " + f.Error, Failures: []apidoc.Failure{f}}
+	budgets, r := listBudgets(in)
+	if r != nil {
+		return *r
 	}
 	deployments, err := in.reads.Deployments()
 	if err != nil {
-		f := kubeFailure(cluster, "listing deployments", err)
+		f := kubeFailure(in.Snapshot.Cluster.Name, "listing deployments", err)
 		return Result{Outcome: Unreadable, Message: "could not list the deployments: " + f.Error, Failures: []apidoc.Failure{f}}
 	}
-	selectors := map[string][]labels.Selector{}
-	for _, p := range budgets.Items {
-		if p.Spec.Selector == nil {
-			continue
-		}
-		if sel, err := metav1.LabelSelectorAsSelector(p.Spec.Selector); err == nil {
-			selectors[p.Namespace] = append(selectors[p.Namespace], sel)
-		}
-	}
+	byNamespace := groupByNamespace(budgets)
 	total := 0
 	var uncovered []string
 	for _, d := range deployments.Items {
-		if systemNamespaces[d.Namespace] {
+		if slices.Contains(criticalNamespaces, d.Namespace) {
 			continue
 		}
 		total++
 		podLabels := labels.Set(d.Spec.Template.Labels)
-		if !slices.ContainsFunc(selectors[d.Namespace], func(sel labels.Selector) bool { return sel.Matches(podLabels) }) {
+		if !slices.ContainsFunc(byNamespace[d.Namespace], func(p pdb) bool { return p.selector != nil && p.selector.Matches(podLabels) }) {
 			uncovered = append(uncovered, d.Namespace+"/"+d.Name)
 		}
 	}

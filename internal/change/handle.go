@@ -193,15 +193,6 @@ func Start(ctx context.Context, d Deps, req Request) *Handle {
 	return h
 }
 
-// start is Start over any run: the tests of the state table script one
-// that calls the hooks in an order of their own, with no network.
-func start(kind Kind, target Target, now func() time.Time, checkpoints bool, run func(Hooks) (Result, error)) *Handle {
-	h := newHandle(kind, target, false, now)
-	h.checkpoints = checkpoints
-	go h.run(run)
-	return h
-}
-
 func newHandle(kind Kind, target Target, elsewhere bool, now func() time.Time) *Handle {
 	return &Handle{
 		kind: kind, target: target, elsewhere: elsewhere, now: now,
@@ -430,9 +421,7 @@ func (h *Handle) checkpoint(ctx context.Context, next StepRef) (Checkpoint, erro
 		h.mu.Unlock()
 		return Checkpoint{Stop: true}, nil
 	}
-	waited := false
 	if h.pause {
-		waited = true
 		h.resume = make(chan struct{})
 		h.before, h.state = h.state, Paused
 		resume := h.resume
@@ -452,7 +441,7 @@ func (h *Handle) checkpoint(ctx context.Context, next StepRef) (Checkpoint, erro
 		if h.stop {
 			h.bumpLocked()
 			h.mu.Unlock()
-			return Checkpoint{Stop: true, Waited: true}, nil
+			return Checkpoint{Stop: true}, nil
 		}
 	}
 	if h.hasLast && next == h.lastCheckpoint {
@@ -460,7 +449,7 @@ func (h *Handle) checkpoint(ctx context.Context, next StepRef) (Checkpoint, erro
 	}
 	h.bumpLocked()
 	h.mu.Unlock()
-	return Checkpoint{Waited: waited}, nil
+	return Checkpoint{}, nil
 }
 
 // finish records the result and ends the handle. A phase that never
@@ -635,12 +624,3 @@ func (h *Handle) checkpointableLocked() error {
 
 // Done is closed when the run has ended.
 func (h *Handle) Done() <-chan struct{} { return h.done }
-
-// Result blocks until the run has ended and returns how. It can be
-// called again.
-func (h *Handle) Result() Result {
-	<-h.done
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return *h.result
-}

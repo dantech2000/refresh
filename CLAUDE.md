@@ -78,6 +78,7 @@ internal/
   awsx/awsxtest/        an HTTP server that answers the AWS APIs from a world
   fleet/                Snapshot, the fetcher, the region sweep, Version
   fleet/fleetdata/      facts that refresh ships with: support calendar, AMI SSM paths, regions
+  fleet/aminotes/       the AMI release notes of a roll (nodegroup update --changelog)
   fleet/fleettest/      the world model and its clock
   health/               the checks, Gate, drain blockers, post-roll verification
   change/               plans, waits, rolls, add-on update, scale, the upgrade and rollback engines
@@ -111,10 +112,11 @@ docs/                   user documentation (Material for MkDocs); docs/reference
 `apidoc` and `awsx` import no other refresh package. `fleet` imports them.
 `health` and `change` import `fleet`. `cmd/...`, `cmdutil`, `view`, and `tui`
 are on top. Nothing below them reads a flag or writes to a terminal.
-`exitcode` and `fanout` import nothing of refresh. A `...test` package is
-imported only by tests, `test/`, and `tools/`. An `imports_test.go` in each of
-`apidoc`, `awsx`, `fleet`, `health`, `change`, `noderoll`, `cmdutil`, `tui`,
-and `tui/backend` enforces this. If one fails, move the code. Do not edit the
+`exitcode`, `fanout`, and `fleet/aminotes` import nothing of refresh. A
+`...test` package is imported only by tests, `test/`, and `tools/`. An
+`imports_test.go` in each of `apidoc`, `awsx`, `fleet`, `fleet/aminotes`,
+`health`, `change`, `noderoll`, `cmdutil`, `tui`, and `tui/backend` enforces
+this. If one fails, move the code. Do not edit the
 test to allow the import.
 
 ## Code standards
@@ -174,10 +176,12 @@ confirm function. Gate policy does not live in a command.
 **Changes (`change`).** A changing command builds a plan (`change.NewPlan`),
 and `change.Run` executes it with three hooks: events, questions, and the
 checkpoint between phases. A dry run returns the plan and stops. The busy
-rule, the gate, plan revalidation, the waits (`WaitUpdate` follows an update
-ID, `WaitSettled` follows a resource to a postcondition), and the one rule for
+rule, the gate, plan revalidation, the waits (`waitUpdate` follows an update
+ID, `waitSettled` follows a resource to a postcondition), and the one rule for
 the exit code are all in `change`. The CLI and the TUI are front ends of the
-same `Run`. Do not assemble a roll in a command.
+same `Run`. Do not assemble a roll in a command. `change` also builds the
+command line of a follow-up that a notice names: it writes flag names and
+reads none, and the front end gives it the words of the run (`FollowUp`).
 
 **Views (`view`).** A list column is defined once and gives the table cell and
 the plain cell. A describe view is a list of sections; plain output derives

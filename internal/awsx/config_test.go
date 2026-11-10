@@ -322,7 +322,7 @@ func TestNoteKeysShadowProfile(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Setenv("AWS_PROFILE", tt.profile)
 			t.Setenv("AWS_ACCESS_KEY_ID", "AKIAEXAMPLE")
-			got := NoteKeysShadowProfile(context.Background(), tt.cfg, tt.err)
+			got := noteKeysShadowProfile(context.Background(), tt.cfg, tt.err)
 			if has := strings.Contains(got.Error(), "the SDK uses it before AWS_PROFILE"); has != tt.wantNote {
 				t.Errorf("note present = %t, want %t:\n%v", has, tt.wantNote, got)
 			}
@@ -331,7 +331,7 @@ func TestNoteKeysShadowProfile(t *testing.T) {
 			}
 		})
 	}
-	if NoteKeysShadowProfile(context.Background(), aws.Config{}, nil) != nil {
+	if noteKeysShadowProfile(context.Background(), aws.Config{}, nil) != nil {
 		t.Error("a nil error got a note")
 	}
 }
@@ -386,7 +386,7 @@ func TestDialFailureAttempts(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.policy.String(), func(t *testing.T) {
 			var dials, sweeps atomic.Int32
-			client := NewHTTPClient(8).WithTransportOptions(func(tr *http.Transport) {
+			client := defaultHTTPClient(8).WithTransportOptions(func(tr *http.Transport) {
 				next := tr.DialContext
 				tr.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
 					dials.Add(1)
@@ -439,7 +439,7 @@ func TestHTTPClientSizesIdleConnections(t *testing.T) {
 		{maxConcurrency: 32, wantPerHost: 32, wantTotal: 0},
 	}
 	for _, tt := range tests {
-		tr := NewHTTPClient(tt.maxConcurrency).GetTransport()
+		tr := defaultHTTPClient(tt.maxConcurrency).GetTransport()
 		if tr.MaxIdleConnsPerHost != tt.wantPerHost || tr.MaxIdleConns != tt.wantTotal {
 			t.Errorf("max concurrency %d: idle connections = %d per host, %d in total; want %d, %d",
 				tt.maxConcurrency, tr.MaxIdleConnsPerHost, tr.MaxIdleConns, tt.wantPerHost, tt.wantTotal)
@@ -465,7 +465,7 @@ func TestLoadSharesOneTransportUnderADefaultsMode(t *testing.T) {
 	t.Setenv("AWS_DEFAULTS_MODE", "standard")
 
 	var dials, sweepDials atomic.Int32
-	client := NewHTTPClient(8).WithTransportOptions(func(tr *http.Transport) {
+	client := defaultHTTPClient(8).WithTransportOptions(func(tr *http.Transport) {
 		next := tr.DialContext
 		tr.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
 			dials.Add(1)

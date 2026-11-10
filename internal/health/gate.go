@@ -88,11 +88,6 @@ func Gate(results []Result, p Policy) Verdict {
 	if p.Skip {
 		return v
 	}
-	type ranked struct {
-		Reason
-		rank   int
-		forced bool
-	}
 	var all []ranked
 	worst := rankPass
 	for _, r := range results {
@@ -115,7 +110,7 @@ func Gate(results []Result, p Policy) Verdict {
 			v.Forced = append(v.Forced, r.Reason)
 		}
 	}
-	v.Exit = exitOf(results, all, func(r ranked) int { return r.rank })
+	v.Exit = exitOf(results, all)
 	switch worst {
 	case rankBlock, rankClosed:
 		v.Decision = Block
@@ -157,17 +152,24 @@ func rankOf(r Result, forced bool) int {
 	return rankPass
 }
 
+// ranked is a result that is not a pass, with its rank.
+type ranked struct {
+	Reason
+	rank   int
+	forced bool
+}
+
 // exitOf returns the exit code of the findings, before the policy. Gate
 // raises it to 3 for a Block that the policy made.
-func exitOf[T any](results []Result, ranked []T, rank func(T) int) int {
+func exitOf(results []Result, all []ranked) int {
 	for _, r := range results {
 		if r.Outcome == Unreadable {
 			return exitcode.Incomplete
 		}
 	}
 	code := exitcode.OK
-	for _, r := range ranked {
-		switch rank(r) {
+	for _, r := range all {
+		switch r.rank {
 		case rankBlock, rankClosed:
 			return exitcode.Blocked
 		case rankWarning:
@@ -193,11 +195,7 @@ func (v Verdict) Summary() string {
 }
 
 func joinReasons(reasons []Reason) string {
-	parts := make([]string, len(reasons))
-	for i, r := range reasons {
-		parts[i] = r.String()
-	}
-	return strings.Join(parts, "; ")
+	return strings.Join(reasonStrings(reasons), "; ")
 }
 
 func plural(n int, noun string) string {

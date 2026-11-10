@@ -7,8 +7,8 @@ import (
 )
 
 // The backend reads the fleet for the model and knows nothing of a
-// terminal: it does not import the model, the command packages, the
-// fakes, or the old tree.
+// terminal: it does not import the model, the command packages, cmdutil,
+// the fakes, or the old tree.
 func TestBackendImportsNoModelAndNoFakes(t *testing.T) {
 	pkg, err := build.ImportDir(".", 0)
 	if err != nil {
@@ -21,7 +21,7 @@ func TestBackendImportsNoModelAndNoFakes(t *testing.T) {
 			continue
 		}
 		switch {
-		case rel == "internal/tui", strings.HasPrefix(rel, "internal/cmd/"):
+		case rel == "internal/tui", rel == "internal/cmdutil", strings.HasPrefix(rel, "internal/cmd/"):
 			t.Errorf("backend imports %s; nothing of the terminal belongs here", rel)
 		case strings.HasSuffix(rel, "test"):
 			t.Errorf("backend imports %s; a fake belongs to tests", rel)

@@ -40,13 +40,13 @@ func ValidateSweepFlags(global *cmdutil.GlobalOptions, allRegions bool) error {
 	if allRegions && len(regionNames(global.Regions)) > 0 {
 		return errors.New("-A/--all-regions and -r/--region cannot be used together: name the regions, or sweep all of them")
 	}
-	return CheckEnvRegions()
+	return checkEnvRegions()
 }
 
-// CheckEnvRegions checks the shape of each region name in
+// checkEnvRegions checks the shape of each region name in
 // REFRESH_EKS_REGIONS, before any call. The root command checks the names
 // of -r.
-func CheckEnvRegions() error {
+func checkEnvRegions() error {
 	for _, r := range regionNames(strings.Split(os.Getenv(EnvRegions), ",")) {
 		if err := awsx.CheckRegion(r); err != nil {
 			return fmt.Errorf("invalid %s: %w", EnvRegions, err)
@@ -87,7 +87,7 @@ func ChangeRegions(global *cmdutil.GlobalOptions, home string) (fleet.Regions, e
 		return fleet.Regions{Names: named}, nil
 	}
 	if home == "" {
-		return fleet.Regions{}, errors.New("no AWS region: pass -r/--region, set AWS_REGION, or use a context with a region")
+		return fleet.Regions{}, fmt.Errorf("no AWS region: pass -r/--region to name the regions of the fleet (a change does not read %s), set AWS_REGION, or use a context with a region", EnvRegions)
 	}
 	return fleet.Regions{Names: []string{home}}, nil
 }

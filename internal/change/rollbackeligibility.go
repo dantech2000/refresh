@@ -117,10 +117,10 @@ func (p *rollbackPlanner) eligibility(h versionHistory, rollingBack bool) {
 	}
 }
 
-// RollbackStillEligible judges a rollback again on a read of the cluster
+// rollbackStillEligible judges a rollback again on a read of the cluster
 // from right before one of its requests, against target, the version
 // that the plan returns to. The plan is old by then: a question was open,
-// or a nodegroup rolled for an hour. It makes the checks of PlanRollback
+// or a nodegroup rolled for an hour. It makes the checks of rollbackPlan
 // that say whether EKS will take the control-plane rollback, and none
 // about the steps: the update history and the rollback window
 // (eligibility), the offer of the target version (targetOffer), and the
@@ -132,7 +132,7 @@ func (p *rollbackPlanner) eligibility(h versionHistory, rollingBack bool) {
 // blockers are what stops the rollback now, with the failures of the reads
 // behind them. A cluster whose control plane is back at target already has
 // nothing left to judge.
-func RollbackStillEligible(snap *fleet.Snapshot, req RollbackRequest, in RollbackInputs, target fleet.Version) ([]Blocker, []apidoc.Failure, error) {
+func rollbackStillEligible(snap *fleet.Snapshot, req RollbackRequest, in rollbackReads, target fleet.Version) ([]Blocker, []apidoc.Failure, error) {
 	t := Target{Region: snap.Cluster.Region, Cluster: snap.Cluster.Name}
 	live := snap.Cluster.Version
 	p := &rollbackPlanner{snap: snap, req: req, in: in, live: live, planWriter: planWriter{cp: &ClusterPlan{Target: t, From: live, To: target}}}

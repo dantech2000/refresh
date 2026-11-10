@@ -9,13 +9,9 @@
 // refresh, and it draws nothing: internal/view draws the panel.
 package noderoll
 
-// The labels that EKS sets on the nodes of a managed nodegroup.
-const (
-	// LabelNodegroup names the nodegroup of a node.
-	LabelNodegroup = "eks.amazonaws.com/nodegroup"
-	// LabelImage is the ID of the AMI that a node was launched with.
-	LabelImage = "eks.amazonaws.com/nodegroup-image"
-)
+// LabelNodegroup is the label that EKS sets on the nodes of a managed
+// nodegroup: the name of the nodegroup.
+const LabelNodegroup = "eks.amazonaws.com/nodegroup"
 
 // Phase is where a node is in a roll.
 type Phase string

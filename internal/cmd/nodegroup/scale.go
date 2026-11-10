@@ -84,7 +84,7 @@ refresh context. It never comes from the kubeconfig.
   # Change only the bounds, and do not wait
   refresh nodegroup scale web -c prod --min 2 --max 12 --yes --no-wait`,
 		Args:              cobra.MatchAll(cobra.ExactArgs(1), cmdutil.NoEmptyArgs),
-		ValidArgsFunction: fleetcmd.CompleteNodegroups(f, &o.cluster),
+		ValidArgsFunction: fleetcmd.CompleteNodegroups(f, &o.cluster, 1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := o.complete(cmd, args); err != nil {
 				return err

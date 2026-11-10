@@ -154,31 +154,31 @@ func TestDecideAMIUpdate(t *testing.T) {
 		name   string
 		ng     fleet.Nodegroup
 		reroll bool
-		want   RollDecision
+		want   rollDecision
 	}{
-		{"1 custom", custom, false, RollDecision{Manual, CustomAMI}},
-		{"1 custom, with reroll", custom, true, RollDecision{Manual, CustomAMI}},
-		{"2 updating", managed("UPDATING", ami("ami-old", "ami-new")), false, RollDecision{Skip, InFlight}},
-		{"2 updating, with reroll", managed("UPDATING", ami("ami-new", "ami-new")), true, RollDecision{Skip, InFlight}},
-		{"2 creating", managed("CREATING", ami("", "ami-new")), false, RollDecision{Skip, InFlight}},
-		{"2 deleting", managed("DELETING", ami("ami-old", "ami-new")), false, RollDecision{Skip, InFlight}},
-		{"2 updating, AMI type unknown", updatingNewType, false, RollDecision{Skip, InFlight}},
-		{"3 AMI type unknown", newType, false, RollDecision{Skip, AMITypeUnknown}},
-		{"3 AMI type unknown, with reroll", newType, true, RollDecision{Skip, AMITypeUnknown}},
-		{"4 unknown current", managed("ACTIVE", ami("", "ami-new")), false, RollDecision{Submit, AMIUnknown}},
-		{"4 unknown latest", managed("ACTIVE", ami("ami-old", "")), false, RollDecision{Submit, AMIUnknown}},
-		{"4 AMIs not read", managed("ACTIVE", fleet.AMI{State: fleet.Failed, Current: "ami-new", Latest: "ami-new"}), false, RollDecision{Submit, AMIUnknown}},
-		{"3 AMI type not returned", noType, false, RollDecision{Skip, AMITypeUnknown}},
-		{"5 on latest, with reroll", managed("ACTIVE", ami("ami-new", "ami-new")), true, RollDecision{Submit, Reroll}},
-		{"6 on latest", managed("ACTIVE", ami("ami-new", "ami-new")), false, RollDecision{Skip, AlreadyLatest}},
-		{"6 on latest and degraded", managed("DEGRADED", ami("ami-new", "ami-new")), false, RollDecision{Skip, AlreadyLatest}},
-		{"7 outdated", managed("ACTIVE", ami("ami-old", "ami-new")), false, RollDecision{Submit, AMIOutdated}},
-		{"7 outdated, with reroll", managed("ACTIVE", ami("ami-old", "ami-new")), true, RollDecision{Submit, AMIOutdated}},
+		{"1 custom", custom, false, rollDecision{Manual, CustomAMI}},
+		{"1 custom, with reroll", custom, true, rollDecision{Manual, CustomAMI}},
+		{"2 updating", managed("UPDATING", ami("ami-old", "ami-new")), false, rollDecision{Skip, InFlight}},
+		{"2 updating, with reroll", managed("UPDATING", ami("ami-new", "ami-new")), true, rollDecision{Skip, InFlight}},
+		{"2 creating", managed("CREATING", ami("", "ami-new")), false, rollDecision{Skip, InFlight}},
+		{"2 deleting", managed("DELETING", ami("ami-old", "ami-new")), false, rollDecision{Skip, InFlight}},
+		{"2 updating, AMI type unknown", updatingNewType, false, rollDecision{Skip, InFlight}},
+		{"3 AMI type unknown", newType, false, rollDecision{Skip, AMITypeUnknown}},
+		{"3 AMI type unknown, with reroll", newType, true, rollDecision{Skip, AMITypeUnknown}},
+		{"4 unknown current", managed("ACTIVE", ami("", "ami-new")), false, rollDecision{Submit, AMIUnknown}},
+		{"4 unknown latest", managed("ACTIVE", ami("ami-old", "")), false, rollDecision{Submit, AMIUnknown}},
+		{"4 AMIs not read", managed("ACTIVE", fleet.AMI{State: fleet.Failed, Current: "ami-new", Latest: "ami-new"}), false, rollDecision{Submit, AMIUnknown}},
+		{"3 AMI type not returned", noType, false, rollDecision{Skip, AMITypeUnknown}},
+		{"5 on latest, with reroll", managed("ACTIVE", ami("ami-new", "ami-new")), true, rollDecision{Submit, Reroll}},
+		{"6 on latest", managed("ACTIVE", ami("ami-new", "ami-new")), false, rollDecision{Skip, AlreadyLatest}},
+		{"6 on latest and degraded", managed("DEGRADED", ami("ami-new", "ami-new")), false, rollDecision{Skip, AlreadyLatest}},
+		{"7 outdated", managed("ACTIVE", ami("ami-old", "ami-new")), false, rollDecision{Submit, AMIOutdated}},
+		{"7 outdated, with reroll", managed("ACTIVE", ami("ami-old", "ami-new")), true, rollDecision{Submit, AMIOutdated}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := DecideAMIUpdate(tt.ng, tt.reroll); got != tt.want {
-				t.Errorf("DecideAMIUpdate = %+v, want %+v", got, tt.want)
+			if got := decideAMIUpdate(tt.ng, tt.reroll); got != tt.want {
+				t.Errorf("decideAMIUpdate = %+v, want %+v", got, tt.want)
 			}
 		})
 	}
@@ -616,7 +616,7 @@ func TestStartNodegroupRoll(t *testing.T) {
 	clients := e.deps.AWS.Clients(east)
 	target := Target{Region: east, Cluster: "prod"}
 	t.Run("refuses an empty version", func(t *testing.T) {
-		if _, err := StartNodegroupRoll(testContext(t), clients, target, "ng-a", "", false); err == nil {
+		if _, err := startNodegroupRoll(testContext(t), clients, target, "ng-a", "", false); err == nil {
 			t.Fatal("no error for a roll with no version")
 		}
 		if got := e.rolls(); len(got) != 0 {
@@ -625,7 +625,7 @@ func TestStartNodegroupRoll(t *testing.T) {
 	})
 	t.Run("a new token per call", func(t *testing.T) {
 		for _, ng := range []string{"ng-a", "ng-b"} {
-			if id, err := StartNodegroupRoll(testContext(t), clients, target, ng, "1.32", ng == "ng-b"); err != nil || id == "" {
+			if id, err := startNodegroupRoll(testContext(t), clients, target, ng, "1.32", ng == "ng-b"); err != nil || id == "" {
 				t.Fatalf("roll of %s: id %q, %v", ng, id, err)
 			}
 		}

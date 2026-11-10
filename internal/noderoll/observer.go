@@ -19,10 +19,6 @@ type Identity struct {
 	// rollback roll moves the nodes to, such as "1.35". It is "" for a
 	// roll that keeps the version: a new AMI.
 	TargetVersion string
-	// TargetAMI is the ID of the AMI that the roll moves to, or "" when it
-	// is not known. Attach does not tell the nodes apart by it: see
-	// Attach.
-	TargetAMI string
 	// StartedAt is when the roll began. The zero time means now: the roll
 	// begins as the observer attaches.
 	StartedAt time.Time
@@ -73,8 +69,7 @@ type Observer struct {
 //     node that comes later is new, also one that takes the name of an
 //     old node: a node is known by its UID.
 //
-// Row 2 needs no AMI, and the image label of a node is not read. That is
-// why TargetAMI changes nothing here.
+// Row 2 needs no AMI, and the image label of a node is not read.
 func Attach(ctx context.Context, kube kubernetes.Interface, nodegroup string, id Identity, o AttachOptions) (*Observer, error) {
 	return attach(ctx, kube, nodegroup, id, time.Now, o.syncLimit())
 }
@@ -171,7 +166,7 @@ func (o *Observer) Snapshot(ctx context.Context) (Snapshot, error) {
 	names := make(map[string]time.Time, len(nodes))
 	for _, n := range nodes {
 		names[n.Name] = n.CreationTimestamp.Time
-		v := classify(n, o.id.TargetAMI, o.baseline)
+		v := classify(n, o.baseline)
 		if m := kubeletMinor(n); o.byVersion && m != "" {
 			v.OnTarget = m == o.id.TargetVersion
 		}

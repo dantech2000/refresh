@@ -78,7 +78,7 @@ func (r *runner) runEngineNodegroup(cp *ClusterPlan, ph Phase, s Step) (res Step
 			res.Attached, res.StartedAt = true, r.d.now()
 			ctx, wait := r.waitBudget()
 			r.read.pause()
-			settled, err := WaitSettled(ctx, poll, resource, nodegroupSettled, r.waitOptions(s, wait))
+			settled, err := waitSettled(ctx, poll, resource, nodegroupSettled, r.waitOptions(s, wait))
 			if err != nil {
 				return r.waitFailed(ctx, cp, res, err), false
 			}
@@ -109,7 +109,7 @@ func (r *runner) runEngineNodegroup(cp *ClusterPlan, ph Phase, s Step) (res Step
 // rule, and nothing is sent. done is false when the nodegroup settled away
 // from the goal: the caller reads it again and decides from that, and
 // out carries what the step has so far.
-func (r *runner) settleAtGoal(cp *ClusterPlan, ph Phase, s Step, res StepResult, fresh Settled, round int) (out StepResult, done bool) {
+func (r *runner) settleAtGoal(cp *ClusterPlan, ph Phase, s Step, res StepResult, fresh settledResource, round int) (out StepResult, done bool) {
 	kind, name, resource := r.req.kind(), s.Ref.Name, s.Ref.Resource()
 	if changing, _ := nodegroupSettled(fresh); changing {
 		return r.verifySettled(r.readCtx, cp, ph, s, res, nil), true
@@ -136,7 +136,7 @@ func (r *runner) settleAtGoal(cp *ClusterPlan, ph Phase, s Step, res StepResult,
 	}
 	ctx, wait := r.waitBudget()
 	r.read.pause()
-	settled, err := WaitSettled(ctx, r.d.AWS.PollClients(cp.Region), resource, nodegroupSettled, r.waitOptions(s, wait))
+	settled, err := waitSettled(ctx, r.d.AWS.PollClients(cp.Region), resource, nodegroupSettled, r.waitOptions(s, wait))
 	if err != nil {
 		return r.waitFailed(ctx, cp, res, err), true
 	}
@@ -186,7 +186,7 @@ func (r *runner) submitEngineRoll(cp *ClusterPlan, s Step) StepResult {
 // when it is. Only a version update whose target version meets the goal,
 // by the direction of the run, is attached to: the tail of a roll of an
 // earlier run. err is the error of the lookup of the update.
-func foreignRoll(kind Kind, name, goal string, u InFlightUpdate, err error) string {
+func foreignRoll(kind Kind, name, goal string, u inFlight, err error) string {
 	switch {
 	case err != nil:
 		return fmt.Sprintf("nodegroup %s is UPDATING and its update could not be read (%v)", name, err)
