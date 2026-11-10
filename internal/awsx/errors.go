@@ -280,31 +280,6 @@ func deadlineHint(flag string) string {
 	return fmt.Sprintf("(increase %s to allow more time)", flag)
 }
 
-// retargetedError is err with its timeout hint naming another flag.
-type retargetedError struct {
-	msg string
-	err error
-}
-
-func (e *retargetedError) Error() string { return e.msg }
-func (e *retargetedError) Unwrap() error { return e.err }
-
-// RetargetDeadlineHint returns err with FormatAWSError's "increase
-// --timeout" hint naming flag instead, for a command whose run deadline is
-// another flag (such as --wait-timeout). An err without the hint is returned
-// as is. The result wraps err, so errors.Is/As still work.
-func RetargetDeadlineHint(err error, flag string) error {
-	if err == nil || flag == DefaultTimeoutFlag {
-		return err
-	}
-	msg := err.Error()
-	old := deadlineHint(DefaultTimeoutFlag)
-	if !strings.Contains(msg, old) {
-		return err
-	}
-	return &retargetedError{msg: strings.ReplaceAll(msg, old, deadlineHint(flag)), err: err}
-}
-
 // FormatAWSError provides user-friendly error messages for AWS errors. Every
 // returned error wraps err.
 //
