@@ -12,30 +12,30 @@ import (
 const EnvInClusterName = "REFRESH_IN_CLUSTER_NAME"
 
 // NewKube returns the function for Factory.Kube: kube.Connect with the
-// --kubeconfig and --kube-context of the run, once per target. A failed
-// resolution is kept too: a run asks about one cluster, and the answer
-// does not change within it.
+// --kubeconfig and --kube-context of the run, once per target. The key is
+// the whole target: a fleet or the UI may hold two clusters of one name in
+// two regions. A failed resolution is not kept. It makes no request, and
+// the UI asks again after the user adds a kubeconfig context.
 func NewKube(f *Factory) func(target kube.Target) (*kube.Client, error) {
-	type result struct {
-		client *kube.Client
-		err    error
-	}
 	var (
 		mu      sync.Mutex
-		clients = map[string]result{}
+		clients = map[kube.Target]*kube.Client{}
 	)
 	return func(target kube.Target) (*kube.Client, error) {
 		mu.Lock()
 		defer mu.Unlock()
-		if r, ok := clients[target.Name]; ok {
-			return r.client, r.err
+		if client, ok := clients[target]; ok {
+			return client, nil
 		}
 		client, err := kube.Connect(target, kube.Options{
 			Kubeconfig:    f.Global.Kubeconfig,
 			Context:       f.Global.KubeContext,
 			InClusterName: os.Getenv(EnvInClusterName),
 		})
-		clients[target.Name] = result{client, err}
-		return client, err
+		if err != nil {
+			return nil, err
+		}
+		clients[target] = client
+		return client, nil
 	}
 }
