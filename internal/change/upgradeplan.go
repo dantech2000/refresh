@@ -23,7 +23,7 @@ type upgradeReads struct {
 	Now time.Time
 	// Version says whether EKS offers a Kubernetes version: one
 	// DescribeClusterVersions call. It is called once, for the target.
-	Version func(v fleet.Version) offer
+	Version func(v fleet.Version) versionOffered
 	// AddonVersions returns the versions of an add-on that a Kubernetes
 	// version can run, newest first, and none when EKS publishes none:
 	// fleet.Fetcher.AddonVersions. It is called for the live version and
@@ -81,7 +81,7 @@ func newUpgradePlanner(snap *fleet.Snapshot, req UpgradeRequest, in upgradeReads
 	if snap.Have.Cluster != fleet.Collected || live.IsZero() {
 		return nil, &RefusalError{Reason: RefusalVersionUnknown, Message: "the Kubernetes version of cluster " + target.Cluster + " is not known"}
 	}
-	hops, err := hops(live, req.To)
+	hops, err := hopsBetween(live, req.To)
 	if err != nil {
 		return nil, err
 	}

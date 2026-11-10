@@ -54,7 +54,7 @@ type planWorld struct {
 	catalogue func(addon string, k fleet.Version) ([]string, error)
 	// offer replaces the answer about a version: offered, in standard
 	// support, up to 1.35.
-	offer func(v fleet.Version) offer
+	offer func(v fleet.Version) versionOffered
 	// insights are the insights that the cluster has. Without strict, a
 	// hop with none gets a passing one, as EKS has after a refresh.
 	insights    []apidoc.Insight
@@ -138,12 +138,12 @@ func (w *planWorld) builds(addon string, k fleet.Version) []string {
 	return out
 }
 
-func (w *planWorld) offered(v fleet.Version) offer {
+func (w *planWorld) offered(v fleet.Version) versionOffered {
 	w.offerCalls = append(w.offerCalls, v.String())
 	if w.offer != nil {
 		return w.offer(v)
 	}
-	return offer{Offered: v.Major == 1 && v.Minor >= 28 && v.Minor <= 35, Tier: apidoc.SupportStandard}
+	return versionOffered{Offered: v.Major == 1 && v.Minor >= 28 && v.Minor <= 35, Tier: apidoc.SupportStandard}
 }
 
 func (w *planWorld) upgradeInsights(hop fleet.Version) insightsRead {
@@ -231,6 +231,11 @@ func checkRefs(t *testing.T, cp *ClusterPlan) {
 				t.Errorf("step %s is in phase %s, or is in the plan twice", s.Ref, ph.Ref)
 			}
 			seen[s.Ref] = true
+			// The engine relies on it: a plan with a Blocked step is
+			// refused before it runs (runEnginePhase).
+			if s.Action == Blocked && len(cp.Blockers) == 0 {
+				t.Errorf("step %s is Blocked, and the plan has no blocker", s.Ref)
+			}
 		}
 	}
 	for _, b := range cp.Blockers {

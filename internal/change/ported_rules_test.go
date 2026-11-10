@@ -107,7 +107,7 @@ func TestWait_NetworkErrorsAndDeniedPolls(t *testing.T) {
 		name string
 		res  Resource
 		op   fleettest.Operation
-		done func(settled) (bool, error)
+		done func(settledResource) (bool, error)
 		busy func(c *fleettest.Cluster, s fleettest.ResourceStatus)
 	}{
 		{"control plane", Resource{Target: prod, Kind: StepControlPlane}, fleettest.EKSDescribeCluster, clusterSettled,

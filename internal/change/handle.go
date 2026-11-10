@@ -421,9 +421,7 @@ func (h *Handle) checkpoint(ctx context.Context, next StepRef) (Checkpoint, erro
 		h.mu.Unlock()
 		return Checkpoint{Stop: true}, nil
 	}
-	waited := false
 	if h.pause {
-		waited = true
 		h.resume = make(chan struct{})
 		h.before, h.state = h.state, Paused
 		resume := h.resume
@@ -443,7 +441,7 @@ func (h *Handle) checkpoint(ctx context.Context, next StepRef) (Checkpoint, erro
 		if h.stop {
 			h.bumpLocked()
 			h.mu.Unlock()
-			return Checkpoint{Stop: true, Waited: true}, nil
+			return Checkpoint{Stop: true}, nil
 		}
 	}
 	if h.hasLast && next == h.lastCheckpoint {
@@ -451,7 +449,7 @@ func (h *Handle) checkpoint(ctx context.Context, next StepRef) (Checkpoint, erro
 	}
 	h.bumpLocked()
 	h.mu.Unlock()
-	return Checkpoint{Waited: waited}, nil
+	return Checkpoint{}, nil
 }
 
 // finish records the result and ends the handle. A phase that never

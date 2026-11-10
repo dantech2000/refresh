@@ -28,7 +28,7 @@ import (
 //
 // Run computes the plan, asks at most one question before the first
 // submit, and computes the plan again after every answer of a person: it
-// compares the two with Diff before it submits anything. Nothing is
+// compares the two with diffPlans before it submits anything. Nothing is
 // submitted before every question is answered. An Expect that is not a
 // plan of req is an error before anything is read (ErrOtherRequest).
 //

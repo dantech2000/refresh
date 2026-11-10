@@ -41,13 +41,11 @@ type Hooks struct {
 // Checkpoint is the answer of the checkpoint hook.
 type Checkpoint struct {
 	// Stop ends the run here. Nothing more is submitted, and the steps
-	// that were not reached are NotAttempted.
+	// that were not reached are NotAttempted. Time can pass in the hook:
+	// the run reads again after every checkpoint, since a phase and a step
+	// of an engine begin with a read, and a cluster of a fleet is planned
+	// again at its turn.
 	Stop bool
-	// Waited says that time passed in the hook, so what the run read
-	// before it is old. The run reads again after every checkpoint,
-	// whatever the value: a phase and a step of an engine begin with a
-	// read, and a cluster of a fleet is planned again at its turn.
-	Waited bool
 }
 
 // EventKind names an event.

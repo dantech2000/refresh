@@ -177,24 +177,26 @@ func TestRollbackPlan_Ineligible(t *testing.T) {
 		{
 			"extended support without the policy", func(w *planWorld) {
 				w.policy = "STANDARD"
-				w.offer = func(fleet.Version) offer { return offer{Offered: true, Tier: apidoc.SupportExtended} }
+				w.offer = func(fleet.Version) versionOffered { return versionOffered{Offered: true, Tier: apidoc.SupportExtended} }
 			},
 			BlockerUnavailable, "the cluster's upgrade policy is STANDARD: change it to EXTENDED first",
 		},
 		{
 			"extended support with no policy", func(w *planWorld) {
-				w.offer = func(fleet.Version) offer { return offer{Offered: true, Tier: apidoc.SupportExtended} }
+				w.offer = func(fleet.Version) versionOffered { return versionOffered{Offered: true, Tier: apidoc.SupportExtended} }
 			},
 			BlockerUnavailable, "the cluster's upgrade policy is not set: change it to EXTENDED first",
 		},
 		{
 			"unsupported target", func(w *planWorld) {
-				w.offer = func(fleet.Version) offer { return offer{Offered: true, Tier: apidoc.SupportUnsupported} }
+				w.offer = func(fleet.Version) versionOffered {
+					return versionOffered{Offered: true, Tier: apidoc.SupportUnsupported}
+				}
 			},
 			BlockerUnavailable, "1.32 is no longer supported by EKS",
 		},
 		{
-			"a target that EKS does not list", func(w *planWorld) { w.offer = func(fleet.Version) offer { return offer{} } },
+			"a target that EKS does not list", func(w *planWorld) { w.offer = func(fleet.Version) versionOffered { return versionOffered{} } },
 			BlockerUnavailable, "EKS does not offer 1.32",
 		},
 		{
@@ -243,7 +245,7 @@ func TestRollbackPlan_Ineligible(t *testing.T) {
 func TestRollbackPlan_ExtendedSupportWithPolicy(t *testing.T) {
 	w := newRollbackWorld()
 	w.policy = "EXTENDED"
-	w.offer = func(fleet.Version) offer { return offer{Offered: true, Tier: apidoc.SupportExtended} }
+	w.offer = func(fleet.Version) versionOffered { return versionOffered{Offered: true, Tier: apidoc.SupportExtended} }
 	cp := w.rollback(t, RollbackRequest{})
 	if len(cp.Blockers) > 0 {
 		t.Fatalf("blocked: %s", blockerText(cp))
@@ -558,7 +560,7 @@ func TestRollbackPlan_UnreadableChecksBlock(t *testing.T) {
 	})
 	t.Run("support status", func(t *testing.T) {
 		w := newRollbackWorld()
-		w.offer = func(fleet.Version) offer { return offer{Err: accessDenied()} }
+		w.offer = func(fleet.Version) versionOffered { return versionOffered{Err: accessDenied()} }
 		cp := w.rollback(t, RollbackRequest{SkipInsights: true})
 		if len(cp.Blockers) != 1 || cp.Blockers[0].Kind != BlockerUnread || !strings.Contains(cp.Blockers[0].Message, "could not check that EKS still supports 1.32") {
 			t.Errorf("blockers = %+v, want one Unread blocker", cp.Blockers)

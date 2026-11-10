@@ -77,7 +77,7 @@ func decideAMIUpdate(ng fleet.Nodegroup, reroll bool) rollDecision {
 //
 // The caller handles a nodegroup that is changing, that is not ACTIVE, or
 // that has another Kubernetes version before it asks: see submitRoll.
-func redecideRoll(fromRelease string, fresh settled) (d rollDecision, changed bool) {
+func redecideRoll(fromRelease string, fresh settledResource) (d rollDecision, changed bool) {
 	switch {
 	case fresh.AMIType == amiTypeCustom:
 		return rollDecision{Action: Manual, Reason: CustomAMI}, true

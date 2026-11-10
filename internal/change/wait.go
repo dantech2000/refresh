@@ -413,8 +413,8 @@ func (p *updatePoll) poll(ctx context.Context, c awsx.PollClients) (progress Upd
 	return progress, true, false, nil
 }
 
-// settled is the state that a poll of a resource saw.
-type settled struct {
+// settledResource is the state that a poll of a resource saw.
+type settledResource struct {
 	// Status is the EKS status of the resource.
 	Status string
 	// Version is the Kubernetes version, or the add-on version.
@@ -439,8 +439,8 @@ type settled struct {
 // ends are the ones of waitUpdate. A resource that does not exist is an
 // error that another poll will not fix. waitSettled calls the describe
 // operation of its resource and nothing else, and prints nothing.
-func waitSettled(ctx context.Context, c awsx.PollClients, r Resource, done func(settled) (bool, error), o waitOptions) (settled, error) {
-	var state settled
+func waitSettled(ctx context.Context, c awsx.PollClients, r Resource, done func(settledResource) (bool, error), o waitOptions) (settledResource, error) {
+	var state settledResource
 	for {
 		if !o.pause(ctx) {
 			return state, ended(ctx, r.String(), state.Status)
@@ -479,17 +479,17 @@ func waitSettled(ctx context.Context, c awsx.PollClients, r Resource, done func(
 // that says nothing, and the fresh read before a submit fails on it, so
 // nothing is sent. A roll reads no size, so StepNodegroup takes the sizes
 // that are there.
-func describe(ctx context.Context, c *awsx.Clients, r Resource) (settled, error) {
+func describe(ctx context.Context, c *awsx.Clients, r Resource) (settledResource, error) {
 	switch r.Kind {
 	case StepAddon:
 		out, err := c.EKS.DescribeAddon(ctx, &eks.DescribeAddonInput{ClusterName: aws.String(r.Cluster), AddonName: aws.String(r.Name)})
 		if err != nil {
-			return settled{}, err
+			return settledResource{}, err
 		}
 		if out.Addon == nil {
-			return settled{}, errNoAnswer
+			return settledResource{}, errNoAnswer
 		}
-		s := settled{Status: string(out.Addon.Status), Version: aws.ToString(out.Addon.AddonVersion)}
+		s := settledResource{Status: string(out.Addon.Status), Version: aws.ToString(out.Addon.AddonVersion)}
 		if out.Addon.Health != nil {
 			for _, issue := range out.Addon.Health.Issues {
 				s.Issues = append(s.Issues, fleet.Issue{Code: string(issue.Code), Message: aws.ToString(issue.Message), ResourceIDs: issue.ResourceIds})
@@ -499,12 +499,12 @@ func describe(ctx context.Context, c *awsx.Clients, r Resource) (settled, error)
 	case StepNodegroup, StepScale:
 		out, err := c.EKS.DescribeNodegroup(ctx, &eks.DescribeNodegroupInput{ClusterName: aws.String(r.Cluster), NodegroupName: aws.String(r.Name)})
 		if err != nil {
-			return settled{}, err
+			return settledResource{}, err
 		}
 		if out.Nodegroup == nil {
-			return settled{}, errNoAnswer
+			return settledResource{}, errNoAnswer
 		}
-		s := settled{
+		s := settledResource{
 			Status: string(out.Nodegroup.Status), Version: aws.ToString(out.Nodegroup.Version),
 			Release: aws.ToString(out.Nodegroup.ReleaseVersion), AMIType: string(out.Nodegroup.AmiType),
 		}
@@ -514,16 +514,16 @@ func describe(ctx context.Context, c *awsx.Clients, r Resource) (settled, error)
 		case known:
 			s.Sizes = Sizes{Desired: *sc.DesiredSize, Min: *sc.MinSize, Max: *sc.MaxSize}
 		case r.Kind == StepScale:
-			return settled{}, errNoSizes
+			return settledResource{}, errNoSizes
 		}
 		return s, nil
 	}
 	out, err := c.EKS.DescribeCluster(ctx, &eks.DescribeClusterInput{Name: aws.String(r.Cluster)})
 	if err != nil {
-		return settled{}, err
+		return settledResource{}, err
 	}
 	if out.Cluster == nil {
-		return settled{}, errNoAnswer
+		return settledResource{}, errNoAnswer
 	}
-	return settled{Status: string(out.Cluster.Status), Version: aws.ToString(out.Cluster.Version)}, nil
+	return settledResource{Status: string(out.Cluster.Status), Version: aws.ToString(out.Cluster.Version)}, nil
 }

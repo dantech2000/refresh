@@ -53,7 +53,7 @@ func watch(ctx context.Context, d Deps, r Resource, o WatchOptions, emit func(Ev
 	read.start()
 	in, err := inFlightUpdate(rctx, clients, r)
 	if err == nil {
-		var settled settled
+		var settled settledResource
 		settled, err = describe(rctx, clients, r)
 		if err == nil && in.ID == "" && !changing(r, settled) {
 			read.stop()
@@ -74,7 +74,7 @@ func watch(ctx context.Context, d Deps, r Resource, o WatchOptions, emit func(Ev
 
 // watchUpdate follows the update in flight. rctx and read are the read
 // budget of the first reads, which ends with them.
-func watchUpdate(ctx, rctx context.Context, read *budget, d Deps, r Resource, o WatchOptions, in inFlight, settled settled, emit func(Event), describeAs func(Kind, time.Time)) Result {
+func watchUpdate(ctx, rctx context.Context, read *budget, d Deps, r Resource, o WatchOptions, in inFlight, settled settledResource, emit func(Event), describeAs func(Kind, time.Time)) Result {
 	clients := d.AWS.Clients(r.Region)
 	kind, phase, ok := watchKind(r, in)
 	if !ok {
@@ -197,7 +197,7 @@ type kubeClients struct {
 // changing reports whether the resource is in the status that an update
 // leaves it in while it runs. A resource that is being created or
 // deleted is busy, but no change of refresh is behind it.
-func changing(r Resource, s settled) bool {
+func changing(r Resource, s settledResource) bool {
 	switch r.Kind {
 	case StepControlPlane:
 		return s.Status == string(ekstypes.ClusterStatusUpdating)
@@ -233,7 +233,7 @@ func watchKind(r Resource, in inFlight) (Kind, PhaseKind, bool) {
 
 // settledFn is the done function of a wait for r when it has no update
 // to follow: the one the engines use for the resource.
-func settledFn(r Resource) func(settled) (bool, error) {
+func settledFn(r Resource) func(settledResource) (bool, error) {
 	switch r.Kind {
 	case StepControlPlane:
 		return clusterSettled

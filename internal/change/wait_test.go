@@ -316,7 +316,7 @@ func TestWaitSettled_Addon(t *testing.T) {
 		if err != nil {
 			t.Fatalf("error = %v", err)
 		}
-		if diff := cmp.Diff(settled{Status: "ACTIVE", Version: cniNew}, got); diff != "" {
+		if diff := cmp.Diff(settledResource{Status: "ACTIVE", Version: cniNew}, got); diff != "" {
 			t.Errorf("settled (-want +got):\n%s", diff)
 		}
 		if diff := cmp.Diff([]string{"UPDATING", "UPDATING", "ACTIVE"}, rec.statuses()); diff != "" {
@@ -406,14 +406,14 @@ func TestWaitSettled_NodegroupAndCluster(t *testing.T) {
 		c.Nodegroups[0].Desired, c.Nodegroups[0].Min, c.Nodegroups[0].Max = 4, 2, 6
 	}))
 	poll := e.deps.AWS.PollClients(east)
-	first := func(settled) (bool, error) { return true, nil }
+	first := func(settledResource) (bool, error) { return true, nil }
 
 	web := Resource{Target: prod, Kind: StepNodegroup, Name: "web"}
 	got, err := waitSettled(testContext(t), poll, web, first, (&recorder{}).options(e))
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := settled{Status: "ACTIVE", Version: "1.33", Release: "1.33.0-20260101", AMIType: "AL2023_x86_64_STANDARD", Sizes: Sizes{Desired: 4, Min: 2, Max: 6}}
+	want := settledResource{Status: "ACTIVE", Version: "1.33", Release: "1.33.0-20260101", AMIType: "AL2023_x86_64_STANDARD", Sizes: Sizes{Desired: 4, Min: 2, Max: 6}}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("nodegroup (-want +got):\n%s", diff)
 	}
@@ -423,7 +423,7 @@ func TestWaitSettled_NodegroupAndCluster(t *testing.T) {
 	e.world.Edit(func(s *fleettest.State) { s.Cluster(east, "prod").Status = fleettest.StatusUpdating })
 	var seen []string
 	stop := errors.New("stop")
-	_, err = waitSettled(testContext(t), poll, Resource{Target: prod, Kind: StepControlPlane}, func(s settled) (bool, error) {
+	_, err = waitSettled(testContext(t), poll, Resource{Target: prod, Kind: StepControlPlane}, func(s settledResource) (bool, error) {
 		seen = append(seen, s.Status+" "+s.Version)
 		if len(seen) == 2 {
 			return false, stop

@@ -411,7 +411,7 @@ func TestEngine_FreshReadBeforeEverySubmit(t *testing.T) {
 			hooks := Hooks{Checkpoint: func(_ context.Context, next StepRef) (Checkpoint, error) {
 				if next.Phase.Kind == tt.before && next.Kind == "" {
 					tt.change(t, world)
-					return Checkpoint{Waited: true}, nil
+					return Checkpoint{}, nil
 				}
 				return Checkpoint{}, nil
 			}}

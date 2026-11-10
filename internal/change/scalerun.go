@@ -135,8 +135,8 @@ func submitScale(ctx context.Context, c *awsx.Clients, r Resource, req ScaleRequ
 //   - ACTIVE: done.
 //   - DEGRADED, a failed status, or DELETING: an error.
 //   - Anything else: the nodegroup is still changing.
-func scaleSettled(nodegroup, updateID string, req ScaleRequest) func(settled) (bool, error) {
-	return func(s settled) (bool, error) {
+func scaleSettled(nodegroup, updateID string, req ScaleRequest) func(settledResource) (bool, error) {
+	return func(s settledResource) (bool, error) {
 		for _, size := range []struct {
 			name string
 			want *int32

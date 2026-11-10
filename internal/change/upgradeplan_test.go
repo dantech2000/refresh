@@ -132,7 +132,7 @@ func TestPlanUpgrade_Refusals(t *testing.T) {
 // goes on: EKS refuses a version that it does not offer.
 func TestPlanUpgrade_VersionCheckFailed(t *testing.T) {
 	w := twoHopWorld()
-	w.offer = func(fleet.Version) offer { return offer{Err: accessDenied()} }
+	w.offer = func(fleet.Version) versionOffered { return versionOffered{Err: accessDenied()} }
 	cp := w.upgrade(t, "1.32", UpgradeRequest{})
 	if len(cp.Blockers) > 0 || workSteps(cp) == 0 {
 		t.Fatalf("plan = %v, blockers %q; want a plan that runs", stepLines(cp), blockerText(cp))

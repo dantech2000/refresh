@@ -46,7 +46,7 @@ type rollbackReads struct {
 	// support tier: one DescribeClusterVersions call. It is called once,
 	// for the version to roll back to, and not at all when a rollback is
 	// in progress or done.
-	Version func(v fleet.Version) offer
+	Version func(v fleet.Version) versionOffered
 	// AddonVersions returns the versions of an add-on that a Kubernetes
 	// version can run, newest first, and none when EKS publishes none:
 	// fleet.Fetcher.AddonVersions. It is called once for each add-on, for
@@ -178,7 +178,7 @@ func rollbackControlPlaneBlockers(snap *fleet.Snapshot, target fleet.Version) []
 // the plan computed now, before the first change of a rollback. It
 // returns a RefusalError when they return to different versions: the
 // nodes and the add-ons would go to a version that nobody confirmed. No
-// answer and no flag accepts that. Diff reports every other difference,
+// answer and no flag accepts that. diffPlans reports every other difference,
 // and a blocker of the new plan refuses the run on its own.
 func rollbackTargetChanged(reviewed, fresh *Plan) error {
 	for i := range fresh.Clusters {

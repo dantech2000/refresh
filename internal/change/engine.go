@@ -590,7 +590,7 @@ func (r *runner) resumeHint(res Result) string {
 // clusterSettled is the done function of a wait for a control plane:
 // ACTIVE is done, and a cluster that is FAILED or DELETING never becomes
 // ACTIVE.
-func clusterSettled(s settled) (bool, error) {
+func clusterSettled(s settledResource) (bool, error) {
 	switch s.Status {
 	case string(ekstypes.ClusterStatusActive):
 		return true, nil
@@ -603,6 +603,6 @@ func clusterSettled(s settled) (bool, error) {
 // nodegroupSettled is the done function of a wait for a nodegroup that is
 // changing: any status but UPDATING and CREATING ends it, and the caller
 // judges the version first and the status second.
-func nodegroupSettled(s settled) (bool, error) {
+func nodegroupSettled(s settledResource) (bool, error) {
 	return s.Status != string(ekstypes.NodegroupStatusUpdating) && s.Status != string(ekstypes.NodegroupStatusCreating), nil
 }

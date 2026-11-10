@@ -172,7 +172,7 @@ func submitAddon(ctx context.Context, c *awsx.Clients, r Resource, version strin
 
 // addonSettled is the done function of a wait for an add-on that is
 // already changing: ACTIVE is done, and a failed status is an error.
-func addonSettled(s settled) (bool, error) {
+func addonSettled(s settledResource) (bool, error) {
 	switch s.Status {
 	case string(ekstypes.AddonStatusActive):
 		return true, nil
@@ -191,7 +191,7 @@ func addonSettled(s settled) (bool, error) {
 //   - The version is not the target: the step failed.
 //   - The add-on is not ACTIVE, or has a health issue: the step
 //     succeeded with an issue, which is exit code 5.
-func (r *runner) confirmAddon(cp *ClusterPlan, res StepResult, s Step, got settled, err error) StepResult {
+func (r *runner) confirmAddon(cp *ClusterPlan, res StepResult, s Step, got settledResource, err error) StepResult {
 	name := s.Ref.Name
 	res.Status, res.FinishedAt = StepSucceeded, r.d.now()
 	row := addonCheck + "/" + name

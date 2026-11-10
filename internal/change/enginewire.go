@@ -188,7 +188,7 @@ func (c *catalogue) read(ctx context.Context, keys []catalogueKey) {
 func upgradeCatalogueKeys(snap *fleet.Snapshot, req UpgradeRequest) func(fleet.Version) []catalogueKey {
 	return func(fleet.Version) []catalogueKey {
 		live := snap.Cluster.Version
-		hops, _ := hops(live, req.To)
+		hops, _ := hopsBetween(live, req.To)
 		if len(hops) == 0 {
 			hops = []fleet.Version{req.To}
 		}
@@ -244,17 +244,17 @@ func upgradeInsights(ctx context.Context, clients *awsx.Clients, t Target, live 
 
 // versionOffer returns the read of what EKS says about one Kubernetes
 // version: one DescribeClusterVersions call for that version.
-func versionOffer(ctx context.Context, clients *awsx.Clients) func(fleet.Version) offer {
-	return func(v fleet.Version) offer {
+func versionOffer(ctx context.Context, clients *awsx.Clients) func(fleet.Version) versionOffered {
+	return func(v fleet.Version) versionOffered {
 		out, err := clients.EKS.DescribeClusterVersions(ctx, &eks.DescribeClusterVersionsInput{ClusterVersions: []string{v.String()}})
 		if err != nil {
-			return offer{Err: err}
+			return versionOffered{Err: err}
 		}
 		for _, info := range out.ClusterVersions {
 			if aws.ToString(info.ClusterVersion) != v.String() {
 				continue
 			}
-			offer := offer{Offered: true, Tier: apidoc.SupportStandard}
+			offer := versionOffered{Offered: true, Tier: apidoc.SupportStandard}
 			switch {
 			case info.VersionStatus == ekstypes.VersionStatusUnsupported || info.Status == ekstypes.ClusterVersionStatusUnsupported:
 				offer.Tier = apidoc.SupportUnsupported
@@ -263,7 +263,7 @@ func versionOffer(ctx context.Context, clients *awsx.Clients) func(fleet.Version
 			}
 			return offer
 		}
-		return offer{}
+		return versionOffered{}
 	}
 }
 

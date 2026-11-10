@@ -177,9 +177,9 @@ type RefusalError struct {
 
 func (e *RefusalError) Error() string { return e.Message }
 
-// offer is what EKS says about one Kubernetes version: the answer
+// versionOffered is what EKS says about one Kubernetes version: the answer
 // of DescribeClusterVersions for it.
-type offer struct {
+type versionOffered struct {
 	// Offered is false when EKS does not list the version.
 	Offered bool
 	// Tier is the support tier of the version now. Only a rollback reads

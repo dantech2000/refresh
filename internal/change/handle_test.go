@@ -134,7 +134,7 @@ func TestHandle_StateTable(t *testing.T) {
 		}
 
 		// A checkpoint with nothing asked goes on; the phase then runs.
-		if cp := <-checkpointAsync(s, StepRef{Phase: plan.Clusters[0].Phases[0].Ref}); cp.Stop || cp.Waited {
+		if cp := <-checkpointAsync(s, StepRef{Phase: plan.Clusters[0].Phases[0].Ref}); cp.Stop {
 			t.Fatalf("the first checkpoint = %+v, want go on", cp)
 		}
 		s.do(func(hk Hooks) {
@@ -152,8 +152,8 @@ func TestHandle_StateTable(t *testing.T) {
 		if err := h.Resume(); err != nil {
 			t.Fatal(err)
 		}
-		if cp := <-held; cp.Stop || !cp.Waited {
-			t.Fatalf("the checkpoint after a resume = %+v, want Waited", cp)
+		if cp := <-held; cp.Stop {
+			t.Fatalf("the checkpoint after a resume = %+v, want no stop", cp)
 		}
 		wantState(t, h, Running)
 		if err := h.Resume(); !errors.Is(err, ErrNotPaused) {
@@ -315,7 +315,7 @@ func TestHandle_StopWhileAskingOrPaused(t *testing.T) {
 		if err := h.Stop(); err != nil {
 			t.Fatal(err)
 		}
-		if cp := <-held; !cp.Stop || !cp.Waited {
+		if cp := <-held; !cp.Stop {
 			t.Fatalf("the checkpoint of a stop while paused = %+v", cp)
 		}
 		s.end(Result{Status: Stopped})

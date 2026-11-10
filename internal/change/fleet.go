@@ -170,7 +170,7 @@ const (
 // Each cluster has its own read budget, which starts here. The clusters
 // before this one took time, so every cluster after the first is planned
 // again, and the new plan is compared with the one that was confirmed, by
-// the table of Diff:
+// the table of diffPlans:
 //
 //   - a difference that only says that less is to do: a notice.
 //   - a difference that needs an answer, such as another reason for a

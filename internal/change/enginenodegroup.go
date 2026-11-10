@@ -109,7 +109,7 @@ func (r *runner) runEngineNodegroup(cp *ClusterPlan, ph Phase, s Step) (res Step
 // rule, and nothing is sent. done is false when the nodegroup settled away
 // from the goal: the caller reads it again and decides from that, and
 // out carries what the step has so far.
-func (r *runner) settleAtGoal(cp *ClusterPlan, ph Phase, s Step, res StepResult, fresh settled, round int) (out StepResult, done bool) {
+func (r *runner) settleAtGoal(cp *ClusterPlan, ph Phase, s Step, res StepResult, fresh settledResource, round int) (out StepResult, done bool) {
 	kind, name, resource := r.req.kind(), s.Ref.Name, s.Ref.Resource()
 	if changing, _ := nodegroupSettled(fresh); changing {
 		return r.verifySettled(r.readCtx, cp, ph, s, res, nil), true

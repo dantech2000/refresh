@@ -33,7 +33,7 @@ func atCheckpoint(before PhaseKind, change func()) func(context.Context, StepRef
 		if next.Phase.Kind == before && next.Kind == "" && !done {
 			done = true
 			change()
-			return Checkpoint{Waited: true}, nil
+			return Checkpoint{}, nil
 		}
 		return Checkpoint{}, nil
 	}
@@ -834,7 +834,7 @@ func beforeHop(hop string, change func()) func(context.Context, StepRef) (Checkp
 		if next.Phase.Kind == PhaseControlPlane && next.Phase.Hop.String() == hop && next.Kind == "" && !done {
 			done = true
 			change()
-			return Checkpoint{Waited: true}, nil
+			return Checkpoint{}, nil
 		}
 		return Checkpoint{}, nil
 	}
