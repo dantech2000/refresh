@@ -485,7 +485,8 @@ func eksUpdateCases() []opCase {
 			return []updateOut{updateOf(out.Update)}, nil, nil
 		}),
 
-		pagedCase(fleettest.EKSListUpdates, []string{updateA, updateB},
+		// Not oldest first: the fake answers in the order of a hash of the ID.
+		pagedCase(fleettest.EKSListUpdates, []string{updateB, updateA},
 			func(ctx context.Context, c *clients, token *string) ([]string, *string, error) {
 				out, err := c.eks.ListUpdates(ctx, &eks.ListUpdatesInput{Name: aws.String("prod"), NextToken: token})
 				if err != nil {

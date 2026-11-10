@@ -4,8 +4,10 @@ import (
 	"cmp"
 	"encoding/json"
 	"errors"
+	"hash/fnv"
 	"net/http"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/dantech2000/refresh/internal/fleet/fleettest"
@@ -518,6 +520,13 @@ func updateJSON(u *fleettest.Update) object {
 
 // eksListUpdates lists the updates of the nodegroup or the add-on the
 // request names, or those of the cluster itself when it names neither.
+//
+// The API reference gives no order for updateIds
+// (https://docs.aws.amazon.com/eks/latest/APIReference/API_ListUpdates.html).
+// The fake sorts them by a hash of the ID: an order that no caller would
+// pick, and that is neither oldest first nor newest first, so a caller that
+// counts on either is seen to pay for it. It is stable, so a golden file
+// does not change from run to run.
 func eksListUpdates(c *call) (any, error) {
 	return c.inCluster(func(_ *fleettest.State, cl *fleettest.Cluster) (any, error) {
 		var ids []string
@@ -527,8 +536,16 @@ func eksListUpdates(c *call) (any, error) {
 				ids = append(ids, u.ID)
 			}
 		}
+		slices.SortFunc(ids, func(a, b string) int { return cmp.Or(cmp.Compare(idHash(a), idHash(b)), strings.Compare(a, b)) })
 		return paged(c, "updateIds", ids)
 	})
+}
+
+// idHash is the FNV-1a hash of an ID, the sort key of ListUpdates.
+func idHash(id string) uint32 {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(id))
+	return h.Sum32()
 }
 
 // eksDescribeUpdate finds an update only under the resource it belongs to:
