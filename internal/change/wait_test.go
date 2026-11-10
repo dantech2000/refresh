@@ -12,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/dantech2000/refresh/internal/fleet"
 	"github.com/dantech2000/refresh/internal/fleet/fleettest"
 )
 
@@ -85,8 +86,12 @@ func TestWaitUpdate_TerminalStatuses(t *testing.T) {
 				if diff := cmp.Diff(want, ue.Issues); diff != "" || ue.Status != "Failed" || ue.Cancelled() {
 					t.Errorf("status %s, cancelled %v, issues (-want +got):\n%s", ue.Status, ue.Cancelled(), diff)
 				}
-				if !strings.Contains(err.Error(), "ended Failed: ConfigurationConflict: Conflicts found (kube-system/aws-node)") {
-					t.Errorf("message = %q", err)
+				const outcome = "ended Failed: ConfigurationConflict: Conflicts found (kube-system/aws-node)"
+				if got := ue.Outcome(); got != outcome {
+					t.Errorf("outcome = %q, want %q", got, outcome)
+				}
+				if want := "update " + ue.UpdateID + " of add-on vpc-cni " + outcome; err.Error() != want {
+					t.Errorf("message = %q, want %q", err, want)
 				}
 			},
 		},
@@ -321,6 +326,20 @@ func TestWaitSettled_Addon(t *testing.T) {
 			if op != "eks:DescribeAddon" {
 				t.Errorf("the wait called %s; it may call DescribeAddon only", op)
 			}
+		}
+	})
+	t.Run("the health issues keep their fields", func(t *testing.T) {
+		e := newEnv(t, newWorld(nil))
+		issues := []fleettest.Issue{{Code: "ConfigurationConflict", Message: "conflict: a field is managed twice", ResourceIDs: []string{"kube-system/aws-node"}}}
+		startUpdate(t, e, fleettest.UpdateScript{After: 15 * time.Second, ResourceIssues: issues})
+		var rec recorder
+		got, err := WaitSettled(testContext(t), e.deps.AWS.PollClients(east), cni, addonSettled, rec.options(e))
+		if err != nil {
+			t.Fatalf("error = %v", err)
+		}
+		want := []fleet.Issue{{Code: "ConfigurationConflict", Message: "conflict: a field is managed twice", ResourceIDs: []string{"kube-system/aws-node"}}}
+		if diff := cmp.Diff(want, got.Issues); diff != "" {
+			t.Errorf("issues (-want +got):\n%s", diff)
 		}
 	})
 	for _, status := range []fleettest.ResourceStatus{fleettest.StatusDegraded, fleettest.StatusUpdateFailed, fleettest.StatusCreateFailed, "DELETE_FAILED"} {

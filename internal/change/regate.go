@@ -179,12 +179,8 @@ func (r *runner) remainingAddons(snap *fleet.Snapshot) []health.Check {
 // freshAddonHealth returns the result of the add-on check for one target,
 // from the fresh read before its submit.
 func (r *runner) freshAddonHealth(cp *ClusterPlan, name string, fresh Settled) []health.Result {
-	addon := fleet.Addon{Name: name, State: fleet.Collected, Version: fresh.Version, Status: fresh.Status}
 	// The health of an add-on reads its issues too: fleet.Addon.Health.
-	for _, issue := range fresh.Issues {
-		code, message, _ := strings.Cut(issue, ": ")
-		addon.Issues = append(addon.Issues, fleet.Issue{Code: code, Message: message})
-	}
+	addon := fleet.Addon{Name: name, State: fleet.Collected, Version: fresh.Version, Status: fresh.Status, Issues: fresh.Issues}
 	snap := &fleet.Snapshot{Cluster: cp.snapshot.Cluster, Addons: []fleet.Addon{addon}}
 	return health.Run(r.readCtx, []health.Check{health.Addons([]string{name})}, &health.Input{
 		Snapshot: snap, Clients: r.d.AWS.Clients(cp.Region), Now: r.d.now(),

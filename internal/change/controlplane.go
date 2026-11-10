@@ -195,7 +195,7 @@ func (r *runner) attachControlPlane(cp *ClusterPlan, res StepResult, s Step, cli
 		var ended *UpdateError
 		switch {
 		case errors.As(err, &ended):
-			r.notice(fmt.Sprintf("the control-plane update %s that was already running %s", res.UpdateID, strings.TrimPrefix(ended.Error(), "update "+res.UpdateID+" of "+resource.String()+" ")))
+			r.notice(fmt.Sprintf("the control-plane update %s that was already running %s", res.UpdateID, ended.Outcome()))
 		case err != nil:
 			return r.waitFailed(ctx, cp, res, err), true
 		}

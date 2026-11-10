@@ -134,6 +134,32 @@ type Result struct {
 	whenUnreachable *Result
 }
 
+// finding is one named thing behind a Warn or a Fail, with the words that
+// the message shows for it, such as "kube-system/coredns-1" and
+// "kube-system/coredns-1 (Pending)". A check builds its Findings from the
+// names and its message from the texts, so it never cuts a name out of a
+// text.
+type finding struct{ name, text string }
+
+// findingNames returns the names of fs, sorted, or nil for none.
+func findingNames(fs []finding) []string {
+	var out []string
+	for _, f := range fs {
+		out = append(out, f.name)
+	}
+	slices.Sort(out)
+	return out
+}
+
+// findingTexts returns the texts of fs, in their order.
+func findingTexts(fs []finding) []string {
+	out := make([]string, len(fs))
+	for i, f := range fs {
+		out[i] = f.text
+	}
+	return out
+}
+
 // AccessCheck is the name of the result that the runner adds about the
 // Kubernetes access of the run.
 const AccessCheck = "Kubernetes"

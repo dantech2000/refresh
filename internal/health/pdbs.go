@@ -259,8 +259,8 @@ func targetsDesired(snap *fleet.Snapshot, targets []string) (int32, bool) {
 func findDrainBlockers(in *Input, budgets []pdb, targets map[string]bool, scoped, withMulti bool) Result {
 	byNamespace := groupByNamespace(budgets)
 	var (
-		blockers []string
-		multi    []string
+		blockers []finding
+		multi    []finding
 		failures []apidoc.Failure
 		unread   []string
 		reads    []func()
@@ -291,11 +291,11 @@ func findDrainBlockers(in *Input, budgets []pdb, targets map[string]bool, scoped
 			switch {
 			case !scoped:
 				if p.atRisk() {
-					blockers = append(blockers, p.summary())
+					blockers = append(blockers, finding{p.id(), p.summary()})
 				}
 			case !p.refuses():
 			case pods != nil && slices.ContainsFunc(pods.Items, func(pod corev1.Pod) bool { return targets[pod.Spec.NodeName] && p.gates(&pod) }):
-				blockers = append(blockers, p.summary())
+				blockers = append(blockers, finding{p.id(), p.summary()})
 			}
 		}
 		if withMulti && len(list) > 1 && pods != nil {
@@ -308,8 +308,8 @@ func findDrainBlockers(in *Input, budgets []pdb, targets map[string]bool, scoped
 // multiPDBPods names the pods of a namespace that more than one of its
 // budgets selects, on the target nodes when scoped. A pod that eviction
 // ignores does not count; its readiness does not matter.
-func multiPDBPods(list []pdb, pods []corev1.Pod, targets map[string]bool, scoped bool) []string {
-	var out []string
+func multiPDBPods(list []pdb, pods []corev1.Pod, targets map[string]bool, scoped bool) []finding {
+	var out []finding
 	for i := range pods {
 		pod := &pods[i]
 		if (scoped && !targets[pod.Spec.NodeName]) || evictionIgnores(pod) {
@@ -322,29 +322,20 @@ func multiPDBPods(list []pdb, pods []corev1.Pod, targets map[string]bool, scoped
 			}
 		}
 		if len(matched) > 1 {
-			out = append(out, fmt.Sprintf("pod %s/%s is covered by %d PDBs (%s); the eviction API refuses such pods", pod.Namespace, pod.Name, len(matched), strings.Join(matched, ", ")))
+			name := pod.Namespace + "/" + pod.Name
+			out = append(out, finding{name, fmt.Sprintf("pod %s is covered by %d PDBs (%s); the eviction API refuses such pods", name, len(matched), strings.Join(matched, ", "))})
 		}
 	}
 	return out
 }
 
 // drainBlockersResult words the outcome of the drain-blocker check.
-func drainBlockersResult(blockers, multi, unread []string, failures []apidoc.Failure, scoped bool) Result {
-	r := Result{Failures: failures}
-	var blocking []string
-	for _, b := range blockers {
-		r.Details = append(r.Details, "drain blocker: "+b)
-		name, _, _ := strings.Cut(b, " (")
-		r.Findings = append(r.Findings, name)
-		blocking = append(blocking, name)
+func drainBlockersResult(blockers, multi []finding, unread []string, failures []apidoc.Failure, scoped bool) Result {
+	r := Result{Failures: failures, Findings: findingNames(slices.Concat(blockers, multi))}
+	for _, b := range slices.Concat(blockers, multi) {
+		r.Details = append(r.Details, "drain blocker: "+b.text)
 	}
-	slices.Sort(blocking)
-	for _, m := range multi {
-		r.Details = append(r.Details, "drain blocker: "+m)
-		name, _, _ := strings.Cut(strings.TrimPrefix(m, "pod "), " is covered")
-		r.Findings = append(r.Findings, name)
-	}
-	slices.Sort(r.Findings)
+	blocking := findingNames(blockers)
 	switch {
 	case len(blockers)+len(multi) > 0:
 		var parts []string

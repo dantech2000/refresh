@@ -182,7 +182,7 @@ func TestSecondSweepReportsChanges(t *testing.T) {
 	})
 	r := newRig(t, world, fleet.Regions{Names: []string{east}}, nil)
 	st := r.wait(t, 0, swept(1))
-	if got := st.Clusters[1].InFlight; !slices.Equal(got, []string{"nodegroup ng UPDATING"}) || st.Clusters[1].Status != view.Progress {
+	if got := st.Clusters[1].InFlight; !slices.Equal(got, []state.InFlight{{Kind: apidoc.StepNodegroup, Name: "ng", Status: "UPDATING"}}) || st.Clusters[1].Status != view.Progress {
 		t.Fatalf("prod in flight: %v, status %v", got, st.Clusters[1].Status)
 	}
 	world.Edit(func(s *fleettest.State) {
