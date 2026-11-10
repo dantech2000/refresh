@@ -193,15 +193,7 @@ func planAddons(ctx context.Context, d Deps, req AddonUpdateRequest) (*Plan, err
 		return nil, fmt.Errorf("--no-wait cannot keep %s: add-on %s waits for %s to finish. Run without --no-wait, or update the add-ons one at a time", what, dependent, dep)
 	}
 	cp.Notices = append(cp.Notices, namedAfter(phase.Steps)...)
-	cp.markBusy(ctx, clients, phase.Steps)
-	cp.Phases = []Phase{phase}
-
-	refuse, notices := Busy(snap, AddonUpdate, phase.Steps)
-	cp.Blockers = append(cp.Blockers, refuse...)
-	cp.Notices = append(cp.Notices, notices...)
-	// A plan that the busy rule refuses runs no gate: nothing would be
-	// submitted, so its reads would be for nothing.
-	if len(refuse) == 0 {
+	if !cp.busyRule(ctx, clients, AddonUpdate, phase) {
 		cp.gateAddons(ctx, d, req.Policy)
 	}
 	return &Plan{Kind: AddonUpdate, Request: req, Clusters: []ClusterPlan{cp}, At: d.now()}, nil
@@ -218,7 +210,7 @@ func addonNames(snap *fleet.Snapshot, req AddonUpdateRequest) ([]string, error) 
 	}
 	// Without the list, nothing shows which names exist. The busy rule
 	// blocks the plan for the list that was not read.
-	listed := snap.Have.Addons == fleet.Collected || snap.Have.Addons == fleet.Partial
+	listed := snap.Have.Addons.Listed()
 	exists := func(name string) error {
 		if !listed || slices.Contains(installed, name) {
 			return nil
@@ -300,9 +292,7 @@ func (cp *ClusterPlan) gateAddons(ctx context.Context, d Deps, policy health.Pol
 	if len(targets) == 0 {
 		return
 	}
-	if policy.Skip {
-		cp.Gate = health.Gate(nil, policy)
-		cp.Notices = append(cp.Notices, "the health checks were skipped (--skip-health-check)")
+	if cp.skipGate(policy) {
 		return
 	}
 	cp.Checks = health.Run(ctx, []health.Check{health.Addons(targets)}, &health.Input{

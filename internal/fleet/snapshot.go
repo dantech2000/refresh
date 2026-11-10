@@ -43,6 +43,12 @@ func (s State) String() string {
 	return "State(?)"
 }
 
+// Listed reports whether a list group was read, in full or in part: the
+// names of the list are then known.
+func (s State) Listed() bool {
+	return s == Collected || s == Partial
+}
+
 // Snapshot is one cluster as one Fetch read it.
 type Snapshot struct {
 	Cluster Cluster

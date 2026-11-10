@@ -94,15 +94,7 @@ func planRollCluster(ctx context.Context, d Deps, req RollRequest, t Target) (*C
 	for _, name := range names {
 		phase.Steps = append(phase.Steps, cp.rollStep(phase.Ref, name, req))
 	}
-	cp.markBusy(ctx, clients, phase.Steps)
-	cp.Phases = []Phase{phase}
-
-	refuse, notices := Busy(snap, NodegroupUpdate, phase.Steps)
-	cp.Blockers = append(cp.Blockers, refuse...)
-	cp.Notices = append(cp.Notices, notices...)
-	// A plan that the busy rule refuses runs no gate: nothing would be
-	// submitted, so its reads would be for nothing.
-	if len(refuse) == 0 {
+	if !cp.busyRule(ctx, clients, NodegroupUpdate, phase) {
 		cp.gateRoll(ctx, d, req.Policy)
 	}
 	return cp, nil
@@ -122,7 +114,7 @@ func rollTargets(snap *fleet.Snapshot, req RollRequest) ([]string, error) {
 	}
 	// Without the list, nothing shows which names exist. The busy rule
 	// blocks the plan for the list that was not read.
-	listed := snap.Have.Nodegroups == fleet.Collected || snap.Have.Nodegroups == fleet.Partial
+	listed := snap.Have.Nodegroups.Listed()
 	names := all
 	if len(req.Nodegroups) > 0 {
 		names = nil

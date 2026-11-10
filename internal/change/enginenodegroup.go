@@ -71,8 +71,7 @@ func (r *runner) runEngineNodegroup(cp *ClusterPlan, ph Phase, s Step) (res Step
 			continue
 		case fresh.Status == nodegroupUpdating:
 			if round >= maxAttachRounds {
-				res.Status, res.FinishedAt = StepFailed, r.d.now()
-				res.Failure = r.stepFailure(cp, res, apidoc.ReasonBusy, "nodegroup "+name+" keeps changing; it was not rolled. Run the command again")
+				res = r.keepsChanging(cp, res)
 				return res, false
 			}
 			r.notice(fmt.Sprintf("nodegroup %s is UPDATING already; waiting for that update", name))
@@ -127,8 +126,7 @@ func (r *runner) settleAtGoal(cp *ClusterPlan, ph Phase, s Step, res StepResult,
 		}
 	}
 	if round >= maxAttachRounds {
-		res.Status, res.FinishedAt = StepFailed, r.d.now()
-		res.Failure = r.stepFailure(cp, res, apidoc.ReasonBusy, "nodegroup "+name+" keeps changing; it was not rolled. Run the command again")
+		res = r.keepsChanging(cp, res)
 		return res, true
 	}
 	r.notice(fmt.Sprintf("nodegroup %s is %s at %s; waiting for it to settle", name, fresh.Status, fresh.Version))
@@ -202,4 +200,12 @@ func foreignRoll(kind Kind, name, goal string, u InFlightUpdate, err error) stri
 		return fmt.Sprintf("nodegroup %s is rolling to %s (update %s), not to %s", name, u.Version, u.ID, goal)
 	}
 	return ""
+}
+
+// keepsChanging fails the roll of a nodegroup that is still changing after
+// maxAttachRounds waits for what someone else started.
+func (r *runner) keepsChanging(cp *ClusterPlan, res StepResult) StepResult {
+	res.Status, res.FinishedAt = StepFailed, r.d.now()
+	res.Failure = r.stepFailure(cp, res, apidoc.ReasonBusy, stepName(res.Ref)+" keeps changing; it was not rolled. Run the command again")
+	return res
 }

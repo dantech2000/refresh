@@ -8,13 +8,13 @@ import "github.com/dantech2000/refresh/internal/apidoc"
 func (s *Snapshot) ClusterDoc() apidoc.Cluster {
 	c := s.Cluster
 	doc := apidoc.Cluster{Name: c.Name, Region: c.Region, Incomplete: s.Incomplete()}
-	if s.Have.Nodegroups == Collected || s.Have.Nodegroups == Partial {
+	if s.Have.Nodegroups.Listed() {
 		doc.Nodegroups = make([]apidoc.Nodegroup, len(s.Nodegroups))
 		for i, n := range s.Nodegroups {
 			doc.Nodegroups[i] = s.NodegroupDoc(n)
 		}
 	}
-	if s.Have.Addons == Collected || s.Have.Addons == Partial {
+	if s.Have.Addons.Listed() {
 		doc.Addons = make([]apidoc.Addon, len(s.Addons))
 		for i, a := range s.Addons {
 			doc.Addons[i] = AddonDoc(a)

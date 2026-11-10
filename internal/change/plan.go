@@ -430,3 +430,14 @@ func (p *Plan) allFailures() []apidoc.Failure {
 	}
 	return out
 }
+
+// skipGate gives the plan the verdict of --skip-health-check, with its
+// notice, and reports whether it did: no check runs then.
+func (cp *ClusterPlan) skipGate(policy health.Policy) bool {
+	if !policy.Skip {
+		return false
+	}
+	cp.Gate = health.Gate(nil, policy)
+	cp.Notices = append(cp.Notices, "the health checks were skipped (--skip-health-check)")
+	return true
+}

@@ -81,12 +81,12 @@ func (s *Snapshot) Findings() Findings {
 	if s.Have.Cluster == Collected {
 		f.HealthIssues = len(s.Cluster.HealthIssues)
 	}
-	if listed(s.Have.Nodegroups) {
+	if s.Have.Nodegroups.Listed() {
 		for _, n := range s.Nodegroups {
 			f.nodegroup(s, n)
 		}
 	}
-	if listed(s.Have.Addons) {
+	if s.Have.Addons.Listed() {
 		for _, a := range s.Addons {
 			f.addon(a)
 		}
@@ -145,11 +145,6 @@ func (f *Findings) addon(a Addon) {
 	if behind, known := a.Behind(); known && behind {
 		f.BehindAddons = append(f.BehindAddons, a.Name)
 	}
-}
-
-// listed reports whether a list was read, in full or in part.
-func listed(s State) bool {
-	return s == Collected || s == Partial
 }
 
 // Stale counts what there is to bring up to date: the stale AMIs, the

@@ -95,7 +95,7 @@ func newUpgradePlanner(snap *fleet.Snapshot, req UpgradeRequest, in UpgradeInput
 	}
 	p := &upgradePlanner{
 		snap: snap, req: req, in: in, live: live,
-		cp: &ClusterPlan{Target: target, From: live, To: req.To, Failures: slices.Clone(snap.Failures), snapshot: snap},
+		planWriter: planWriter{cp: &ClusterPlan{Target: target, From: live, To: req.To, Failures: slices.Clone(snap.Failures), snapshot: snap}},
 	}
 	switch offer := in.Version(req.To); {
 	case offer.Err != nil:
@@ -140,7 +140,7 @@ type upgradePlanner struct {
 	snap *fleet.Snapshot
 	req  UpgradeRequest
 	in   UpgradeInputs
-	cp   *ClusterPlan
+	planWriter
 	// live is the version that the control plane runs.
 	live fleet.Version
 	// hops are the hops of the plan, and lag what the add-ons block the
@@ -170,16 +170,22 @@ func (p *upgradePlanner) otherComputeNotice() {
 		p.req.To, p.live, p.req.To)
 }
 
-func (p *upgradePlanner) notice(format string, args ...any) {
+// planWriter writes the notices, the blockers, and the failures of the
+// plan of a cluster: the upgrade and the rollback planners share it.
+type planWriter struct {
+	cp *ClusterPlan
+}
+
+func (p planWriter) notice(format string, args ...any) {
 	p.cp.Notices = append(p.cp.Notices, fmt.Sprintf(format, args...))
 }
 
-func (p *upgradePlanner) block(kind BlockerKind, step *StepRef, format string, args ...any) {
+func (p planWriter) block(kind BlockerKind, step *StepRef, format string, args ...any) {
 	p.cp.Blockers = append(p.cp.Blockers, Blocker{Kind: kind, Step: step, Message: fmt.Sprintf(format, args...)})
 }
 
 // fail records a read that failed, once.
-func (p *upgradePlanner) fail(kind apidoc.FailureKind, name string, err error) {
+func (p planWriter) fail(kind apidoc.FailureKind, name string, err error) {
 	f := fleet.FailureFromError(kind, name, err)
 	f.Region = p.cp.Region
 	if kind != apidoc.FailureCluster {
