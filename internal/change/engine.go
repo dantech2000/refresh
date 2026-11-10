@@ -53,7 +53,7 @@ func (r *runner) runEngine(cp *ClusterPlan) []StepResult {
 			// A step that the plan gave no work was never going to be
 			// attempted: it is Skipped, whatever ended the run.
 			for i, s := range ph.Steps {
-				if !s.work() && s.Action != Blocked {
+				if !s.work() {
 					results[i].Status = StepSkipped
 					r.reportStep(results[i])
 				}
@@ -92,27 +92,22 @@ func waitPassedBefore(what string) string {
 
 // runEnginePhase runs one phase and fills results, which has one
 // NotAttempted row per step. It returns false when the run ends here.
+//
+// The plan has no Blocked step: a Blocked step comes with a blocker, and a
+// plan with a blocker is refused before it runs (runner.next).
 func (r *runner) runEnginePhase(cp *ClusterPlan, ph Phase, results []StepResult) bool {
 	skipAll := func() {
 		for i, s := range ph.Steps {
 			if !s.work() {
 				results[i].Status = StepSkipped
-				if s.Action != Blocked {
-					r.reportStep(results[i])
-				}
+				r.reportStep(results[i])
 			}
 		}
 	}
 	if !slices.ContainsFunc(ph.Steps, Step.work) {
 		// Nothing to run or to attach to: skipped, with no read and no
-		// busy rule. A Blocked step has a blocker, which refused the plan.
+		// busy rule.
 		skipAll()
-		for i, s := range ph.Steps {
-			if s.Action == Blocked {
-				results[i].Status = StepBlocked
-				return false
-			}
-		}
 		r.emit(Event{Kind: PhaseEnded, Phase: ph.Ref, Skipped: true})
 		return true
 	}

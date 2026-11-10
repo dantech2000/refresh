@@ -207,9 +207,10 @@ func (r *runner) guardControlPlane(cp *ClusterPlan, res StepResult, s Step, snap
 //     the catalogue of that hop. A plan with --only addons has no
 //     control-plane step, and its plan read the control plane some time
 //     ago. A rollback judges its target in guardRollback.
-//  6. The request would go the wrong way: Blocked. A rollback never sends
-//     a version above the live one, and an upgrade never one below it.
-//     Someone moved the add-on since the plan.
+//  6. A rollback, and the request would go the wrong way: Blocked. A
+//     rollback never sends a version above the live one. Someone moved
+//     the add-on since the plan. An upgrade needs no such row: an add-on
+//     at or above its goal is Skipped by row 4.
 func (r *runner) guardAddon(cp *ClusterPlan, res StepResult, s Step, snap *fleet.Snapshot) (StepResult, bool) {
 	name := s.Ref.Name
 	i := slices.IndexFunc(snap.Addons, func(a fleet.Addon) bool { return a.Name == name })
@@ -237,19 +238,12 @@ func (r *runner) guardAddon(cp *ClusterPlan, res StepResult, s Step, snap *fleet
 		return r.blockStep(cp, res, StepBlocked, apidoc.ReasonUnknown, fmt.Sprintf(
 			"the control plane of %s runs %s, and add-on %s would move to %s, a version for Kubernetes %s: the control plane must be at %s; it was not changed",
 			cp.Cluster, orUnknown(snap.Cluster.Version.String()), name, s.To, hop, hop)), false
-	case !addonDirection(r.req.kind(), a.Version, s.To):
-		return r.blockStep(cp, res, StepBlocked, apidoc.ReasonUnknown, wrongAddonDirection(r.req.kind(), name, a.Version, s.To)), false
+	case r.req.kind() == ClusterRollback && !addonDirection(ClusterRollback, a.Version, s.To):
+		return r.blockStep(cp, res, StepBlocked, apidoc.ReasonUnknown, fmt.Sprintf(
+			"add-on %s is at %s now, and the plan moves it to %s, which is newer: a rollback does not upgrade an add-on; it was not changed. Run the command again",
+			name, a.Version, s.To)), false
 	}
 	return res, true
-}
-
-// wrongAddonDirection is the message of an add-on step whose request
-// would go the wrong way from the live version.
-func wrongAddonDirection(kind Kind, name, live, goal string) string {
-	if kind == ClusterRollback {
-		return fmt.Sprintf("add-on %s is at %s now, and the plan moves it to %s, which is newer: a rollback does not upgrade an add-on; it was not changed. Run the command again", name, live, goal)
-	}
-	return fmt.Sprintf("add-on %s is at %s now, and the plan moves it to %s, which is older: an upgrade does not downgrade an add-on; it was not changed. Run the command again", name, live, goal)
 }
 
 // guardNodegroup is what the roll of a nodegroup needs, on the read of
@@ -301,7 +295,7 @@ func (r *runner) guardNodegroup(cp *ClusterPlan, res StepResult, s Step, snap *f
 	switch {
 	case nodegroupInFlight(n.Status):
 		return r.blockStep(cp, res, StepBlocked, apidoc.ReasonBusy,
-			fmt.Sprintf("nodegroup %s started changing after its health gate (%s); it was not rolled. Run the command again to wait for that change", name, n.Status)), false, false
+			fmt.Sprintf("nodegroup %s started changing before its roll was sent (%s); it was not rolled. Run the command again to wait for that change", name, n.Status)), false, false
 	case n.Status != nodegroupActive:
 		return r.blockStep(cp, res, StepBlocked, apidoc.ReasonUnknown, notRollable(name, n.Status)), false, false
 	case versionDone(kind, version, s.To):
