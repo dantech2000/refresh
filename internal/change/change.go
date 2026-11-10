@@ -140,7 +140,8 @@ func (RollRequest) kind() Kind { return NodegroupUpdate }
 // Selector picks nodegroups by pattern: the -f flag of the command. The
 // command parses the patterns; this package knows only the result.
 type Selector struct {
-	// Text is the selection as the user wrote it, such as "name=web-*".
+	// Text is the selection as the user wrote it, as -f flags, such as
+	// "-f name=web-*".
 	// A message names it, and two requests with the same Text ask for the
 	// same selection.
 	Text string

@@ -25,26 +25,6 @@ func partOf(k StepKind) Part {
 	return PartControlPlane
 }
 
-// FollowUp holds the words around a command that a notice or a blocker
-// names, so that the command reaches the same account, region, and
-// Kubernetes context as the run.
-type FollowUp struct {
-	// Prefix starts the command: "refresh" with the --profile and the
-	// --region of the run. Empty means "refresh".
-	Prefix string
-	// Suffix ends it: the --kubeconfig and the --kube-context of the run.
-	Suffix string
-	// Resume holds the flags that only the command of a stopped run
-	// repeats, and that the request cannot tell from a default: the
-	// --wait-timeout that the user chose.
-	Resume string
-	// Profile is the AWS profile that refresh gives the SDK, from
-	// --profile or the active context, for a command of the AWS CLI that a
-	// notice names. It is empty when the environment names the profile:
-	// the AWS CLI reads the environment too.
-	Profile string
-}
-
 // checkScope refuses a scope that the plan cannot keep safe. Without the
 // control plane, the add-ons and the nodegroups can only catch up to the
 // version that it runs. Without the add-ons, the control plane moves one
@@ -56,7 +36,7 @@ func checkScope(req UpgradeRequest, cluster string, live fleet.Version, hops int
 	if !req.includes(PartControlPlane) && live != req.To {
 		return &RefusalError{Reason: RefusalNeedsControlPlane, Message: fmt.Sprintf(
 			"the control plane of %s runs %s: --only %s catches up to the control plane's version, so use --to %s, or add control-plane to --only",
-			cluster, live, joinParts(req.Only), live)}
+			cluster, live, joinParts(req.Only, ", "), live)}
 	}
 	if !req.includes(PartAddons) && hops > 1 {
 		return &RefusalError{Reason: RefusalNeedsAddons, Message: fmt.Sprintf(
@@ -152,21 +132,11 @@ func (p *upgradePlanner) unblock(ref StepRef) {
 // a skipped add-on with no usable version would block a later nodegroup
 // run.
 func (p *upgradePlanner) followUp(part Part, version fleet.Version) string {
-	prefix := p.in.Command.Prefix
-	if prefix == "" {
-		prefix = "refresh"
-	}
-	words := []string{prefix, "cluster", "upgrade", shellQuote(p.cp.Cluster), "--to", version.String(), "--only", string(part)}
-	for _, s := range p.req.SkipAddons {
-		words = append(words, "--skip-addon", shellQuote(s))
-	}
-	for _, s := range p.req.SkipNodegroups {
-		words = append(words, "--skip-nodegroup", shellQuote(s))
-	}
-	if s := strings.TrimSpace(p.in.Command.Suffix); s != "" {
-		words = append(words, s)
-	}
-	return strings.Join(words, " ")
+	f := FollowUp{Prefix: p.in.Command.Prefix, Suffix: p.in.Command.Suffix}
+	return Command(f, UpgradeRequest{
+		Target: Target{Cluster: p.cp.Cluster}, To: version, Only: []Part{part},
+		SkipAddons: p.req.SkipAddons, SkipNodegroups: p.req.SkipNodegroups,
+	})
 }
 
 // addonLag is what blocks a control-plane move on the add-ons.
@@ -233,20 +203,4 @@ func appendNew(list []string, s string) []string {
 		return list
 	}
 	return append(list, s)
-}
-
-// shellQuote returns s as one POSIX shell word: unchanged when it holds
-// only safe characters, and in single quotes otherwise. A command that a
-// notice prints for the user to run quotes its values with it.
-func shellQuote(s string) string {
-	if s == "" {
-		return "''"
-	}
-	safe := func(r rune) bool {
-		return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || strings.ContainsRune("-_./:=,@%+", r)
-	}
-	if strings.IndexFunc(s, func(r rune) bool { return !safe(r) }) < 0 {
-		return s
-	}
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }

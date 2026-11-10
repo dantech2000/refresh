@@ -33,7 +33,7 @@ func ParseParts(values []string) ([]Part, error) {
 				continue
 			}
 			if !slices.Contains(Parts(), p) {
-				return nil, fmt.Errorf("--only %q: want %s", f, joinParts(Parts()))
+				return nil, fmt.Errorf("--only %q: want %s", f, joinParts(Parts(), ", "))
 			}
 			if !slices.Contains(out, p) {
 				out = append(out, p)
@@ -41,15 +41,17 @@ func ParseParts(values []string) ([]Part, error) {
 		}
 	}
 	if len(values) > 0 && len(out) == 0 {
-		return nil, fmt.Errorf("--only needs at least one of %s", joinParts(Parts()))
+		return nil, fmt.Errorf("--only needs at least one of %s", joinParts(Parts(), ", "))
 	}
 	return out, nil
 }
 
-func joinParts(parts []Part) string {
+// joinParts returns the names of the parts, joined by sep: ", " in a
+// message, "," as the value of --only.
+func joinParts(parts []Part, sep string) string {
 	words := make([]string, len(parts))
 	for i, p := range parts {
 		words[i] = string(p)
 	}
-	return strings.Join(words, ", ")
+	return strings.Join(words, sep)
 }

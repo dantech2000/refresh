@@ -110,53 +110,11 @@ func (b *Live) request(a state.Action) (change.Request, error) {
 	return nil, fmt.Errorf("unknown action %q", a.Kind)
 }
 
-// command is the CLI command that makes the same change as the action,
-// with the profile and the Kubernetes access of this UI, so it runs
-// against the same account.
-func (b *Live) command(a state.Action) string {
-	parts := []string{"refresh"}
-	if b.opts.Profile != "" {
-		parts = append(parts, "--profile", shellWord(b.opts.Profile))
-	}
-	parts = append(parts, "--region", a.Cluster.Region)
-	kube := false
-	switch a.Kind {
-	case change.NodegroupUpdate:
-		parts, kube = append(parts, "nodegroup", "update", a.Nodegroup, "-c", a.Cluster.Name), true
-	case change.AddonUpdate:
-		parts = append(parts, "addon", "update", "--all", "-c", a.Cluster.Name)
-	case change.ClusterUpgrade:
-		parts, kube = append(parts, "cluster", "upgrade", a.Cluster.Name, "--to", a.To.String()), true
-		if len(a.Only) > 0 {
-			names := make([]string, len(a.Only))
-			for i, p := range a.Only {
-				names[i] = string(p)
-			}
-			parts = append(parts, "--only", strings.Join(names, ","))
-		}
-		if a.Nodegroup != "" {
-			parts = append(parts, "-n", a.Nodegroup)
-		}
-	case change.ClusterRollback:
-		parts, kube = append(parts, "cluster", "rollback", a.Cluster.Name), true
-	}
-	if kube {
-		if b.opts.Kubeconfig != "" {
-			parts = append(parts, "--kubeconfig", shellWord(b.opts.Kubeconfig))
-		}
-		if b.opts.KubeContext != "" {
-			parts = append(parts, "--kube-context", shellWord(b.opts.KubeContext))
-		}
-	}
-	return strings.Join(parts, " ")
-}
-
-// shellWord quotes s for a shell when it needs it.
-func shellWord(s string) string {
-	if s != "" && !strings.ContainsAny(s, " \t'\"$`\\!*?[]{}()<>|&;#~") {
-		return s
-	}
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+// command is the CLI command that makes the change of req, with the
+// profile and the Kubernetes access of this UI, so it runs against the
+// same account.
+func (b *Live) command(region string, req change.Request) string {
+	return change.Command(change.FollowUpFor(b.opts.Profile, region, b.opts.Kubeconfig, b.opts.KubeContext), req)
 }
 
 // Plan is the dry run of an action: the plan, its gate, and the CLI
@@ -187,7 +145,7 @@ func (b *Live) Plan(ctx context.Context, a state.Action) (state.Proposal, error)
 	b.mu.Lock()
 	b.nextProposal++
 	p := &proposal{Proposal: state.Proposal{
-		ID: b.nextProposal, Action: a, Plan: plan, Doc: plan.Document(), Command: b.command(a),
+		ID: b.nextProposal, Action: a, Plan: plan, Doc: plan.Document(), Command: b.command(a.Cluster.Region, req),
 		Blocked: plan.Decision() == change.DecisionBlocked,
 	}, request: req}
 	b.proposal = p

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
@@ -394,85 +393,4 @@ func (cp *ClusterPlan) foreignRolls(ctx context.Context, c *awsx.Clients, kind K
 		}
 	}
 	return out
-}
-
-// engineCommand returns the command line that runs the request again, for
-// the message of a run that stopped: planning again from live state is
-// how a run resumes.
-//
-// The command repeats every flag that decides what the run changes and
-// what stops it, so a resume never widens the run and never meets a gate
-// that the first run was told to pass: the parts, the exclusions, and
-// --force, --skip-health-check, --require-healthy, --skip-verify, and
-// --wait-timeout. It keeps --yes, so the resume of an unattended run is
-// unattended too.
-func engineCommand(f FollowUp, req Request) string {
-	prefix := f.Prefix
-	if prefix == "" {
-		prefix = "refresh"
-	}
-	words := []string{prefix, "cluster"}
-	switch r := req.(type) {
-	case UpgradeRequest:
-		words = append(words, "upgrade", shellQuote(r.Cluster), "--to", r.To.String())
-		if len(r.Only) > 0 {
-			words = append(words, "--only", joinPartsFlag(r.Only))
-		}
-		for _, n := range r.Nodegroups {
-			words = append(words, "-n", shellQuote(n))
-		}
-		for _, a := range r.SkipAddons {
-			words = append(words, "--skip-addon", shellQuote(a))
-		}
-		for _, n := range r.SkipNodegroups {
-			words = append(words, "--skip-nodegroup", shellQuote(n))
-		}
-		if r.SkipInsights {
-			words = append(words, "--skip-insights-check")
-		}
-	case RollbackRequest:
-		words = append(words, "rollback", shellQuote(r.Cluster))
-		for _, n := range r.SkipNodegroups {
-			words = append(words, "--skip-nodegroup", shellQuote(n))
-		}
-		if r.SkipInsights {
-			words = append(words, "--skip-insights-check")
-		}
-		if r.RollbackTimeout > 0 {
-			words = append(words, "--rollback-timeout", r.RollbackTimeout.String())
-		}
-	}
-	c := req.base()
-	for _, fl := range []struct {
-		set  bool
-		name string
-	}{
-		{c.Policy.Force, "--force"},
-		{c.Policy.Skip, "--skip-health-check"},
-		{c.Policy.RequireHealthy, "--require-healthy"},
-		{c.SkipVerify, "--skip-verify"},
-	} {
-		if fl.set {
-			words = append(words, fl.name)
-		}
-	}
-	if s := strings.TrimSpace(f.Resume); s != "" {
-		words = append(words, s)
-	}
-	if c.Policy.Yes {
-		words = append(words, "--yes")
-	}
-	if s := strings.TrimSpace(f.Suffix); s != "" {
-		words = append(words, s)
-	}
-	return strings.Join(words, " ")
-}
-
-// joinPartsFlag returns the parts as one value of --only.
-func joinPartsFlag(parts []Part) string {
-	words := make([]string, len(parts))
-	for i, p := range parts {
-		words[i] = string(p)
-	}
-	return strings.Join(words, ",")
 }

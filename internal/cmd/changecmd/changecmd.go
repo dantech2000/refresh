@@ -5,15 +5,16 @@
 // It is beside the command packages and not in cmdutil, because cmdutil
 // knows nothing about the fleet and internal/change imports it. It is the
 // one place that knows both a change and a terminal: internal/change
-// returns typed errors and results, and this package gives them the words
-// of the command line.
+// returns typed errors and results, and this package prints them. The
+// messages of internal/change name the flags of the command line, and
+// change.Command builds a whole command; this package gives it the words
+// of the run around it (FollowUp).
 package changecmd
 
 import (
 	"context"
 	"errors"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/dantech2000/refresh/internal/apidoc"
@@ -71,25 +72,13 @@ func DepsOf(f *cmdutil.Factory, provider *awsx.Provider) change.Deps {
 // for the command to fill: only it knows its defaults.
 func followUp(f *cmdutil.Factory) change.FollowUp {
 	g := &f.Global
-	prefix := []string{"refresh"}
-	if g.Profile != "" {
-		prefix = append(prefix, "--profile", g.Profile)
-	}
+	region := ""
 	if len(g.Regions) == 1 {
-		prefix = append(prefix, "--region", g.Regions[0])
+		region = g.Regions[0]
 	}
-	var suffix []string
-	if g.Kubeconfig != "" {
-		suffix = append(suffix, "--kubeconfig", g.Kubeconfig)
-	}
-	if g.KubeContext != "" {
-		suffix = append(suffix, "--kube-context", g.KubeContext)
-	}
-	return change.FollowUp{
-		Prefix:  strings.Join(prefix, " "),
-		Suffix:  strings.Join(suffix, " "),
-		Profile: cmdutil.ExplicitProfile(f),
-	}
+	fu := change.FollowUpFor(g.Profile, region, g.Kubeconfig, g.KubeContext)
+	fu.Profile = cmdutil.ExplicitProfile(f)
+	return fu
 }
 
 // Common returns the part of a request that the shared flags fill.
