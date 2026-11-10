@@ -1024,6 +1024,7 @@ func TestRun(t *testing.T) {
 	t.Run("a server error", testRunServerError)
 	t.Run("a forbidden API", testRunForbidden)
 	t.Run("a cancelled context", testRunCancelled)
+	t.Run("a check that returns no result", testRunNoResult)
 }
 
 func testRunWholeSet(t *testing.T) {
@@ -1223,6 +1224,21 @@ func testRunCancelled(t *testing.T) {
 		if r.Outcome != health.Unreadable && r.Outcome != health.Skipped {
 			t.Errorf("%s: %s (%s), want Unreadable", r.Name, r.Outcome, r.Message)
 		}
+	}
+}
+
+// A check that returns no outcome is Unreadable, and not a pass: the gate
+// ranks an unknown outcome as nothing, so a fail-closed check with no
+// result blocks.
+func testRunNoResult(t *testing.T) {
+	empty := []health.Check{{Name: "Empty", Blocking: true, FailClosed: true, Run: func(context.Context, *health.Input) health.Result { return health.Result{} }}}
+	in := &health.Input{Snapshot: &fleet.Snapshot{Cluster: fleet.Cluster{Name: "prod", Region: "us-east-1"}}}
+	got := health.Run(testContext(t), empty, in)
+	if len(got) != 1 || got[0].Name != "Empty" || got[0].Outcome != health.Unreadable || got[0].Message != "the check returned no result" {
+		t.Fatalf("results = %+v, want Empty Unreadable", got)
+	}
+	if v := health.Gate(got, health.Policy{}); v.Decision != health.Block {
+		t.Errorf("verdict = %s, want Block for a fail-closed check with no result", v.Decision)
 	}
 }
 

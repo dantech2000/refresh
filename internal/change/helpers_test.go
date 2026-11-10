@@ -104,13 +104,6 @@ func heldTimer(time.Duration, func()) (stop func() bool) {
 	return func() bool { return true }
 }
 
-// Test kinds for the rules about a change whose phases are a sequence.
-// No such change is built yet, so the package has no constant for one.
-const (
-	testUpgrade  Kind = "ClusterUpgrade"
-	testRollback Kind = "ClusterRollback"
-)
-
 // intercept puts a server in front of the fake that answers the requests
 // that match with an empty JSON object, and passes the others on. It is
 // how a test gets an answer that EKS can give and the fake does not: one

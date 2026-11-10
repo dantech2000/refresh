@@ -23,7 +23,6 @@ func TestUpgrade_WholeRun(t *testing.T) {
 	if diff := cmp.Diff(wholeUpgrade(), e.sent()); diff != "" {
 		t.Errorf("requests (-want +got):\n%s", diff)
 	}
-	t.Log(stepStatuses(res))
 }
 
 // The planner asks for the add-on catalogue one pair at a time. Its first
