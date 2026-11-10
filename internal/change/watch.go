@@ -11,7 +11,6 @@ import (
 	metricsv1beta1 "k8s.io/metrics/pkg/client/clientset/versioned/typed/metrics/v1beta1"
 
 	"github.com/dantech2000/refresh/internal/apidoc"
-	"github.com/dantech2000/refresh/internal/awsx"
 	"github.com/dantech2000/refresh/internal/exitcode"
 	"github.com/dantech2000/refresh/internal/fanout"
 	"github.com/dantech2000/refresh/internal/fleet"
@@ -144,7 +143,7 @@ func watchUpdate(ctx, rctx context.Context, read *budget, d Deps, r Resource, o 
 		snap, _ = fetcher.Fetch(rctx, clients, r.Cluster, fleet.Need{})
 		if rctx.Err() != nil {
 			read.stop()
-			res = watchWaitFailed(rctx, r, res, rctx.Err(), d.now())
+			res = waitOutcome(rctx, r.Target, res, rctx.Err(), d.now())
 			report()
 			emit(Event{At: d.now(), Kind: PhaseEnded, Phase: step.Ref.Phase})
 			return watchResult(plan, r, res, nil)
@@ -158,7 +157,7 @@ func watchUpdate(ctx, rctx context.Context, read *budget, d Deps, r Resource, o 
 		}
 	}
 	if err := fanout.RunAlongside(wctx, observe, waitFn); err != nil {
-		res = watchWaitFailed(wctx, r, res, err, d.now())
+		res = waitOutcome(wctx, r.Target, res, err, d.now())
 		report()
 		emit(Event{At: d.now(), Kind: PhaseEnded, Phase: step.Ref.Phase})
 		return watchResult(plan, r, res, nil)
@@ -244,42 +243,6 @@ func watchFailed(r Resource, err error) Result {
 	f := fleet.FailureFromError(resourceKind(StepRef{Kind: r.Kind, Name: r.Name}), r.Name, err)
 	f.Cluster, f.Region = r.Cluster, r.Region
 	return Result{Status: Failed, Failures: []apidoc.Failure{f}, Err: err, ended: ending{code: exitcode.Failure}}
-}
-
-// watchWaitFailed is the step of a watch whose wait did not end in
-// success, by the table of a run's wait.
-func watchWaitFailed(ctx context.Context, r Resource, res StepResult, err error, now time.Time) StepResult {
-	failure := func(reason apidoc.Reason, msg string) *apidoc.Failure {
-		f := apidoc.NewFailure(apidoc.FailureUpdate, r.Name, reason, msg)
-		f.Cluster, f.Region, f.UpdateID = r.Cluster, r.Region, res.UpdateID
-		return &f
-	}
-	var ended *UpdateError
-	var unobserved *UnobservedError
-	switch {
-	case errors.As(err, &ended):
-		res.Status, res.FinishedAt = StepFailed, now
-		reason := apidoc.ReasonUpdateFailed
-		if ended.Cancelled() {
-			res.Status, reason = StepCancelled, apidoc.ReasonUpdateCancelled
-		}
-		res.Failure = failure(reason, err.Error())
-	case errors.As(err, &unobserved):
-		res.Status = StepInProgress
-		err = unobserved.of(res.UpdateID)
-		res.Failure = failure(apidoc.ReasonNotMonitored, err.Error())
-		res.Failure.Operation, res.Failure.AWSErrorCode = awsx.Operation(err), awsx.ErrorCode(err)
-	case ctx.Err() != nil && timedOut(ctx):
-		res.Status = StepInProgress
-		res.Failure = failure(apidoc.ReasonTimeout, "--wait-timeout passed before the update of "+r.String()+" finished; it may still be running")
-	case ctx.Err() != nil:
-		res.Status = StepInProgress
-		res.Failure = failure(apidoc.ReasonInterrupted, "interrupted while the update of "+r.String()+" was running; it may still be running")
-	default:
-		res.Status, res.FinishedAt = StepFailed, now
-		res.Failure = failure(apidoc.ReasonUpdateFailed, err.Error())
-	}
-	return res
 }
 
 // watchResult is the result of a watch with its one step.
