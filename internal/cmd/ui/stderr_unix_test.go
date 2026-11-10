@@ -35,25 +35,32 @@ func TestDetachStderr_SilencesDescriptorTwo(t *testing.T) {
 	if err := unix.Dup2(int(file.Fd()), 2); err != nil {
 		t.Fatal(err)
 	}
-	// os.Stderr of a test binary is not always descriptor 2: under go test
-	// -json the testing package sets it to os.Stdout. Point it at the file,
-	// so that a write through it lands where the descriptor writes land.
+	// In a program os.Stderr writes to descriptor 2, so detaching the
+	// descriptor detaches it too; detachStderr does not reassign it. Under
+	// go test -json the testing package points os.Stderr at os.Stdout, and
+	// the test can check the descriptor only. (An os.NewFile(2) to stand in
+	// for it would close descriptor 2 when the garbage collector finds it.)
+	viaStderr := os.Stderr != os.Stdout
 	stderr := os.Stderr
-	t.Cleanup(func() { os.Stderr = stderr })
-	os.Stderr = file
+	wants := []string{"descriptor after restore"}
 
 	restore, err := detachStderr()
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, _ = unix.Write(2, []byte("descriptor while detached\n"))
-	_, _ = os.Stderr.WriteString("os.Stderr while detached\n")
+	if viaStderr {
+		_, _ = os.Stderr.WriteString("os.Stderr while detached\n")
+	}
 	restore()
-	if os.Stderr != file {
+	if os.Stderr != stderr {
 		t.Error("os.Stderr is not the one of before the detach")
 	}
 	_, _ = unix.Write(2, []byte("descriptor after restore\n"))
-	_, _ = os.Stderr.WriteString("os.Stderr after restore\n")
+	if viaStderr {
+		_, _ = os.Stderr.WriteString("os.Stderr after restore\n")
+		wants = append(wants, "os.Stderr after restore")
+	}
 
 	got, err := os.ReadFile(path)
 	if err != nil {
@@ -62,7 +69,7 @@ func TestDetachStderr_SilencesDescriptorTwo(t *testing.T) {
 	if strings.Contains(string(got), "while detached") {
 		t.Errorf("a write reached stderr while it was detached:\n%s", got)
 	}
-	for _, want := range []string{"descriptor after restore", "os.Stderr after restore"} {
+	for _, want := range wants {
 		if !strings.Contains(string(got), want) {
 			t.Errorf("stderr lacks %q after the restore:\n%s", want, got)
 		}
