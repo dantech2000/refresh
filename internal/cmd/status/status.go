@@ -244,9 +244,9 @@ func supportRank(s *apidoc.Support) int {
 	return 1
 }
 
-// exitError returns the error that sets the exit code of the run, after
-// the document is printed: incomplete data (4), else the code of the fleet
-// policy of health.FleetExit.
+// exitError returns the error that sets the exit code of a complete run,
+// after the document is printed: the code of the fleet policy of
+// health.FleetExit. Incomplete data (4) is PrintResult's to return.
 func exitError(rows []row) error {
 	findings := make([]fleet.Findings, len(rows))
 	for i, r := range rows {

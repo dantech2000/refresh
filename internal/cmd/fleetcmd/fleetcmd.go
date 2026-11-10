@@ -87,7 +87,7 @@ func ChangeRegions(global *cmdutil.GlobalOptions, home string) (fleet.Regions, e
 		return fleet.Regions{Names: named}, nil
 	}
 	if home == "" {
-		return fleet.Regions{}, errors.New("no AWS region: pass -r/--region, set AWS_REGION, or use a context with a region")
+		return fleet.Regions{}, fmt.Errorf("no AWS region: pass -r/--region to name the regions of the fleet (a change does not read %s), set AWS_REGION, or use a context with a region", EnvRegions)
 	}
 	return fleet.Regions{Names: []string{home}}, nil
 }
