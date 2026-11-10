@@ -40,13 +40,13 @@ func ValidateSweepFlags(global *cmdutil.GlobalOptions, allRegions bool) error {
 	if allRegions && len(regionNames(global.Regions)) > 0 {
 		return errors.New("-A/--all-regions and -r/--region cannot be used together: name the regions, or sweep all of them")
 	}
-	return CheckEnvRegions()
+	return checkEnvRegions()
 }
 
-// CheckEnvRegions checks the shape of each region name in
+// checkEnvRegions checks the shape of each region name in
 // REFRESH_EKS_REGIONS, before any call. The root command checks the names
 // of -r.
-func CheckEnvRegions() error {
+func checkEnvRegions() error {
 	for _, r := range regionNames(strings.Split(os.Getenv(EnvRegions), ",")) {
 		if err := awsx.CheckRegion(r); err != nil {
 			return fmt.Errorf("invalid %s: %w", EnvRegions, err)
