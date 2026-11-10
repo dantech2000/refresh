@@ -21,12 +21,15 @@ type RollDecision struct {
 //     user publishes a new launch template version.
 //  2. The nodegroup is already changing (UPDATING, CREATING, DELETING):
 //     Skip, InFlight. The target is busy.
-//  3. The current or the latest AMI is not known: Submit, AMIUnknown. A
+//  3. The AMI type is one that this version of refresh does not know, so
+//     it has no recommended AMI to compare with: Skip, AMITypeUnknown. A
+//     roll would be sent again on every run. The user upgrades refresh.
+//  4. The current or the latest AMI is not known: Submit, AMIUnknown. A
 //     nodegroup that may be behind is rolled, and never skipped as up to
 //     date.
-//  4. The current AMI is the latest, with reroll: Submit, Reroll.
-//  5. The current AMI is the latest: Skip, AlreadyLatest.
-//  6. Otherwise: Submit, AMIOutdated.
+//  5. The current AMI is the latest, with reroll: Submit, Reroll.
+//  6. The current AMI is the latest: Skip, AlreadyLatest.
+//  7. Otherwise: Submit, AMIOutdated.
 //
 // No row reads --force. --force goes past drain blockers and does nothing
 // else: it never rolls a nodegroup that is on the latest AMI, and it
@@ -41,6 +44,9 @@ func DecideAMIUpdate(ng fleet.Nodegroup, reroll bool) RollDecision {
 		return RollDecision{Action: Manual, Reason: CustomAMI}
 	case nodegroupInFlight(ng.Status):
 		return RollDecision{Action: Skip, Reason: InFlight}
+	// An empty type is one that EKS did not return, not a new one.
+	case ng.AMIType != "" && !fleet.KnownAMIType(ng.AMIType):
+		return RollDecision{Action: Skip, Reason: AMITypeUnknown}
 	case current == "" || latest == "":
 		return RollDecision{Action: Submit, Reason: AMIUnknown}
 	case current == latest && reroll:

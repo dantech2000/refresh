@@ -524,6 +524,7 @@
         "AlreadyAtTarget",
         "NewerThanLatest",
         "CustomAMI",
+        "AMITypeUnknown",
         "SkippedByFlag",
         "OutOfScope",
         "NoChange",

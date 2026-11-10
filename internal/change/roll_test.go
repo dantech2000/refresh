@@ -144,6 +144,12 @@ func TestDecideAMIUpdate(t *testing.T) {
 	}
 	custom := managed("ACTIVE", ami("ami-old", "ami-new"))
 	custom.AMIType = "CUSTOM"
+	newType := managed("ACTIVE", fleet.AMI{State: fleet.Collected, Current: "ami-new"})
+	newType.AMIType = "AL2023_x86_64_SOMETHING_NEW"
+	updatingNewType := newType
+	updatingNewType.Status = "UPDATING"
+	noType := managed("ACTIVE", ami("ami-new", ""))
+	noType.AMIType = ""
 	tests := []struct {
 		name   string
 		ng     fleet.Nodegroup
@@ -156,14 +162,18 @@ func TestDecideAMIUpdate(t *testing.T) {
 		{"2 updating, with reroll", managed("UPDATING", ami("ami-new", "ami-new")), true, RollDecision{Skip, InFlight}},
 		{"2 creating", managed("CREATING", ami("", "ami-new")), false, RollDecision{Skip, InFlight}},
 		{"2 deleting", managed("DELETING", ami("ami-old", "ami-new")), false, RollDecision{Skip, InFlight}},
-		{"3 unknown current", managed("ACTIVE", ami("", "ami-new")), false, RollDecision{Submit, AMIUnknown}},
-		{"3 unknown latest", managed("ACTIVE", ami("ami-old", "")), false, RollDecision{Submit, AMIUnknown}},
-		{"3 AMIs not read", managed("ACTIVE", fleet.AMI{State: fleet.Failed, Current: "ami-new", Latest: "ami-new"}), false, RollDecision{Submit, AMIUnknown}},
-		{"4 on latest, with reroll", managed("ACTIVE", ami("ami-new", "ami-new")), true, RollDecision{Submit, Reroll}},
-		{"5 on latest", managed("ACTIVE", ami("ami-new", "ami-new")), false, RollDecision{Skip, AlreadyLatest}},
-		{"5 on latest and degraded", managed("DEGRADED", ami("ami-new", "ami-new")), false, RollDecision{Skip, AlreadyLatest}},
-		{"6 outdated", managed("ACTIVE", ami("ami-old", "ami-new")), false, RollDecision{Submit, AMIOutdated}},
-		{"6 outdated, with reroll", managed("ACTIVE", ami("ami-old", "ami-new")), true, RollDecision{Submit, AMIOutdated}},
+		{"2 updating, AMI type unknown", updatingNewType, false, RollDecision{Skip, InFlight}},
+		{"3 AMI type unknown", newType, false, RollDecision{Skip, AMITypeUnknown}},
+		{"3 AMI type unknown, with reroll", newType, true, RollDecision{Skip, AMITypeUnknown}},
+		{"4 unknown current", managed("ACTIVE", ami("", "ami-new")), false, RollDecision{Submit, AMIUnknown}},
+		{"4 unknown latest", managed("ACTIVE", ami("ami-old", "")), false, RollDecision{Submit, AMIUnknown}},
+		{"4 AMIs not read", managed("ACTIVE", fleet.AMI{State: fleet.Failed, Current: "ami-new", Latest: "ami-new"}), false, RollDecision{Submit, AMIUnknown}},
+		{"4 AMI type not returned", noType, false, RollDecision{Submit, AMIUnknown}},
+		{"5 on latest, with reroll", managed("ACTIVE", ami("ami-new", "ami-new")), true, RollDecision{Submit, Reroll}},
+		{"6 on latest", managed("ACTIVE", ami("ami-new", "ami-new")), false, RollDecision{Skip, AlreadyLatest}},
+		{"6 on latest and degraded", managed("DEGRADED", ami("ami-new", "ami-new")), false, RollDecision{Skip, AlreadyLatest}},
+		{"7 outdated", managed("ACTIVE", ami("ami-old", "ami-new")), false, RollDecision{Submit, AMIOutdated}},
+		{"7 outdated, with reroll", managed("ACTIVE", ami("ami-old", "ami-new")), true, RollDecision{Submit, AMIOutdated}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

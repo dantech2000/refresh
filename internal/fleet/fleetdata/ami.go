@@ -87,6 +87,13 @@ func AMIParameter(version, amiType string) (path string, ok bool) {
 	return "", false
 }
 
+// KnownAMIType reports whether the table has the AMI type: whether
+// AMIParameter can place its recommended AMI. CUSTOM is not in the table.
+func KnownAMIType(amiType string) bool {
+	_, ok := amiSpecs[ekstypes.AMITypes(amiType)]
+	return ok
+}
+
 // AMITypes returns the AMI types that the table knows, for a check against
 // the types that EKS offers.
 func AMITypes() []string {

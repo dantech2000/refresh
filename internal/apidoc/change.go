@@ -127,9 +127,13 @@ const (
 	ReasonAlreadyAtTarget StepReason = "AlreadyAtTarget"
 	ReasonNewerThanLatest StepReason = "NewerThanLatest"
 	ReasonCustomAMI       StepReason = "CustomAMI"
-	ReasonSkippedByFlag   StepReason = "SkippedByFlag"
-	ReasonOutOfScope      StepReason = "OutOfScope"
-	ReasonNoChange        StepReason = "NoChange"
+	// ReasonAMITypeUnknown: this version of refresh does not know where the
+	// recommended AMI of the nodegroup's AMI type is published, so it
+	// cannot tell whether the nodegroup is behind.
+	ReasonAMITypeUnknown StepReason = "AMITypeUnknown"
+	ReasonSkippedByFlag  StepReason = "SkippedByFlag"
+	ReasonOutOfScope     StepReason = "OutOfScope"
+	ReasonNoChange       StepReason = "NoChange"
 	// ReasonVersionAhead: the resource runs a version above the one that
 	// the step moves it to: a rollback, an add-on that the older version
 	// cannot run, or an add-on update to an older version.
@@ -142,7 +146,7 @@ func (StepReason) Values() []string {
 		string(ReasonAMIOutdated), string(ReasonAMIUnknown), string(ReasonReroll), string(ReasonVersionBehind),
 		string(ReasonPreRoll), string(ReasonRepair), string(ReasonUnsettled), string(ReasonInFlight),
 		string(ReasonAlreadyLatest), string(ReasonAlreadyAtTarget), string(ReasonNewerThanLatest),
-		string(ReasonCustomAMI), string(ReasonSkippedByFlag), string(ReasonOutOfScope), string(ReasonNoChange),
+		string(ReasonCustomAMI), string(ReasonAMITypeUnknown), string(ReasonSkippedByFlag), string(ReasonOutOfScope), string(ReasonNoChange),
 		string(ReasonVersionAhead),
 	}
 }
