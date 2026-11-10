@@ -62,15 +62,25 @@ func TestLoadingFrameBeforeTheFirstState(t *testing.T) {
 }
 
 // Update never calls the backend itself: every call runs in a command.
+// The keys here would each call it: a readiness run, a sweep, and the
+// steering of an own change. Nothing runs the commands they return.
 func TestUpdateNeverCallsTheBackend(t *testing.T) {
-	h := newHarness(t, 100, 24, colorTheme)
-	h.state(fleetState(3))
-	for _, k := range []string{"down", "enter", "esc", "ctrl+r", "?", "esc"} {
-		next, _ := h.m.key(k)
+	h := newHarness(t, 120, 40, colorTheme)
+	h.state(withChanges(fleetState(3), upgradeChange(4, false)))
+	var cmds int
+	for _, k := range []string{"down", "enter", "esc", "ctrl+r", "?", "esc", "3", "P", "P", "S"} {
+		next, cmd := h.m.key(k)
 		h.m = next
+		if cmd != nil {
+			cmds++
+		}
 	}
-	if h.b.nextCalls != 0 || len(h.b.readiness) != 0 {
-		t.Fatalf("Update called the backend: %d Next, %d Readiness", h.b.nextCalls, len(h.b.readiness))
+	if h.b.nextCalls != 0 || len(h.b.readiness) != 0 || h.b.refreshed != 0 || len(h.b.calls) != 0 {
+		t.Fatalf("Update called the backend: %d Next, %d Readiness, %d Refresh, calls %v",
+			h.b.nextCalls, len(h.b.readiness), h.b.refreshed, h.b.calls)
+	}
+	if cmds == 0 {
+		t.Fatal("no key returned a command: the test pressed nothing that calls the backend")
 	}
 }
 
@@ -598,27 +608,32 @@ func TestSmallTerminalKeepsTheState(t *testing.T) {
 	}
 }
 
-// panickyRefresh is a backend whose Refresh, which Update calls, panics.
-type panickyRefresh struct{ *scripted }
-
-func (panickyRefresh) Refresh() { panic("refresh broke") }
-
 // A panic in Update is recorded with its stack before Bubble Tea
 // recovers it, and the model still panics: Bubble Tea ends the program.
+// The clock panics here: Update schedules a tick for the notice that
+// ctrl+r says.
 func TestUpdateRecordsAPanic(t *testing.T) {
-	m := New(t.Context(), panickyRefresh{&scripted{}}, colorTheme)
+	m := New(t.Context(), &scripted{}, colorTheme)
+	m.tick = func() tea.Cmd { panic("tick broke") }
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
-	next, _ = next.Update(stateMsg{st: fleetState(3)})
 	func() {
 		defer func() {
-			if r := recover(); r != "refresh broke" {
-				t.Errorf("recovered %v, want the panic of Refresh", r)
+			if r := recover(); r != nil {
+				t.Fatalf("the first state panicked: %v", r)
+			}
+		}()
+		next, _ = next.Update(stateMsg{st: fleetState(3)})
+	}()
+	func() {
+		defer func() {
+			if r := recover(); r != "tick broke" {
+				t.Errorf("recovered %v, want the panic of the clock", r)
 			}
 		}()
 		next.Update(tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
 	}()
 	trace := m.Panic()
-	for _, want := range []string{"panic: refresh broke", "model_test.go", "keys.go"} {
+	for _, want := range []string{"panic: tick broke", "model_test.go", "model.go"} {
 		if !strings.Contains(trace, want) {
 			t.Fatalf("the trace lacks %q:\n%s", want, trace)
 		}

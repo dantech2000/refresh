@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"context"
+	"fmt"
 	"slices"
 	"strings"
 
@@ -66,9 +68,9 @@ func globalBindings() []binding {
 			when: func(m Model) bool { return m.screen != screenFleet },
 			do:   func(m *Model) tea.Cmd { m.screen = screenFleet; return nil }},
 		{keys: []string{"ctrl+r"}, label: "ctrl+r", desc: "read the fleet from AWS now", do: func(m *Model) tea.Cmd {
-			m.b.Refresh()
 			m.say(progressStatus, "reading the fleet")
-			return nil
+			b := m.b
+			return m.guard(func() tea.Msg { b.Refresh(); return doneMsg{} })
 		}},
 		{keys: []string{"ctrl+l"}, label: "ctrl+l", desc: "redraw the whole screen (if another program wrote over it)", do: func(*Model) tea.Cmd { return tea.ClearScreen }},
 		{keys: []string{"?"}, label: "?", desc: "keys", do: func(m *Model) tea.Cmd { m.help, m.scroll = true, 0; return nil }},
@@ -211,37 +213,49 @@ func changeBindings() []binding {
 		return ok && on(m) && c.State == change.Paused && c.Controls.Pause
 	}
 	several := func(m Model) bool { return on(m) && len(m.st.Changes) > 1 }
-	call := func(name string, f func(m *Model, c state.Change) error) func(*Model) tea.Cmd {
+	// call steers the change on screen in a command, off the UI loop. A
+	// failure comes back as a doneMsg, which the log strip shows.
+	call := func(name string, f func(ctx context.Context, b Backend, c state.Change) error) func(*Model) tea.Cmd {
 		return func(m *Model) tea.Cmd {
 			c, ok := m.change()
 			if !ok {
 				return nil
 			}
-			if err := f(m, c); err != nil {
-				m.say(view.Fail, "%s: %v", name, err)
-			}
-			return nil
+			b, ctx := m.b, m.ctx
+			return m.guard(func() tea.Msg {
+				if err := f(ctx, b, c); err != nil {
+					return doneMsg{err: fmt.Errorf("%s: %w", name, err)}
+				}
+				return doneMsg{}
+			})
+		}
+	}
+	// said says a notice, then does the call.
+	said := func(status view.Status, notice string, do func(*Model) tea.Cmd) func(*Model) tea.Cmd {
+		return func(m *Model) tea.Cmd {
+			m.say(status, "%s", notice)
+			return do(m)
 		}
 	}
 	return []binding{
 		{keys: []string{"y"}, label: "y", desc: "answer the question: go on", short: "go on", bar: true, primary: true, when: answer,
-			do: call("answer", func(m *Model, c state.Change) error { return m.b.Answer(m.ctx, c.ID, c.Question.ID, true) })},
+			do: call("answer", func(ctx context.Context, b Backend, c state.Change) error {
+				return b.Answer(ctx, c.ID, c.Question.ID, true)
+			})},
 		{keys: []string{"n"}, label: "n", desc: "answer the question: stop", short: "stop here", bar: true, primary: true, when: answer,
-			do: call("answer", func(m *Model, c state.Change) error { return m.b.Answer(m.ctx, c.ID, c.Question.ID, false) })},
+			do: call("answer", func(ctx context.Context, b Backend, c state.Change) error {
+				return b.Answer(ctx, c.ID, c.Question.ID, false)
+			})},
 		{keys: []string{"P"}, label: "P", desc: "pause before the next phase; again to resume", short: "pause", bar: true, primary: true,
 			when: func(m Model) bool { return steer(m) && !asking(m) && !paused(m) },
-			do: call("pause", func(m *Model, c state.Change) error {
-				m.say(progressStatus, "pause requested: the change pauses before its next phase")
-				return m.b.Pause(m.ctx, c.ID)
-			})},
+			do: said(progressStatus, "pause requested: the change pauses before its next phase",
+				call("pause", func(ctx context.Context, b Backend, c state.Change) error { return b.Pause(ctx, c.ID) }))},
 		{keys: []string{"P"}, label: "P", desc: "resume", short: "resume", bar: true, primary: true, when: paused,
-			do: call("resume", func(m *Model, c state.Change) error { return m.b.Resume(m.ctx, c.ID) })},
+			do: call("resume", func(ctx context.Context, b Backend, c state.Change) error { return b.Resume(ctx, c.ID) })},
 		{keys: []string{"S"}, label: "S", desc: "stop before the next phase; what started finishes", short: "stop", bar: true, primary: true,
 			when: func(m Model) bool { return steer(m) && !asking(m) },
-			do: call("stop", func(m *Model, c state.Change) error {
-				m.say(view.Warn, "stop requested: the change stops before its next phase")
-				return m.b.Stop(m.ctx, c.ID)
-			})},
+			do: said(view.Warn, "stop requested: the change stops before its next phase",
+				call("stop", func(ctx context.Context, b Backend, c state.Change) error { return b.Stop(ctx, c.ID) }))},
 		{keys: []string{"space"}, label: "space", desc: "freeze the log; again to follow", short: "freeze", bar: true,
 			when: func(m Model) bool { _, ok := m.change(); return ok && on(m) },
 			do: func(m *Model) tea.Cmd {
