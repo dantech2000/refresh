@@ -191,12 +191,14 @@ func isAWSHost(host string) bool {
 // API response: a failed HTTP round trip (*url.Error), a dial/read/write
 // failure (*net.OpError), a DNS failure, a timeout, a refused or reset
 // connection, or a response cut short. Context cancellation and deadlines are
-// not network errors; callers check those first.
+// not network errors; callers check those first. A connect timeout is a
+// network error, also when it reports itself as context.DeadlineExceeded:
+// the request never reached AWS.
 func IsNetworkError(err error) bool {
 	if err == nil {
 		return false
 	}
-	if errors.Is(err, context.Canceled) || isContextDeadline(err) {
+	if errors.Is(err, context.Canceled) || (isContextDeadline(err) && !IsDialFailure(err)) {
 		return false
 	}
 	var urlErr *url.Error
