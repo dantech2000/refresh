@@ -37,7 +37,7 @@ type upgradeCheckOptions struct {
 	ios     *cmdutil.IOStreams
 	clients func(ctx context.Context) (*awsx.Clients, error)
 	target  func(explicit string) (cmdutil.Target, error)
-	timeout time.Duration
+	global  *cmdutil.GlobalOptions
 	now     func() time.Time
 
 	cluster     string
@@ -57,7 +57,7 @@ func newCmdUpgradeCheck(f *cmdutil.Factory) *cobra.Command {
 		ios:     f.IOStreams,
 		clients: func(ctx context.Context) (*awsx.Clients, error) { return cmdutil.ClusterClients(ctx, f) },
 		target:  func(explicit string) (cmdutil.Target, error) { return cmdutil.ResolveCluster(f, explicit, true) },
-		timeout: f.Global.Timeout,
+		global:  &f.Global,
 		now:     f.Now,
 	}
 	cmd := &cobra.Command{
@@ -147,7 +147,7 @@ func (o *upgradeCheckOptions) validate() error {
 }
 
 func (o *upgradeCheckOptions) run(ctx context.Context) error {
-	ctx, cancel := cmdutil.WithTimeout(ctx, o.timeout)
+	ctx, cancel := cmdutil.WithTimeout(ctx, o.global.Timeout)
 	defer cancel()
 	clients, err := o.clients(ctx)
 	if err != nil {

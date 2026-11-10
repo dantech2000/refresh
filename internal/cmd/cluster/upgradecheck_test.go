@@ -1,6 +1,7 @@
 package cluster_test
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -295,5 +296,36 @@ func TestUpgradeCheck_InvalidInput(t *testing.T) {
 		if err == nil || len(e.Server.Requests()) != 0 {
 			t.Errorf("%v: error = %v, requests = %v; want an error before any request", args, err, e.Operations())
 		}
+	}
+}
+
+// --timeout and REFRESH_TIMEOUT bound the calls of the check: a call that
+// hangs ends the run with an error when the budget is spent, and the run
+// does not wait for the context of the caller.
+func TestUpgradeCheck_Timeout(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		args []string
+		env  string
+	}{
+		{name: "flag", args: []string{"--timeout", "50ms"}},
+		{name: "env", env: "50ms"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newCheckFake(t, ready)
+			if tt.env != "" {
+				t.Setenv("REFRESH_TIMEOUT", tt.env)
+			}
+			e.World.SetFault(fleettest.EKSDescribeCluster, fleettest.Fault{Hang: true})
+			ctx, cancel := context.WithTimeout(cmdutiltest.Context(t), 10*time.Second)
+			defer cancel()
+			err := e.Run(ctx, append([]string{"cluster", "upgrade-check", "prod"}, tt.args...)...)
+			if err == nil {
+				t.Fatal("run: no error, want the timeout")
+			}
+			if ctx.Err() != nil {
+				t.Errorf("the run ended with the context of the caller (%v), not with the timeout", err)
+			}
+		})
 	}
 }
