@@ -279,7 +279,9 @@ func TestAPIErrors(t *testing.T) {
 			return err
 		}, invalid},
 		{"nodegroup that is not ACTIVE", func() error {
-			f.world.Edit(func(s *fleettest.State) { s.Cluster(region, "prod").Nodegroup("ng-b").Status = fleettest.StatusCreateFailed })
+			f.world.Edit(func(s *fleettest.State) {
+				s.Cluster(region, "prod").Nodegroup("ng-b").Status = fleettest.StatusCreateFailed
+			})
 			_, err := c.eks.UpdateNodegroupConfig(ctx, &eks.UpdateNodegroupConfigInput{ClusterName: aws.String("prod"), NodegroupName: aws.String("ng-b")})
 			return err
 		}, wireError{"ResourceInUseException", is[*ekstypes.ResourceInUseException]}},
