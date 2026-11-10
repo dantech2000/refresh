@@ -1,4 +1,4 @@
-package awsxtest
+package fleettest
 
 import (
 	"context"
@@ -6,8 +6,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/dantech2000/refresh/internal/fleet/fleettest"
 )
 
 // Gate holds every request of a handler until a test lets it through, one
@@ -35,21 +33,20 @@ type Gate struct {
 	arrived chan struct{} // closed and replaced when a request arrives
 	held    []heldRequest
 	open    bool
-	late    []fleettest.Operation // requests that arrived after Done
+	late    []Operation // requests that arrived after Done
 }
 
 type heldRequest struct {
-	op      fleettest.Operation
+	op      Operation
 	release chan struct{}
 }
 
-// NewGate puts a gate on h. It takes the OnRequest hook of the handler, so
-// the test must set no hook of its own, and it must do so before the first
-// request. When the test ends, a request that arrived after Done fails it.
-func NewGate(tb testing.TB, h *Handler) *Gate {
+// NewGate returns a gate that holds nothing yet. A server's request hook
+// calls Hold for each request. When the test ends, a request that arrived
+// after Done fails it.
+func NewGate(tb testing.TB) *Gate {
 	tb.Helper()
 	g := &Gate{t: tb, arrived: make(chan struct{})}
-	h.OnRequest = g.onRequest
 	tb.Cleanup(func() {
 		g.mu.Lock()
 		defer g.mu.Unlock()
@@ -60,17 +57,17 @@ func NewGate(tb testing.TB, h *Handler) *Gate {
 	return g
 }
 
-// onRequest holds r until its wave is released, the gate is opened, or the
-// request ends.
-func (g *Gate) onRequest(ctx context.Context, r Request) {
+// Hold holds a request for op until its wave is released, the gate is
+// opened, or ctx ends.
+func (g *Gate) Hold(ctx context.Context, op Operation) {
 	g.mu.Lock()
 	if g.open {
-		g.late = append(g.late, r.Operation)
+		g.late = append(g.late, op)
 		g.mu.Unlock()
 		return
 	}
 	release := make(chan struct{})
-	g.held = append(g.held, heldRequest{op: r.Operation, release: release})
+	g.held = append(g.held, heldRequest{op: op, release: release})
 	close(g.arrived)
 	g.arrived = make(chan struct{})
 	g.mu.Unlock()
@@ -84,7 +81,7 @@ func (g *Gate) onRequest(ctx context.Context, r Request) {
 // Wave waits until the held requests are exactly ops, in any order, and
 // releases them. It fails the test at once when a request that is not in
 // ops is held, and at the deadline when a request of ops does not arrive.
-func (g *Gate) Wave(ops ...fleettest.Operation) {
+func (g *Gate) Wave(ops ...Operation) {
 	g.t.Helper()
 	timeout := g.Timeout
 	if timeout <= 0 {
@@ -94,7 +91,7 @@ func (g *Gate) Wave(ops ...fleettest.Operation) {
 	defer deadline.Stop()
 	for {
 		g.mu.Lock()
-		held := make([]fleettest.Operation, len(g.held))
+		held := make([]Operation, len(g.held))
 		for i, h := range g.held {
 			held[i] = h.op
 		}
@@ -139,7 +136,7 @@ func (g *Gate) Done() {
 
 // difference returns the operations of want that are not in got, and those
 // of got that are not in want. Both lists may repeat an operation.
-func difference(want, got []fleettest.Operation) (missing, extra []fleettest.Operation) {
+func difference(want, got []Operation) (missing, extra []Operation) {
 	rest := slices.Clone(got)
 	for _, op := range want {
 		if i := slices.Index(rest, op); i >= 0 {
