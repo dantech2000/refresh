@@ -3,6 +3,7 @@
 package ui
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -34,25 +35,32 @@ func TestDetachStderr_SilencesDescriptorTwo(t *testing.T) {
 	if err := unix.Dup2(int(file.Fd()), 2); err != nil {
 		t.Fatal(err)
 	}
-	// os.Stderr of a test binary is not always descriptor 2: under go test
-	// -json the testing package sets it to os.Stdout. Point it at the file,
-	// so that a write through it lands where the descriptor writes land.
+	// In a program os.Stderr writes to descriptor 2, so detaching the
+	// descriptor detaches it too; detachStderr does not reassign it. Under
+	// go test -json the testing package points os.Stderr at os.Stdout, and
+	// the test can check the descriptor only. (An os.NewFile(2) to stand in
+	// for it would close descriptor 2 when the garbage collector finds it.)
+	viaStderr := os.Stderr != os.Stdout
 	stderr := os.Stderr
-	t.Cleanup(func() { os.Stderr = stderr })
-	os.Stderr = file
+	wants := []string{"descriptor after restore"}
 
 	restore, err := detachStderr()
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, _ = unix.Write(2, []byte("descriptor while detached\n"))
-	_, _ = os.Stderr.WriteString("os.Stderr while detached\n")
+	if viaStderr {
+		_, _ = os.Stderr.WriteString("os.Stderr while detached\n")
+	}
 	restore()
-	if os.Stderr != file {
+	if os.Stderr != stderr {
 		t.Error("os.Stderr is not the one of before the detach")
 	}
 	_, _ = unix.Write(2, []byte("descriptor after restore\n"))
-	_, _ = os.Stderr.WriteString("os.Stderr after restore\n")
+	if viaStderr {
+		_, _ = os.Stderr.WriteString("os.Stderr after restore\n")
+		wants = append(wants, "os.Stderr after restore")
+	}
 
 	got, err := os.ReadFile(path)
 	if err != nil {
@@ -61,9 +69,64 @@ func TestDetachStderr_SilencesDescriptorTwo(t *testing.T) {
 	if strings.Contains(string(got), "while detached") {
 		t.Errorf("a write reached stderr while it was detached:\n%s", got)
 	}
-	for _, want := range []string{"descriptor after restore", "os.Stderr after restore"} {
+	for _, want := range wants {
 		if !strings.Contains(string(got), want) {
 			t.Errorf("stderr lacks %q after the restore:\n%s", want, got)
 		}
+	}
+}
+
+// Found in review: run restores once after the program and once in a
+// defer. The first restore closes the saved descriptor; files and
+// sockets opened before the second can take its number, and a second
+// Dup2 of it pointed descriptor 2 at one of them. The restore runs once.
+func TestDetachStderr_SecondRestoreDoesNothing(t *testing.T) {
+	original, err := unix.Dup(2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = unix.Dup2(original, 2)
+		_ = unix.Close(original)
+	})
+	dir := t.TempDir()
+	stderrPath := filepath.Join(dir, "stderr")
+	stderrFile, err := os.Create(stderrPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = stderrFile.Close() }()
+	if err := unix.Dup2(int(stderrFile.Fd()), 2); err != nil {
+		t.Fatal(err)
+	}
+
+	restore, err := detachStderr()
+	if err != nil {
+		t.Fatal(err)
+	}
+	restore()
+	// Something else opens descriptors now: the sockets of a sweep, in
+	// the real program. They take the lowest free numbers, the closed
+	// saved descriptor among them.
+	var others []string
+	for i := range 3 {
+		path := filepath.Join(dir, fmt.Sprintf("other-%d", i))
+		f, err := os.Create(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = f.Close() })
+		others = append(others, path)
+	}
+	restore() // the deferred call of run
+	_, _ = unix.Write(2, []byte("an error message for the user\n"))
+
+	for _, path := range others {
+		if got, _ := os.ReadFile(path); len(got) > 0 {
+			t.Errorf("after the second restore, descriptor 2 is %s, which holds %q", filepath.Base(path), got)
+		}
+	}
+	if got, _ := os.ReadFile(stderrPath); !strings.Contains(string(got), "an error message for the user") {
+		t.Errorf("stderr lacks the message after two restores: %q", got)
 	}
 }

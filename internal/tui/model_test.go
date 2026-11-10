@@ -1,8 +1,10 @@
 package tui
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -155,10 +157,55 @@ func TestBackendErrorsBecomeNotices(t *testing.T) {
 	h.state(fleetState(3))
 	h.keys("r")
 	h.contains("the readiness checks of this cluster are running")
-	// The notice goes away after a while; the log strip shows the feed.
+	// The notice goes away a while after the first tick that saw it; the
+	// log strip shows the feed.
 	h.tick(now.Add(time.Minute))
+	h.contains("the readiness checks of this cluster are running")
+	h.tick(now.Add(time.Minute + noticeFor))
 	h.lacks("checks of this cluster are running")
 	h.contains("readiness: review")
+}
+
+// Found in review: a notice expired against the clock of the last tick or
+// state, which is old when the UI is idle, so the next state hid an error
+// at once, and nothing ticked to hide a notice when no state came. The
+// time of a notice starts at the first tick or state after it, and the
+// key that says it starts the clock.
+func TestNoticeOutlivesAStaleClock(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		key  tea.KeyPressMsg
+		want string
+	}{
+		{"an error of a key", tea.KeyPressMsg{Code: 'r', Text: "r"}, "the readiness checks of this cluster are running"},
+		{"ctrl+r, whose sweep publishes a state at once", tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl}, "reading the fleet"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t, 120, 40, colorTheme)
+			h.b.readinessErr = errors.New("the readiness checks of this cluster are running")
+			h.state(fleetState(3)) // idle: nothing ticks, the clock stays at now
+			if h.m.ticking {
+				t.Fatal("an idle fleet scheduled a tick")
+			}
+			h.update(tc.key)
+			h.contains(tc.want)
+			if !h.m.ticking {
+				t.Fatal("a notice scheduled no tick to end it")
+			}
+			// A state 45 seconds on, the first since the notice.
+			st := fleetState(3)
+			st.Version, st.Now = 2, now.Add(45*time.Second)
+			h.state(st)
+			h.contains(tc.want)
+			h.tick(now.Add(45*time.Second + noticeFor - time.Second))
+			h.contains(tc.want)
+			h.tick(now.Add(45*time.Second + noticeFor))
+			h.lacks(tc.want)
+			if h.m.ticking {
+				t.Fatal("the clock went on after the notice ended")
+			}
+		})
+	}
 }
 
 func TestSelectionFollowsTheClusterNotTheRow(t *testing.T) {
@@ -234,6 +281,191 @@ func TestQuitKeys(t *testing.T) {
 		if !h.quit {
 			t.Errorf("%s did not quit", k)
 		}
+	}
+}
+
+// Found in review: q quit at once while a change of this UI ran, which
+// stops it before its next step. The first q says so, the second quits,
+// and any other key keeps the UI. ctrl+c quits at once. A change started
+// elsewhere is not stopped by quitting, and does not ask.
+func TestQuitAsksWhileAChangeOfThisUIRuns(t *testing.T) {
+	h := newHarness(t, 120, 40, colorTheme)
+	h.state(withChanges(writable(fleetState(3)), upgradeChange(4, false)))
+	h.keys("q")
+	if h.quit {
+		t.Fatal("one q quit while an upgrade of this UI runs")
+	}
+	h.contains("upgrade of c-000 runs from this UI: q again quits")
+	h.keys("down", "q")
+	if h.quit {
+		t.Fatal("a q after another key quit without asking again")
+	}
+	h.keys("q")
+	if !h.quit {
+		t.Fatal("the second q did not quit")
+	}
+
+	h = newHarness(t, 120, 40, colorTheme)
+	h.state(withChanges(writable(fleetState(3)), upgradeChange(4, false)))
+	h.keys("ctrl+c")
+	if !h.quit {
+		t.Fatal("ctrl+c did not quit at once")
+	}
+
+	h = newHarness(t, 120, 40, colorTheme)
+	h.state(withChanges(writable(fleetState(3)), upgradeChange(4, true), finishedChange(5)))
+	h.keys("q")
+	if !h.quit {
+		t.Fatal("q asked with only a change started elsewhere and a finished one")
+	}
+}
+
+// Found in review of the fix: a key after the first q took the warning
+// back and then acted, so q, y accepted a health gate. The key after the
+// warning only takes it back.
+func TestTheKeyAfterTheQuitWarningOnlyTakesItBack(t *testing.T) {
+	for _, k := range []string{"y", "n", "S", "P", "1", "a"} {
+		t.Run(k, func(t *testing.T) {
+			h := newHarness(t, 120, 40, colorTheme)
+			h.state(withChanges(writable(fleetState(3)), rollChange(5, true), upgradeChange(4, false)))
+			h.keys("3")
+			h.tick(now.Add(answerDelay))
+			h.keys("q", k)
+			if len(h.b.calls) != 0 || len(h.b.plans) != 0 || h.m.screen != screenChange || h.quit {
+				t.Fatalf("q, %s: calls %v, plans %v, screen %d, quit %v", k, h.b.calls, h.b.plans, h.m.screen, h.quit)
+			}
+			h.lacks("q again quits")
+			h.keys("y") // now it acts
+			if want := []string{"answer 5 3 true"}; !slices.Equal(h.b.calls, want) {
+				t.Fatalf("y after the warning was taken back: calls %v, want %v", h.b.calls, want)
+			}
+		})
+	}
+}
+
+// Found in review of the fix: the quit stayed armed after its warning had
+// gone, so a single q minutes later quit a running upgrade. The q counts
+// only while its warning shows, and a newer notice takes it back too.
+func TestTheQuitWarningEnds(t *testing.T) {
+	h := newHarness(t, 120, 40, colorTheme)
+	h.state(withChanges(writable(fleetState(3)), upgradeChange(4, false)))
+	h.keys("q")
+	h.tick(now.Add(time.Second))
+	h.tick(now.Add(time.Second + noticeFor))
+	h.lacks("q again quits")
+	h.keys("q")
+	if h.quit {
+		t.Fatal("a q after the warning ended quit at once")
+	}
+	h.contains("q again quits")
+
+	// A newer notice replaces the warning: q warns again, and the
+	// newer notice stays when a key takes a warning back.
+	h = newHarness(t, 120, 40, colorTheme)
+	h.state(withChanges(writable(fleetState(3)), upgradeChange(4, false)))
+	h.keys("q")
+	h.update(doneMsg{err: errors.New("a newer notice")})
+	h.keys("q")
+	if h.quit {
+		t.Fatal("a q after a newer notice quit at once")
+	}
+	h.contains("q again quits")
+	h.update(doneMsg{err: errors.New("a newer notice")})
+	h.keys("down")
+	h.contains("a newer notice")
+}
+
+// A panic in View is recorded with its stack before Bubble Tea recovers
+// it.
+func TestViewRecordsAPanic(t *testing.T) {
+	m := New(t.Context(), &scripted{}, colorTheme)
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	broken := next.(Model)
+	broken.p = nil // the painter is gone: drawing panics
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Error("View did not panic again for Bubble Tea")
+			}
+		}()
+		broken.View()
+	}()
+	if trace := m.Panic(); !strings.Contains(trace, "view.go") {
+		t.Fatalf("the trace of a panic in View:\n%s", trace)
+	}
+}
+
+// panickyReadiness is a backend whose Readiness, which a command calls,
+// panics.
+type panickyReadiness struct{ *scripted }
+
+func (panickyReadiness) Readiness(context.Context, state.Key) error { panic("readiness broke") }
+
+// A panic in a command is recorded and ends the session as a quit, so
+// that Bubble Tea, which would recover it on a goroutine it does not
+// wait for, prints nothing.
+func TestACommandPanicQuits(t *testing.T) {
+	h := newHarness(t, 120, 40, colorTheme)
+	h.m = New(t.Context(), panickyReadiness{h.b}, colorTheme)
+	h.m.tick = func() tea.Cmd { return func() tea.Msg { return heldTick{} } }
+	h.update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	h.state(fleetState(3))
+	h.keys("r")
+	if !h.quit {
+		t.Fatal("a panic in a command did not end the session")
+	}
+	if trace := h.m.Panic(); !strings.Contains(trace, "panic: readiness broke") || !strings.Contains(trace, "model_test.go") {
+		t.Fatalf("the trace:\n%s", trace)
+	}
+}
+
+// Found in review: keys acted while the screen showed only the resize
+// message, so y could start a change or accept a health-gate warning
+// that the user could not see. Below the least size only q and ctrl+c
+// work.
+func TestKeysDoNothingOnTheResizeScreen(t *testing.T) {
+	small := tea.WindowSizeMsg{Width: 80, Height: 20}
+	big := tea.WindowSizeMsg{Width: 160, Height: 42}
+
+	// A dry run on screen: y starts nothing, esc does not close it.
+	h := newHarness(t, 160, 42, colorTheme)
+	h.state(writable(fleetState(3)))
+	h.b.proposal = proposalOf(5, state.Action{Kind: state.ActionAddons, Cluster: h.m.cluster().Key}, finishedChange(0).Plan)
+	h.keys("a")
+	if h.m.confirm == nil {
+		t.Fatal("a did not open the dry run")
+	}
+	h.update(small)
+	h.keys("y", "esc", "n")
+	if len(h.b.starts) != 0 || h.m.confirm == nil {
+		t.Fatalf("keys on the resize screen: starts %v, dialog open %v", h.b.starts, h.m.confirm != nil)
+	}
+
+	// A health-gate question: y and n answer nothing; S and P steer nothing.
+	h = newHarness(t, 160, 42, colorTheme)
+	h.state(withChanges(writable(fleetState(3)), rollChange(5, true)))
+	h.keys("3")
+	h.tick(now.Add(answerDelay))
+	h.update(small)
+	h.keys("y", "n", "S", "P", "1", "p", "a", "U", "ctrl+r")
+	if len(h.b.calls) != 0 || len(h.b.plans) != 0 || h.b.refreshed != 0 || h.m.screen != screenChange {
+		t.Fatalf("keys on the resize screen: calls %v, plans %v, refreshed %d, screen %d", h.b.calls, h.b.plans, h.b.refreshed, h.m.screen)
+	}
+	h.update(big)
+	h.keys("y")
+	if want := []string{"answer 5 3 true"}; !slices.Equal(h.b.calls, want) {
+		t.Fatalf("y at full size: calls %v, want %v", h.b.calls, want)
+	}
+
+	// q works, and its question shows on the resize screen.
+	h = newHarness(t, 120, 40, colorTheme)
+	h.state(withChanges(writable(fleetState(3)), upgradeChange(4, false)))
+	h.update(small)
+	h.keys("q")
+	h.contains("needs a 100×24 terminal", "q again quits")
+	h.keys("q")
+	if !h.quit {
+		t.Fatal("q on the resize screen did not quit")
 	}
 }
 
@@ -363,5 +595,32 @@ func TestSmallTerminalKeepsTheState(t *testing.T) {
 	h.update(tea.WindowSizeMsg{Width: 120, Height: 40})
 	if h.m.screen != screenCluster || h.m.cluster().Name != "c-001" {
 		t.Fatal("a resize lost the screen or the selection")
+	}
+}
+
+// panickyRefresh is a backend whose Refresh, which Update calls, panics.
+type panickyRefresh struct{ *scripted }
+
+func (panickyRefresh) Refresh() { panic("refresh broke") }
+
+// A panic in Update is recorded with its stack before Bubble Tea
+// recovers it, and the model still panics: Bubble Tea ends the program.
+func TestUpdateRecordsAPanic(t *testing.T) {
+	m := New(t.Context(), panickyRefresh{&scripted{}}, colorTheme)
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	next, _ = next.Update(stateMsg{st: fleetState(3)})
+	func() {
+		defer func() {
+			if r := recover(); r != "refresh broke" {
+				t.Errorf("recovered %v, want the panic of Refresh", r)
+			}
+		}()
+		next.Update(tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
+	}()
+	trace := m.Panic()
+	for _, want := range []string{"panic: refresh broke", "model_test.go", "keys.go"} {
+		if !strings.Contains(trace, want) {
+			t.Fatalf("the trace lacks %q:\n%s", want, trace)
+		}
 	}
 }

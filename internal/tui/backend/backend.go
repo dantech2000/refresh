@@ -25,6 +25,7 @@ var (
 	ErrReadOnly         = errors.New("the UI is read-only; start it with --allow-changes")
 	ErrReadinessRunning = errors.New("the readiness checks of this cluster are running")
 	ErrUnknownCluster   = errors.New("the cluster is not in the fleet")
+	ErrClosing          = errors.New("the UI is closing; nothing starts")
 )
 
 // Options say what the backend reads and how.
@@ -75,7 +76,10 @@ type Live struct {
 	refetch chan state.Key
 	wg      sync.WaitGroup
 
-	mu           sync.Mutex
+	mu sync.Mutex
+	// closed is set when Run stops: from then on no goroutine starts, so
+	// that wg.Go never races with the wg.Wait of Run.
+	closed       bool
 	version      uint64
 	changed      chan struct{} // closed and replaced by bump
 	sweep        state.Sweep
@@ -145,7 +149,12 @@ func New(ctx context.Context, provider *awsx.Provider, o Options) *Live {
 // every Interval, and when Refresh asks for one; between sweeps, a
 // cluster whose change ended is read again on its own.
 func (b *Live) Run() {
-	defer b.wg.Wait()
+	defer func() {
+		b.mu.Lock()
+		b.closed = true
+		b.mu.Unlock()
+		b.wg.Wait()
+	}()
 	for {
 		b.doSweep()
 		for {

@@ -133,10 +133,10 @@ func (o *options) run(ctx context.Context) error {
 	if o.profile, err = o.profileInEffect(); err != nil {
 		return err
 	}
-	ctx, cancel := context.WithCancel(ctx)
+	bctx, cancel := backendContext(ctx)
 	defer cancel()
 
-	b := backend.New(ctx, provider, backend.Options{
+	b := backend.New(bctx, provider, backend.Options{
 		Regions:         fleetcmd.SweepRegions(o.global, provider.Region(), o.allRegions),
 		Interval:        o.interval,
 		AllowChanges:    o.allowChanges,
@@ -171,7 +171,7 @@ func (o *options) run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer restore() // a second call is harmless
+	defer restore() // it runs once; this covers a return before the call below
 
 	m := tui.New(ctx, b, o.ios.Theme())
 	opts := []tea.ProgramOption{tea.WithContext(ctx), tea.WithInput(o.ios.In), tea.WithOutput(o.ios.Out)}
@@ -180,37 +180,132 @@ func (o *options) run(ctx context.Context) error {
 	}
 	_, err = tea.NewProgram(m, opts...).Run()
 	restore()
+	trace := m.Panic()
+	err = panicked(err, trace)
+	sayPanic(o.ios.ErrOut, err, trace)
+	// The backend still runs: what is unfinished is what the session
+	// left, also after an interrupt.
 	sayUnfinished(o.ios.ErrOut, b.Unfinished())
-	if err != nil && ctx.Err() != nil {
+	if err != nil && !errors.Is(err, tea.ErrProgramPanic) && ctx.Err() != nil {
 		// The session was interrupted; main says so.
 		return nil
 	}
 	return err
 }
 
-// sayUnfinished names the changes of the session that had not ended when
-// the UI closed: EKS goes on with them, and the commands can watch them.
-func sayUnfinished(w io.Writer, changes []state.Change) {
-	if len(changes) == 0 {
+// panicked is the error of a session that Run ended with err: a panic in
+// a command of the model, which the model recorded as trace, ends the
+// program as a quit, with no error from Run.
+func panicked(err error, trace string) error {
+	if trace != "" && err == nil {
+		return tea.ErrProgramPanic
+	}
+	return err
+}
+
+// backendContext is the context of the backend: the values of the
+// session, and its own cancel, which run calls after it has said what is
+// unfinished. An interrupt ends the session context; if it ended the
+// backend too, the handles of the changes would finish, cancelled,
+// before Unfinished reads them, and the words on the way out would name
+// nothing.
+func backendContext(session context.Context) (context.Context, context.CancelFunc) {
+	return context.WithCancel(context.WithoutCancel(session))
+}
+
+// sayPanic writes the panic that ended the UI, and its stack, to w. Bubble
+// Tea printed it to os.Stderr, which was the null device then, or never,
+// for a panic in a command. A panic outside the model leaves no trace,
+// and the user is told how to get one.
+func sayPanic(w io.Writer, err error, trace string) {
+	if !errors.Is(err, tea.ErrProgramPanic) {
 		return
 	}
-	_, _ = fmt.Fprintf(w, "%s still running in EKS; the UI no longer follows them:\n", plural(len(changes), "change"))
+	if trace == "" {
+		_, _ = fmt.Fprintln(w, "the UI stopped on a panic outside its own code; with TEA_DEBUG=1 the next run writes the trace to bubbletea-panic-<time>.log in this directory")
+		return
+	}
+	_, _ = fmt.Fprintln(w, "the UI stopped on a panic:")
+	_, _ = fmt.Fprintln(w, strings.TrimRight(trace, "\n"))
+}
+
+// sayUnfinished names the changes of the session that had not ended when
+// the UI closed. EKS goes on with an update in flight, and the commands
+// can watch it. A change of this UI stops with it: what it had not
+// started does not run, and the command of its dry run is named.
+func sayUnfinished(w io.Writer, changes []state.Change) {
+	var inEKS, cut []string
 	for _, c := range changes {
-		var ids []string
+		var ids, notStarted []string
 		for _, s := range c.Steps {
-			if s.UpdateID != "" && s.FinishedAt.IsZero() {
+			switch {
+			case s.UpdateID != "" && s.FinishedAt.IsZero():
 				ids = append(ids, s.UpdateID)
+			case s.Status == change.StepNotAttempted:
+				notStarted = append(notStarted, stepName(s.Ref))
 			}
 		}
-		line := "  " + kindWord(c.Kind) + " " + c.Target.Cluster + " (" + c.Target.Region + ")"
-		if len(ids) > 0 {
-			line += ": update " + strings.Join(ids, ", ")
+		what := "  " + kindWord(c.Kind) + " " + c.Target.Cluster + " (" + c.Target.Region + ")"
+		if c.Elsewhere || len(ids) > 0 {
+			line := what
+			if len(ids) > 0 {
+				line += ": update " + strings.Join(ids, ", ")
+			}
+			if c.Elsewhere {
+				line += " (started elsewhere)"
+			}
+			inEKS = append(inEKS, line)
 		}
-		if c.Elsewhere {
-			line += " (started elsewhere)"
+		var line string
+		switch {
+		case c.Elsewhere:
+			continue
+		case len(notStarted) > 0:
+			line = what + ": did not start " + strings.Join(notStarted, ", ")
+		case len(ids) > 0:
+			continue // the update in flight is the rest of it
+		case len(c.Steps) == 0:
+			line = what + ": nothing was started"
+		default:
+			line = what + ": stopped before its end"
 		}
-		_, _ = fmt.Fprintln(w, line)
+		if c.Command != "" {
+			line += "\n    the same change from the command line: " + c.Command
+		}
+		cut = append(cut, line)
 	}
+	if len(inEKS) > 0 {
+		_, _ = fmt.Fprintf(w, "%s still running in EKS; the UI no longer follows %s:\n", plural(len(inEKS), "change"), them(len(inEKS)))
+		for _, line := range inEKS {
+			_, _ = fmt.Fprintln(w, line)
+		}
+	}
+	if len(cut) > 0 {
+		_, _ = fmt.Fprintf(w, "%s of this UI stopped with it:\n", plural(len(cut), "change"))
+		for _, line := range cut {
+			_, _ = fmt.Fprintln(w, line)
+		}
+	}
+}
+
+// stepName names a step for a person.
+func stepName(ref change.StepRef) string {
+	switch ref.Kind {
+	case change.StepControlPlane:
+		return "the control plane"
+	case change.StepNodegroup:
+		return "nodegroup " + ref.Name
+	case change.StepAddon:
+		return "add-on " + ref.Name
+	}
+	return ref.Name
+}
+
+func them(n int) string {
+	if n == 1 {
+		return "it"
+	}
+	return "them"
 }
 
 func kindWord(k change.Kind) string {

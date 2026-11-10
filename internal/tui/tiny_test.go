@@ -11,8 +11,8 @@ import (
 
 // A terminal far below the least size, down to one cell and none, in
 // both themes: the frame still fills it exactly, nothing panics, an ASCII
-// terminal gets no byte above 127, and the screen comes back when the
-// terminal grows.
+// terminal gets no byte above 127, the keys do nothing to a screen that
+// does not show, and the screen comes back when the terminal grows.
 func TestTinyTerminal(t *testing.T) {
 	for _, th := range []view.Theme{colorTheme, asciiTheme} {
 		h := newHarness(t, 120, 40, th)
@@ -21,7 +21,11 @@ func TestTinyTerminal(t *testing.T) {
 		for _, size := range [][2]int{{99, 23}, {40, 5}, {10, 3}, {2, 1}, {1, 1}, {0, 0}, {300, 1}, {1, 200}} {
 			name := fmt.Sprintf("%dx%d, unicode %v", size[0], size[1], th.Unicode)
 			h.update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
-			h.keys("down", "?", "esc")
+			h.keys("up", "?", "esc", "r")
+			if h.m.help || h.m.screen != screenCluster || h.m.cluster().Name != "c-001" || len(h.b.readiness) != 1 {
+				t.Fatalf("%s: a key acted on the resize screen: help %v, screen %d, cluster %s, readiness runs %d",
+					name, h.m.help, h.m.screen, h.m.cluster().Name, len(h.b.readiness))
+			}
 			if size[0] > 0 && size[1] > 0 {
 				checkFrame(t, name, h.m)
 			}
