@@ -8,11 +8,14 @@ import (
 	"strings"
 )
 
-// regionPattern is the shape of an AWS region name: a partition prefix of
-// two to four letters (us, eu, ap, cn, eusc, ...), one or more words
-// (gov, iso, west, central, ...), and a number. It is a shape, not a list:
-// AWS adds regions, and a list would refuse a new one.
-var regionPattern = regexp.MustCompile(`^[a-z]{2,4}(-[a-z]+)+-[0-9]+$`)
+// RegionShape is the regular expression of an AWS region name, with no
+// anchors and no capture group, to use inside a larger pattern: a partition
+// prefix of two to four letters (us, eu, ap, cn, eusc, ...), one or more
+// words (gov, iso, west, central, ...), and a number. It is a shape, not a
+// list: AWS adds regions, and a list would refuse a new one.
+const RegionShape = `[a-z]{2,4}(?:-[a-z]+)+-[0-9]+`
+
+var regionPattern = regexp.MustCompile(`^` + RegionShape + `$`)
 
 // CheckRegion returns an error when name does not have the shape of an AWS
 // region name, such as us-east-1, us-gov-west-1, or cn-north-1. It makes no

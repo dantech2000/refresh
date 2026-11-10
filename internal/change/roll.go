@@ -187,6 +187,10 @@ func (cp *ClusterPlan) rollStep(phase PhaseRef, name string, req RollRequest) St
 	switch {
 	case d.Action == Manual:
 		cp.Notices = append(cp.Notices, "nodegroup "+name+" has a custom AMI (AMI type CUSTOM) and is not rolled; publish a new launch template version to roll it")
+	case d.Reason == AMITypeUnknown && n.AMIType == "":
+		cp.Notices = append(cp.Notices, "EKS returned no AMI type for nodegroup "+name+", so refresh cannot find its recommended AMI, and it is not rolled")
+	case d.Reason == AMITypeUnknown:
+		cp.Notices = append(cp.Notices, "nodegroup "+name+" has the AMI type "+n.AMIType+", which this version of refresh does not know, and is not rolled; upgrade refresh to roll it")
 	case d.Action != Submit:
 	case n.Version.IsZero():
 		step.Action, step.Reason = Blocked, ""

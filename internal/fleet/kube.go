@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"slices"
 	"sync"
 
 	corev1 "k8s.io/api/core/v1"
@@ -93,8 +94,9 @@ func (f *Fetcher) fillWorkloads(ctx context.Context, kube kubernetes.Interface, 
 		}
 		if nodesErr != nil {
 			n.WorkloadsState = Failed
-			if !n.hasFailure(snap) {
-				snap.Failures = append(snap.Failures, inRegionName(snap, kubeFailure(apidoc.FailureNodegroup, n.Name, "listing nodes", nodesErr)))
+			// The ready count may have reported the same failure.
+			if f := inRegionName(snap, kubeFailure(apidoc.FailureNodegroup, n.Name, "listing nodes", nodesErr)); !slices.Contains(snap.Failures, f) {
+				snap.Failures = append(snap.Failures, f)
 			}
 			return
 		}
@@ -126,16 +128,6 @@ func (f *Fetcher) fillWorkloads(ctx context.Context, kube kubernetes.Interface, 
 		}
 		return
 	}
-}
-
-// hasFailure reports whether the snapshot already has a failure about n.
-func (n *Nodegroup) hasFailure(snap *Snapshot) bool {
-	for _, f := range snap.Failures {
-		if f.Kind == apidoc.FailureNodegroup && f.Name == n.Name {
-			return true
-		}
-	}
-	return false
 }
 
 // inRegionName sets the cluster and the region of a failure from the

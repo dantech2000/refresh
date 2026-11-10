@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/dantech2000/refresh/internal/apidoc"
+	"github.com/dantech2000/refresh/internal/fleet/fleetdata"
 )
 
 // State says how much of a field group the fetcher read. A field group is
@@ -318,6 +319,13 @@ type Instance struct {
 	State, Lifecycle string
 	AvailabilityZone string
 	LaunchTime       time.Time
+}
+
+// KnownAMIType reports whether refresh knows where the recommended AMI of
+// an AMI type is published. CUSTOM has none. A type that EKS added after
+// this version of refresh has none either, so its AMI status is Unknown.
+func KnownAMIType(amiType string) bool {
+	return fleetdata.KnownAMIType(amiType)
 }
 
 // AMIStatus compares the AMI that the nodes run with the latest

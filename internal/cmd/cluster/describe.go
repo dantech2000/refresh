@@ -373,10 +373,11 @@ func behindMark(n apidoc.Nodegroup) view.Status {
 }
 
 // nodesCell returns the desired size of a nodegroup as a cell, with the
-// Ready count before it when it was read: "5/6".
+// Ready count before it when it was read: "5/6". A nodegroup without sizes
+// was not read, or EKS did not return them: unknown.
 func nodesCell(n apidoc.Nodegroup) string {
 	if n.Scaling == nil {
-		return orUnknownText(n.Incomplete, "")
+		return unknownCell
 	}
 	desired := strconv.Itoa(int(n.Scaling.Desired))
 	if n.ReadyNodes != nil {

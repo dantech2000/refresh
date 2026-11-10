@@ -72,7 +72,10 @@ func Classify(err error) ErrorClass {
 	// run. A DNS failure keeps its own path below (an invalid region).
 	case IsDialFailure(err) && !isDNS(err):
 		return ClassNetworkError
-	case errors.Is(err, context.DeadlineExceeded):
+	// The deadline of a context, and not a timeout of the transport that
+	// also answers errors.Is(err, context.DeadlineExceeded): see
+	// isContextDeadline.
+	case isContextDeadline(err):
 		return ClassTimeout
 	// A credential code must win over the HTTP 403 check of
 	// IsPermissionError: STS returns ExpiredToken with status 403.

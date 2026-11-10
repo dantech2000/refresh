@@ -98,10 +98,11 @@ func instanceTypes(n apidoc.Nodegroup) string {
 }
 
 // nodes returns the desired size of a nodegroup as a cell, with the Ready
-// count before it when it was read: "5/6".
+// count before it when it was read: "5/6". A nodegroup without sizes was
+// not read, or EKS did not return them: unknown.
 func nodes(n apidoc.Nodegroup) string {
 	if n.Scaling == nil {
-		return orUnknown(n, "")
+		return unknownCell
 	}
 	desired := strconv.Itoa(int(n.Scaling.Desired))
 	if n.ReadyNodes != nil {

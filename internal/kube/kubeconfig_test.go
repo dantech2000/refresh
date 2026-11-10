@@ -28,6 +28,14 @@ clusters:
   cluster: {server: https://MNO.sk1.cn-north-1.eks.amazonaws.com.cn}
 - name: dual-stack
   cluster: {server: https://PQR.gr7.eu-south-1.api.aws}
+- name: sovereign
+  cluster: {server: https://STU.gr7.eusc-de-east-1.eks.amazonaws.eu}
+- name: sovereign-dual-stack
+  cluster: {server: https://BCD.gr7.eusc-de-east-1.api.amazonwebservices.eu}
+- name: prod-eusc.eusc-de-east-1.eksctl.io
+  cluster: {server: https://VWX.gr7.eusc-de-east-1.eks.amazonaws.eu}
+- name: prod-twelve.ap-southeast-12.eksctl.io
+  cluster: {server: https://YZA.gr7.ap-southeast-12.eks.amazonaws.com}
 - name: kind-local
   cluster: {server: https://127.0.0.1:6443}
 contexts:
@@ -45,6 +53,14 @@ contexts:
   context: {cluster: china, user: authenticator}
 - name: dual-stack
   context: {cluster: dual-stack, user: aws-cli-equals}
+- name: sovereign
+  context: {cluster: sovereign, user: aws-cli-equals}
+- name: sovereign-dual-stack
+  context: {cluster: sovereign-dual-stack, user: aws-cli-equals}
+- name: by-eksctl-sovereign
+  context: {cluster: prod-eusc.eusc-de-east-1.eksctl.io, user: none}
+- name: by-eksctl-two-digits
+  context: {cluster: prod-twelve.ap-southeast-12.eksctl.io, user: none}
 - name: outposts
   context: {cluster: kube-name, user: outposts}
 - name: self-managed
@@ -141,6 +157,12 @@ func TestCurrentCluster(t *testing.T) {
 		{"by-exec-no-region", "", "", false},
 		{"china", "prod-auth", "cn-north-1", true},
 		{"dual-stack", "prod-equals", "eu-south-1", true},
+		// Every region that awsx.CheckRegion accepts: the European
+		// Sovereign Cloud, and a number of two digits.
+		{"sovereign", "prod-equals", "eusc-de-east-1", true},
+		{"sovereign-dual-stack", "prod-equals", "eusc-de-east-1", true},
+		{"by-eksctl-sovereign", "prod-eusc", "eusc-de-east-1", true},
+		{"by-eksctl-two-digits", "prod-twelve", "ap-southeast-12", true},
 		// The ID of a cluster on Outposts is not its name.
 		{"outposts", "", "", false},
 		// aws-iam-authenticator also serves self-managed clusters: with no
