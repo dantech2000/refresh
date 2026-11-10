@@ -63,6 +63,9 @@ type Change struct {
 	// Nodes is the node lifecycle feed of each roll step: every tracker
 	// event that the latest node view carried.
 	Nodes map[change.StepRef][]noderoll.Event
+	// Command is the CLI command of the dry run that started a change of
+	// this UI, or "" for a change started elsewhere.
+	Command string
 }
 
 // Running reports whether the change has not finished.

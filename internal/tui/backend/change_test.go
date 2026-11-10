@@ -369,6 +369,9 @@ func TestAddonUpdateRunsToTheEnd(t *testing.T) {
 	if len(c.Log) == 0 || c.Log[0].Kind != change.PlanReady {
 		t.Fatalf("log = %+v", c.Log)
 	}
+	if c.Command != p.Command {
+		t.Fatalf("the change carries the command %q, want the one of its dry run %q", c.Command, p.Command)
+	}
 	// The claim is released, the feed says how it ended, and the cluster
 	// is read again on its own, without a sweep.
 	after := r.wait(t, 0, func(st state.State) bool {
@@ -528,6 +531,67 @@ func TestPlanChangedAsksAndOneChangePerCluster(t *testing.T) {
 	// and its claim released, in the same version.
 	if !strings.Contains(feedText(done), "prod ended: declined") || done.Clusters[0].Change != 0 {
 		t.Fatalf("claim %d, feed:\n%s", done.Clusters[0].Change, feedText(done))
+	}
+}
+
+// Found in review: the read of a cluster after its change ended dropped
+// its error, so one failed DescribeCluster replaced a good row with one
+// that nothing was read into, until the next sweep. A failed read keeps
+// the row of the sweep and says so in the feed.
+func TestFailedReadAfterAChangeKeepsTheRow(t *testing.T) {
+	r := changeRig(t, changeWorld(nil), false)
+	first := r.wait(t, 0, swept(1))
+	p := r.propose(t, state.Action{Kind: state.ActionAddons, Cluster: prod})
+	// A newer vpc-cni after the dry run makes the change ask first.
+	r.world.Edit(func(s *fleettest.State) {
+		s.AddonVersions = append(s.AddonVersions, fleettest.AddonVersion{Addon: "vpc-cni", Version: "v1.21.0-eksbuild.1", ClusterVersions: []string{"1.33"}})
+	})
+	id, err := r.b.Start(t.Context(), p.ID)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	r.wait(t, 0, func(st state.State) bool {
+		c, ok := changeOf(st, id)
+		return ok && c.State == change.Asking
+	})
+	// The cluster cannot be described from now on; the declined change
+	// reads nothing more, and the read after its end fails.
+	r.world.SetFault(fleettest.EKSDescribeCluster, fleettest.Fault{Deny: true})
+	if err := r.b.Answer(t.Context(), id, 1, false); err != nil {
+		t.Fatalf("Answer: %v", err)
+	}
+	st := r.wait(t, 0, func(st state.State) bool {
+		return strings.Contains(feedText(st), "read after the change failed") || st.Clusters[0].Snapshot.Have.Cluster != fleet.Collected
+	})
+	row := st.Clusters[0]
+	if row.Snapshot.Have.Cluster != fleet.Collected || row.Version != first.Clusters[0].Version || row.Status != first.Clusters[0].Status {
+		t.Fatalf("the row after a failed read: have %s, version %s, status %v; before: version %s, status %v",
+			row.Snapshot.Have.Cluster, row.Version, row.Status, first.Clusters[0].Version, first.Clusters[0].Status)
+	}
+	if !strings.Contains(feedText(st), "prod read after the change failed; the next sweep reads it") {
+		t.Fatalf("feed:\n%s", feedText(st))
+	}
+}
+
+// Found in review: Readiness and Start could start a goroutine after Run
+// had passed its wg.Wait, which WaitGroup forbids. Once Run has stopped,
+// both refuse, and nothing starts.
+func TestNothingStartsAfterRunStops(t *testing.T) {
+	r := changeRig(t, changeWorld(nil), false)
+	r.wait(t, 0, swept(1))
+	p := r.propose(t, state.Action{Kind: state.ActionAddons, Cluster: prod})
+	r.cancel()
+	<-r.done
+	if err := r.b.Readiness(t.Context(), prod); !errors.Is(err, backend.ErrClosing) {
+		t.Fatalf("Readiness after Run = %v, want ErrClosing", err)
+	}
+	if _, err := r.b.Start(t.Context(), p.ID); !errors.Is(err, backend.ErrClosing) {
+		t.Fatalf("Start after Run = %v, want ErrClosing", err)
+	}
+	for _, req := range r.server.Requests() {
+		if req.Operation == "eks:UpdateAddon" {
+			t.Fatal("a change started after Run stopped")
+		}
 	}
 }
 
