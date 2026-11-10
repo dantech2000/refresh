@@ -331,11 +331,19 @@ After a roll, the command verifies the result. `--skip-verify` leaves this out.
 |---|---|---|
 | `NodegroupActive` | A rolled nodegroup is not `ACTIVE` | The nodegroup could not be read |
 | `NodesReady` | A new node is not `Ready` after the wait | The node list fails |
-| `NewPendingPods` | A pod is `Pending` that was not `Pending` before the roll | The pod list fails |
+| `NewPendingPods` | A pod that was not `Pending` before the roll is `Pending`, and the scheduler cannot place it | The pod list fails |
 
 `NodesReady` waits for the new nodes: at most 2 minutes, and never past the
-time left of `--wait-timeout`. Without Kubernetes access, `NodesReady` and
-`NewPendingPods` are `Skipped`.
+time left of `--wait-timeout`.
+
+A `Pending` pod is stuck only when its `PodScheduled` condition is `False`
+with the reason `Unschedulable`: the scheduler tried and found no node for
+it. A pod that is bound to a node and pulls its images is also `Pending`
+([Pod phase](https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/#pod-phase)).
+Every pod that a roll moves goes through that state, so it is not an issue.
+
+Without Kubernetes access, `NodesReady` and `NewPendingPods` are
+`Skipped`.
 
 ```text
 VERIFICATION  3

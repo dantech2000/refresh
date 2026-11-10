@@ -275,6 +275,46 @@ func TestVerify_ReusedNodeName(t *testing.T) {
 	}
 }
 
+// Phase Pending covers a pod that waits for the scheduler and a pod that is
+// bound and pulls its images. After a roll, every moved pod goes through
+// the second, which is progress. Only a pod that the scheduler marked
+// Unschedulable is stuck.
+func TestVerify_NewPendingPods(t *testing.T) {
+	ctx := testContext(t)
+	pod := func(node string, conditions ...corev1.PodCondition) *corev1.Pod {
+		return &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "web-abc"},
+			Spec:       corev1.PodSpec{NodeName: node},
+			Status:     corev1.PodStatus{Phase: corev1.PodPending, Conditions: conditions},
+		}
+	}
+	scheduled := corev1.PodCondition{Type: corev1.PodScheduled, Status: corev1.ConditionTrue}
+	unschedulable := corev1.PodCondition{Type: corev1.PodScheduled, Status: corev1.ConditionFalse, Reason: corev1.PodReasonUnschedulable}
+	gated := corev1.PodCondition{Type: corev1.PodScheduled, Status: corev1.ConditionFalse, Reason: corev1.PodReasonSchedulingGated}
+	stuck := want{outcome: health.Fail, message: "1 pod newly Pending after the roll, not schedulable: default/web-abc", findings: []string{"default/web-abc"}}
+	tests := []struct {
+		name string
+		pod  *corev1.Pod
+		want want
+	}{
+		{name: "bound and pulling its images", pod: pod("new-1", scheduled), want: want{outcome: health.Pass, message: "no new Pending pods"}},
+		{name: "not tried by the scheduler yet", pod: pod(""), want: want{outcome: health.Pass, message: "no new Pending pods"}},
+		{name: "held by a scheduling gate", pod: pod("", gated), want: want{outcome: health.Pass, message: "no new Pending pods"}},
+		{name: "unschedulable", pod: pod("", unschedulable), want: stuck},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			base := health.TakeBaseline(ctx, fake.NewClientset(nodeNamed("old-1")), "prod")
+			h := newHarness(t)
+			in := h.input(ctx, "ng-a")
+			in.Kube = fake.NewClientset(nodeNamed("new-1"), tt.pod)
+			results := health.Run(ctx, health.Verify([]string{"ng-a"}, base, health.WaitOptions{}), in)
+			check(t, results[2], tt.want)
+		})
+	}
+
+}
+
 // A snapshot read through the fetcher after the roll sees the nodegroup
 // ACTIVE at its new release.
 func TestVerify_SnapshotAfterTheRoll(t *testing.T) {

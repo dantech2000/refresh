@@ -216,8 +216,8 @@ func runNodegroupActive(in *Input, nodegroups []string) Result {
 
 // runNodesReady lists the nodes and keeps the new ones of the rolled
 // nodegroups: those that carry a nodegroup's label and whose identity is
-// not in the baseline. A new node that is not Ready is listed again every interval
-// until it is, or until the bound passes.
+// not in the baseline. A new node that is not Ready is listed again every
+// interval until it is, or until the bound passes.
 func runNodesReady(ctx context.Context, in *Input, nodegroups []string, base Baseline, wait WaitOptions) Result {
 	if !base.Taken {
 		return Result{Outcome: Skipped, Message: "no baseline of the nodes before the roll"}
@@ -283,6 +283,10 @@ func newNodeState(list *corev1.NodeList, nodegroups []string, base Baseline) (ne
 	return newNodes, notReady
 }
 
+// runNewPendingPods lists the Pending pods and keeps the stuck ones that
+// the baseline lacks. Phase Pending also covers a pod that is bound to a
+// node and pulls its images, which every pod moved by a roll goes through.
+// Such a pod is progressing, not stuck: see stuckPending.
 func runNewPendingPods(in *Input, base Baseline) Result {
 	if !base.Taken {
 		return Result{Outcome: Skipped, Message: "no baseline of the Pending pods before the roll"}
@@ -311,18 +315,7 @@ func runNewPendingPods(in *Input, base Baseline) Result {
 		f := kubeFailure(cluster, "listing Pending pods after the roll", err)
 		return Result{Outcome: Unreadable, Message: "could not list the Pending pods after the roll: " + f.Error, Failures: []apidoc.Failure{f}}
 	}
-	live := make(map[string]struct{}, len(nodes.Items))
-	for i := range nodes.Items {
-		live[nodes.Items[i].Name] = struct{}{}
-	}
-	var stuck []string
-	for i := range pods.Items {
-		key, ok := pendingKey(&pods.Items[i], live)
-		if _, before := base.Pending[key]; ok && !before {
-			stuck = append(stuck, key)
-		}
-	}
-	sort.Strings(stuck)
+	stuck := newStuckPods(nodes, pods, base)
 	if len(stuck) == 0 {
 		return Result{Outcome: Pass, Message: "no new Pending pods"}
 	}
@@ -330,5 +323,51 @@ func runNewPendingPods(in *Input, base Baseline) Result {
 	if len(shown) > 5 {
 		shown = shown[:5]
 	}
-	return Result{Outcome: Fail, Findings: stuck, Message: fmt.Sprintf("%s newly Pending after the roll: %s", plural(len(stuck), "pod"), strings.Join(shown, ", "))}
+	return Result{Outcome: Fail, Findings: stuck, Message: fmt.Sprintf("%s newly Pending after the roll, not schedulable: %s", plural(len(stuck), "pod"), strings.Join(shown, ", "))}
+}
+
+// newStuckPods returns the keys of the stuck pods in pods that the
+// baseline lacks, sorted. nodes are the nodes of the cluster now, for the
+// pinned-node rule of pendingKey.
+func newStuckPods(nodes *corev1.NodeList, pods *corev1.PodList, base Baseline) []string {
+	live := make(map[string]struct{}, len(nodes.Items))
+	for i := range nodes.Items {
+		live[nodes.Items[i].Name] = struct{}{}
+	}
+	var stuck []string
+	for i := range pods.Items {
+		pod := &pods.Items[i]
+		if !stuckPending(pod) {
+			continue
+		}
+		key, ok := pendingKey(pod, live)
+		if _, before := base.Pending[key]; ok && !before {
+			stuck = append(stuck, key)
+		}
+	}
+	sort.Strings(stuck)
+	return stuck
+}
+
+// stuckPending reports whether the scheduler could not place a Pending
+// pod. Kubernetes defines phase Pending as "accepted by the Kubernetes
+// cluster, but one or more of the containers has not been set up and made
+// ready to run. This includes time a Pod spends waiting to be scheduled as
+// well as the time spent downloading container images over the network"
+// (https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/#pod-phase).
+// The condition PodScheduled says whether "the Pod has been scheduled to a
+// node" (#pod-conditions on the same page), and the scheduler sets it False
+// with the reason Unschedulable when it "can't schedule the pod right now,
+// for example due to insufficient resources in the cluster"
+// (corev1.PodReasonUnschedulable). That is the sign of a roll that took
+// away capacity that the pods need. A bound pod that pulls its images, or
+// a pod that the scheduler has not tried yet, is progressing; NodesReady
+// covers the nodes they run on.
+func stuckPending(pod *corev1.Pod) bool {
+	for _, c := range pod.Status.Conditions {
+		if c.Type == corev1.PodScheduled {
+			return c.Status == corev1.ConditionFalse && c.Reason == corev1.PodReasonUnschedulable
+		}
+	}
+	return false
 }
