@@ -1,0 +1,4 @@
+exit: 1
+error: --no-wait cannot keep the order of the add-ons: add-on coredns waits for vpc-cni to finish. Run without --no-wait, or update the add-ons one at a time
+--- stdout ---
+--- stderr ---

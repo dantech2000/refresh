@@ -126,12 +126,23 @@ func (b *Live) finish(res *fleet.SweepResult, sweepErr error) {
 }
 
 // refetchCluster reads one cluster again, after a change on it ended, and
-// replaces its row. The whole fleet is not swept for one cluster.
+// replaces its row. The whole fleet is not swept for one cluster. A read
+// that fails keeps the row of the sweep, which the next sweep replaces:
+// a row with nothing read would show a cluster that was read as unknown.
 func (b *Live) refetchCluster(key state.Key) {
 	ctx, cancel := b.withTimeout()
 	defer cancel()
 	fetcher := &fleet.Fetcher{Now: b.opts.Now}
-	snap, _ := fetcher.Fetch(ctx, b.provider.Clients(key.Region), key.Name, need)
+	snap, err := fetcher.Fetch(ctx, b.provider.Clients(key.Region), key.Name, need)
+	if err != nil {
+		if b.ctx.Err() == nil {
+			b.mu.Lock()
+			b.say(key, view.Unknown, "read after the change failed; the next sweep reads it: "+err.Error())
+			b.mu.Unlock()
+			b.bump()
+		}
+		return
+	}
 	fresh := row(snap)
 	b.mu.Lock()
 	rows := b.rowsByRegion[key.Region]

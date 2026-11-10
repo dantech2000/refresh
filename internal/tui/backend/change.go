@@ -65,6 +65,13 @@ type entry struct {
 	view      change.View
 	log       []change.LogEntry
 	nodes     map[change.StepRef][]noderoll.Event
+	// command is the CLI command of the dry run of an own change.
+	command string
+}
+
+// published is the entry as a state shows it. The caller holds b.mu.
+func (e *entry) published() state.Change {
+	return state.Change{ID: e.id, View: e.view, Log: e.log, Nodes: e.nodes, Command: e.command}
 }
 
 // proposal is the newest dry run, with the request it was computed for.
@@ -236,19 +243,22 @@ func (b *Live) Start(_ context.Context, id state.ProposalID) (state.ChangeID, er
 		return 0, errors.New("the dry run is blocked; nothing can start")
 	case len(b.byCluster[p.Action.Cluster]) > 0:
 		return 0, ErrClusterBusy
-	case b.ctx.Err() != nil:
-		// Run has returned and waits for no goroutine any more.
-		return 0, errors.New("the UI is closing; nothing starts")
+	case b.closed || b.ctx.Err() != nil:
+		// Run waits, or will wait, for no goroutine any more.
+		return 0, ErrClosing
 	}
 	b.proposal = nil
 	h := change.Start(b.ctx, b.deps, withExpect(p.request, p.Plan))
 	e := b.add(h, p.Action.Cluster, false, change.Resource{})
+	e.command = p.Command
 	b.say(p.Action.Cluster, view.Progress, "started "+describeAction(p.Action))
 	b.bumpLocked()
 	return e.id, nil
 }
 
-// add records a handle and claims its cluster. The caller holds b.mu.
+// add records a handle and claims its cluster. The caller holds b.mu and
+// has checked that the backend is not closed, so that the goroutine that
+// follows the handle is one that Run waits for.
 func (b *Live) add(h *change.Handle, key state.Key, elsewhere bool, r change.Resource) *entry {
 	b.nextChange++
 	e := &entry{id: b.nextChange, key: key, handle: h, elsewhere: elsewhere, resource: r, view: h.View()}
@@ -415,7 +425,7 @@ func (b *Live) trimLocked() {
 // resource whose watch found no change of refresh is idle: it is not
 // watched again while the sweeps show it UPDATING, for at most idleRetry.
 func (b *Live) adopt() {
-	if b.ctx.Err() != nil {
+	if b.closed || b.ctx.Err() != nil {
 		return
 	}
 	for _, c := range b.clusters {
@@ -493,7 +503,7 @@ func (b *Live) Unfinished() []state.Change {
 	var out []state.Change
 	for _, e := range b.entries {
 		if e.view.State != change.Finished {
-			out = append(out, state.Change{ID: e.id, View: e.view, Log: e.log, Nodes: e.nodes})
+			out = append(out, e.published())
 		}
 	}
 	return out
@@ -505,12 +515,12 @@ func (b *Live) changes() []state.Change {
 	out := make([]state.Change, 0, len(b.entries))
 	for _, e := range b.entries {
 		if e.view.State != change.Finished {
-			out = append(out, state.Change{ID: e.id, View: e.view, Log: e.log, Nodes: e.nodes})
+			out = append(out, e.published())
 		}
 	}
 	for _, e := range b.entries {
 		if e.view.State == change.Finished {
-			out = append(out, state.Change{ID: e.id, View: e.view, Log: e.log, Nodes: e.nodes})
+			out = append(out, e.published())
 		}
 	}
 	return out
