@@ -1,5 +1,8 @@
-// Package cmdutil holds what the command packages share: the IO streams, the
-// factory, exit errors, and the output-format flag.
+// Package cmdutil holds what the command packages share: the IO streams and
+// the factory, the target cluster and the clients of a run, the shared
+// flags (output, filter, sort, watch, and the flags of a change), the
+// printing of a result and of its failures, the exit errors, and the
+// prompts.
 package cmdutil
 
 import (

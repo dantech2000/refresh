@@ -55,7 +55,7 @@ func CheckEnvRegions() error {
 	return nil
 }
 
-// SweepRegions returns the regions that a sweep command reads:
+// SweepRegions returns the regions that a read command sweeps:
 //
 //  1. The regions of -r, when it is given.
 //  2. With -A, or when no home region is configured: the regions in
@@ -75,6 +75,21 @@ func SweepRegions(global *cmdutil.GlobalOptions, home string, allRegions bool) f
 		return fleet.Regions{Names: env}
 	}
 	return fleet.Regions{Names: fleetdata.Regions(home), Default: true}
+}
+
+// ChangeRegions returns the regions of a change of every cluster
+// (nodegroup update --all-clusters): the regions of -r, or else the home
+// region alone. A change never reads REFRESH_EKS_REGIONS and never takes
+// the default sweep: it acts only where the user pointed it. With no -r and
+// no home region it is an error.
+func ChangeRegions(global *cmdutil.GlobalOptions, home string) (fleet.Regions, error) {
+	if named := regionNames(global.Regions); len(named) > 0 {
+		return fleet.Regions{Names: named}, nil
+	}
+	if home == "" {
+		return fleet.Regions{}, errors.New("no AWS region: pass -r/--region, set AWS_REGION, or use a context with a region")
+	}
+	return fleet.Regions{Names: []string{home}}, nil
 }
 
 // regionNames returns the names in raw that are not empty, without spaces
@@ -205,4 +220,29 @@ func ClusterError(ctx context.Context, fetcher *fleet.Fetcher, c *awsx.Clients, 
 	// Without the list the error still says what is wrong.
 	names, _ := fetcher.Clusters(ctx, c)
 	return cmdutil.NotFoundError("cluster", cluster, c.Region, names, "refresh cluster list -r "+c.Region)
+}
+
+// Read is what FetchCluster read for a command about one cluster: the
+// snapshot, and the clients and the fetcher that read it, for the reads
+// that follow.
+type Read struct {
+	Snapshot *fleet.Snapshot
+	Clients  *awsx.Clients
+	Fetcher  *fleet.Fetcher
+}
+
+// FetchCluster reads what need asks for of the cluster of target, in the
+// region of the run. A cluster that could not be read is an error in the
+// words of ClusterError.
+func FetchCluster(ctx context.Context, f *cmdutil.Factory, target cmdutil.Target, need fleet.Need) (*Read, error) {
+	clients, err := cmdutil.ClusterClients(ctx, f, target)
+	if err != nil {
+		return nil, err
+	}
+	fetcher := &fleet.Fetcher{Now: f.Now}
+	snap, err := fetcher.Fetch(ctx, clients, target.Cluster, need)
+	if err != nil {
+		return nil, ClusterError(ctx, fetcher, clients, target.Cluster, err)
+	}
+	return &Read{Snapshot: snap, Clients: clients, Fetcher: fetcher}, nil
 }

@@ -1,4 +1,8 @@
-package nodegroup
+// Package aminotes reads the release notes of the EKS AMIs that a roll
+// would move nodegroups onto: the amazon-eks-ami releases on GitHub for
+// the Amazon Linux AMIs, and a pointer to the notes of the other families.
+// It writes nothing: it returns the lines, and the command prints them.
+package aminotes
 
 import (
 	"context"
@@ -41,8 +45,8 @@ var dateInRelease = regexp.MustCompile(`\d{8}`)
 // generated release notes put on each change.
 var prAuthorTail = regexp.MustCompile(`\s+by @\S+ in https://github\.com/\S+/pull/(\d+)\s*$`)
 
-// changelogTarget is one nodegroup that a dry run would roll.
-type changelogTarget struct {
+// Target is one nodegroup that a dry run would roll.
+type Target struct {
 	Nodegroup string
 	AMIType   string // the EKS AMI type, such as AL2023_x86_64_STANDARD, BOTTLEROCKET_x86_64, WINDOWS_CORE_2022_x86_64, CUSTOM
 	Release   string // the AMI release version the nodegroup runs now, such as 1.32.0-20250101
@@ -82,16 +86,22 @@ type amiRelease struct {
 	highlights []string
 }
 
-// changelogLines returns the lines of the AMI release notes for the targets, for stderr,
+// Lines returns the lines of the AMI release notes for the targets, for stderr,
 // and one warning for each thing that could not be shown. It never returns an error:
 // a failed fetch is a warning. client is the HTTP client; nil means that no client is
-// available, which is a warning and no request. url is the releases API URL; "" means eksAMIReleasesURL.
+// available, which is a warning and no request.
+func Lines(ctx context.Context, client *http.Client, targets []Target) (lines, warnings []string) {
+	return collect(ctx, client, eksAMIReleasesURL, targets)
+}
+
+// collect is Lines with the URL of the releases API, which a test serves
+// itself. "" means eksAMIReleasesURL.
 //
 // A roll goes to the newest AMI release of the Kubernetes version of the nodegroup, so
 // the notes are the releases that are dated after the release the nodegroup runs now.
 // Only the Amazon Linux families have dated versions that amazon-eks-ami publishes.
 // Bottlerocket and Windows get a pointer to their own release notes.
-func changelogLines(ctx context.Context, client *http.Client, url string, targets []changelogTarget) (lines, warnings []string) {
+func collect(ctx context.Context, client *http.Client, url string, targets []Target) (lines, warnings []string) {
 	// dates holds the release date of each Amazon Linux target that has one.
 	dates := make(map[int]string, len(targets))
 	var dated []string
@@ -149,7 +159,7 @@ func nodegroupNames(names []string) string {
 
 // releaseLines returns the lines for one Amazon Linux nodegroup: the count of the
 // releases dated after date, then the tag and the highlights of each release that has highlights.
-func releaseLines(t changelogTarget, date string, releases []amiRelease) []string {
+func releaseLines(t Target, date string, releases []amiRelease) []string {
 	var notes []string
 	after, shown := 0, 0
 	for _, r := range releases {

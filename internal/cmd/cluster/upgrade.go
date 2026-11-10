@@ -23,18 +23,8 @@ import (
 const engineWaitTimeout = 4 * time.Hour
 
 type upgradeOptions struct {
+	f   *cmdutil.Factory
 	ios *cmdutil.IOStreams
-	// deps builds the dependencies of the change. Calling it is the first
-	// use of the network.
-	deps func(ctx context.Context) (change.Deps, error)
-	// resolve returns the cluster of the run, the way a change does:
-	// never from the kubeconfig.
-	resolve func(explicit string) (cmdutil.Target, error)
-	// timeout returns --timeout, and followUp the words around a command
-	// that a notice names. The root command sets the global flags before
-	// the command runs.
-	timeout  func() time.Duration
-	followUp func() change.FollowUp
 
 	to             string
 	only           []string
@@ -52,28 +42,6 @@ type upgradeOptions struct {
 	parts   []change.Part
 }
 
-// followUp returns the words that put a command of a notice in the
-// account, the region, and the Kubernetes context of the run.
-func followUp(f *cmdutil.Factory) func() change.FollowUp {
-	return func() change.FollowUp {
-		prefix := []string{"refresh"}
-		if f.Global.Profile != "" {
-			prefix = append(prefix, "--profile", f.Global.Profile)
-		}
-		if len(f.Global.Regions) == 1 {
-			prefix = append(prefix, "--region", f.Global.Regions[0])
-		}
-		var suffix []string
-		if f.Global.Kubeconfig != "" {
-			suffix = append(suffix, "--kubeconfig", f.Global.Kubeconfig)
-		}
-		if f.Global.KubeContext != "" {
-			suffix = append(suffix, "--kube-context", f.Global.KubeContext)
-		}
-		return change.FollowUp{Prefix: strings.Join(prefix, " "), Suffix: strings.Join(suffix, " ")}
-	}
-}
-
 // resumeFlags returns the flags of the run that the command of a stopped
 // run repeats and that the request does not hold: a --wait-timeout that
 // is not the default.
@@ -85,13 +53,7 @@ func resumeFlags(flags *cmdutil.ChangeFlags) string {
 }
 
 func newCmdUpgrade(f *cmdutil.Factory) *cobra.Command {
-	o := &upgradeOptions{
-		ios:      f.IOStreams,
-		deps:     changecmd.Deps(f),
-		resolve:  func(explicit string) (cmdutil.Target, error) { return cmdutil.ResolveCluster(f, explicit, false) },
-		timeout:  func() time.Duration { return f.Global.Timeout },
-		followUp: followUp(f),
-	}
+	o := &upgradeOptions{f: f, ios: f.IOStreams}
 	cmd := &cobra.Command{
 		Use:   "upgrade [cluster] --to <version>",
 		Short: "Upgrade a cluster to a Kubernetes version",
@@ -173,7 +135,7 @@ context. It never comes from the kubeconfig.
 	cmd.Flags().StringSliceVar(&o.skipNodegroups, "skip-nodegroup", nil, "Leave these nodegroups alone, by exact name")
 	cmd.Flags().BoolVar(&o.skipInsights, "skip-insights-check", false, "Do not refresh or read the cluster insights (not recommended)")
 	cmd.Flags().BoolVar(&o.skipVerify, "skip-verify", false, "Skip the verification after each nodegroup roll")
-	cmdutil.AddChangeFlags(cmd, &o.change, engineWaitTimeout, "the whole upgrade", false, true)
+	cmdutil.AddChangeFlags(cmd, &o.change, cmdutil.ChangeFlagOptions{Wait: engineWaitTimeout, WaitFor: "the whole upgrade", Force: true})
 	cmdutil.AddOutputFlag(cmd, &o.output, cmdutil.FormatTable, cmdutil.FormatJSON, cmdutil.FormatYAML, cmdutil.FormatPlain)
 	return cmd
 }
@@ -183,7 +145,8 @@ func (o *upgradeOptions) complete(args []string) error {
 	if len(args) > 0 {
 		explicit = args[0]
 	}
-	target, err := o.resolve(explicit)
+	// A change never takes its cluster from the kubeconfig.
+	target, err := cmdutil.ResolveCluster(o.f, explicit, false)
 	if err != nil {
 		return err
 	}
@@ -212,7 +175,7 @@ func (o *upgradeOptions) validate() error {
 // run asks before each phase.
 func (o *upgradeOptions) request() change.UpgradeRequest {
 	req := change.UpgradeRequest{
-		Common:         changecmd.Common(&o.change, o.timeout()),
+		Common:         changecmd.Common(&o.change, o.f.Global.Timeout),
 		Target:         change.Target{Cluster: o.target.Cluster},
 		To:             o.version,
 		Only:           o.parts,
@@ -235,15 +198,14 @@ func nodesOnTerminal(ios *cmdutil.IOStreams, output cmdutil.Format, flags *cmdut
 }
 
 func (o *upgradeOptions) run(ctx context.Context) error {
-	d, err := o.deps(ctx)
+	d, err := changecmd.Deps(ctx, o.f)
 	if err != nil {
 		return err
 	}
-	d.FollowUp = o.followUp()
 	d.FollowUp.Resume = resumeFlags(&o.change)
 	req := o.request()
 	if o.change.DryRun {
-		return changecmd.PrintPlan(ctx, o.ios, o.output, d, req, o.timeout(), nil)
+		return changecmd.PrintPlan(ctx, o.ios, o.output, d, req, o.f.Global.Timeout, nil)
 	}
 	return changecmd.RunChange(ctx, o.ios, o.output, d, req, engineRenderer(o.ios, req.Nodes, o.change.Quiet))
 }

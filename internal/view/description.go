@@ -168,6 +168,10 @@ func itemStatus(items []Item, i int) func(Item) Status {
 //
 //	overview.status	ACTIVE
 //	nodegroups.web.desired	3
+//
+// An item whose name another item of the section had before it gets its
+// number in the section after the name, so each FIELD stays one key: EKS
+// can report one issue code twice.
 func (d Description) Plain(w io.Writer) error {
 	var b strings.Builder
 	b.WriteString("FIELD\tVALUE\n")
@@ -179,10 +183,15 @@ func (d Description) Plain(w io.Writer) error {
 		for _, f := range present(s.Fields) {
 			row(f.Value, section, plainKey(f.Name))
 		}
+		seen := map[string]int{}
 		for _, it := range s.Items {
+			// An item name is an AWS name: it stays as it is.
+			name := plainCell(cmp.Or(it.Key, it.Name))
+			if seen[name]++; seen[name] > 1 {
+				name += "." + strconv.Itoa(seen[name])
+			}
 			for _, f := range it.Fields {
-				// An item name is an AWS name: it stays as it is.
-				row(f.Value, section, plainCell(cmp.Or(it.Key, it.Name)), plainKey(f.Name))
+				row(f.Value, section, name, plainKey(f.Name))
 			}
 		}
 	}

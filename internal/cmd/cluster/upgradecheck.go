@@ -1,13 +1,13 @@
 package cluster
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"slices"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
@@ -30,15 +30,16 @@ var (
 )
 
 // shortInsightID is how many characters of an insight ID the table shows,
-// and the least that --insight takes as the start of one.
-const shortInsightID = 8
+// and the least that --insight takes as the start of one. fullInsightID is
+// the length of a whole ID, a UUID.
+const (
+	shortInsightID = 8
+	fullInsightID  = 36
+)
 
 type upgradeCheckOptions struct {
-	ios     *cmdutil.IOStreams
-	clients func(ctx context.Context) (*awsx.Clients, error)
-	target  func(explicit string) (cmdutil.Target, error)
-	global  *cmdutil.GlobalOptions
-	now     func() time.Time
+	f   *cmdutil.Factory
+	ios *cmdutil.IOStreams
 
 	cluster     string
 	category    string
@@ -53,13 +54,7 @@ type upgradeCheckOptions struct {
 }
 
 func newCmdUpgradeCheck(f *cmdutil.Factory) *cobra.Command {
-	o := &upgradeCheckOptions{
-		ios:     f.IOStreams,
-		clients: func(ctx context.Context) (*awsx.Clients, error) { return cmdutil.ClusterClients(ctx, f) },
-		target:  func(explicit string) (cmdutil.Target, error) { return cmdutil.ResolveCluster(f, explicit, true) },
-		global:  &f.Global,
-		now:     f.Now,
-	}
+	o := &upgradeCheckOptions{f: f, ios: f.IOStreams}
 	cmd := &cobra.Command{
 		Use:   "upgrade-check [cluster]",
 		Short: "Report whether a cluster is ready for its next upgrade",
@@ -129,7 +124,7 @@ func (o *upgradeCheckOptions) complete(args []string) error {
 		o.showPassing = true
 	}
 	o.insight = strings.TrimSpace(o.insight)
-	target, err := o.target(o.cluster)
+	target, err := cmdutil.ResolveCluster(o.f, o.cluster, true)
 	o.resolved = target
 	return err
 }
@@ -147,16 +142,16 @@ func (o *upgradeCheckOptions) validate() error {
 }
 
 func (o *upgradeCheckOptions) run(ctx context.Context) error {
-	ctx, cancel := cmdutil.WithTimeout(ctx, o.global.Timeout)
+	ctx, cancel := cmdutil.WithTimeout(ctx, o.f.Global.Timeout)
 	defer cancel()
-	clients, err := o.clients(ctx)
+	clients, err := cmdutil.ClusterClients(ctx, o.f, o.resolved)
 	if err != nil {
 		return err
 	}
 	if o.insight != "" {
 		return o.describeInsight(ctx, clients)
 	}
-	fetcher := fleet.Fetcher{Now: o.now}
+	fetcher := fleet.Fetcher{Now: o.f.Now}
 	report, err := health.CheckReadiness(ctx, clients, &fetcher, o.resolved.Cluster, o.category)
 	if err != nil {
 		return fleetcmd.ClusterError(ctx, &fetcher, clients, o.resolved.Cluster, err)
@@ -169,14 +164,9 @@ func (o *upgradeCheckOptions) run(ctx context.Context) error {
 		}
 	}
 	doc := o.document(report, rollback)
-	if err := cmdutil.Print(o.ios, o.output, doc, upgradeCheckView(doc)); err != nil {
+	// The verdict and the failures make one exit error together.
+	if err := cmdutil.PrintReport(ctx, o.ios, o.output, doc, upgradeCheckView(doc), doc.Failures); err != nil {
 		return err
-	}
-	if o.output != cmdutil.FormatTable {
-		cmdutil.ReportFailures(o.ios, doc.Failures)
-	}
-	if errors.Is(ctx.Err(), context.Canceled) {
-		return fmt.Errorf("interrupted: %w", context.Canceled)
 	}
 	return o.exit(doc)
 }
@@ -323,11 +313,17 @@ func (o *upgradeCheckOptions) describeInsight(ctx context.Context, clients *awsx
 	return &cmdutil.ExitError{Code: cmdutil.ExitBlocked, Err: fmt.Errorf("insight %q is %s, which blocks the upgrade (pass --exit-zero to report only)", doc.Insight.Name, doc.Insight.Status)}
 }
 
-// resolveInsightID returns the full ID for --insight: the value itself,
-// or the one insight of the category whose ID starts with it, when the
-// value is at least as long as the short ID of the table.
+// resolveInsightID returns the full ID for --insight: the value itself
+// when it has the length of a whole ID, of any category, or else the one
+// insight of the category whose ID starts with it, when the value is at
+// least as long as the short ID of the table.
 func (o *upgradeCheckOptions) resolveInsightID(ctx context.Context, clients *awsx.Clients) (string, error) {
-	if len(o.insight) < shortInsightID {
+	switch {
+	case len(o.insight) == fullInsightID:
+		// DescribeInsight takes it as it is, and says when it is not
+		// found: no list call.
+		return o.insight, nil
+	case len(o.insight) < shortInsightID:
 		return "", fmt.Errorf("--insight %q is too short: pass the ID, or the first %d characters of it", o.insight, shortInsightID)
 	}
 	insights, err := health.ListInsights(ctx, clients, o.resolved.Cluster, o.category)
@@ -386,7 +382,7 @@ func insightDescription(cluster, region string, in *ekstypes.Insight) apidoc.Ins
 		}
 		// The most active callers first: they are the ones to chase.
 		slices.SortStableFunc(dep.ClientStats, func(a, b apidoc.ClientStat) int {
-			return int(b.NumberOfRequestsLast30Days - a.NumberOfRequestsLast30Days)
+			return cmp.Compare(b.NumberOfRequestsLast30Days, a.NumberOfRequestsLast30Days)
 		})
 		doc.Deprecations = append(doc.Deprecations, dep)
 	}
@@ -414,7 +410,7 @@ func upgradeCheckView(doc apidoc.UpgradeCheck) view.Description {
 		subtitle += " · " + doc.Version
 	}
 	if doc.Support != nil {
-		subtitle += " · " + supportText(doc.Support)
+		subtitle += " · " + view.SupportCell(doc.Support)
 	}
 	d := view.Description{Title: doc.Cluster, Status: status, Label: label, Subtitle: subtitle, Failures: doc.Failures}
 
@@ -448,14 +444,14 @@ func upgradeCheckView(doc apidoc.UpgradeCheck) view.Description {
 			behind, st := strconv.Itoa(n.MinorsBehind), view.NoStatus
 			switch {
 			case n.Incomplete:
-				behind, st = unknownCell, view.Unknown
+				behind, st = view.UnknownCell, view.Unknown
 			case n.AtSkewLimit:
 				behind, st = behind+" (at the limit)", view.Fail
 			case n.MinorsBehind > 0:
 				st = view.Warn
 			}
 			nodegroups.Items = append(nodegroups.Items, view.Item{Name: n.Name, Fields: []view.Field{
-				{Name: "version", Value: orUnknownText(n.Incomplete, n.Version)},
+				{Name: "version", Value: view.OrUnknown(n.Incomplete, n.Version)},
 				{Name: "behind", Value: behind, Status: st},
 			}})
 		}
@@ -463,29 +459,23 @@ func upgradeCheckView(doc apidoc.UpgradeCheck) view.Description {
 			state, st := "current", view.NoStatus
 			switch {
 			case a.Incomplete:
-				state, st = unknownCell, view.Unknown
+				state, st = view.UnknownCell, view.Unknown
 			case a.Behind:
 				state, st = "behind", view.Warn
 			}
 			addons.Items = append(addons.Items, view.Item{Name: a.Name, Fields: []view.Field{
-				{Name: "installed", Value: orUnknownText(a.Incomplete, a.Version)},
+				{Name: "installed", Value: view.OrUnknown(a.Incomplete, a.Version)},
 				{Name: "latest", Value: orText(a.Latest, "none published")},
 				{Name: "state", Value: state, Status: st},
 			}})
 		}
 	}
-	checks := view.Section{Title: "CHECKS"}
-	for _, c := range doc.Checks {
-		checks.Items = append(checks.Items, view.Item{Name: c.Name, Fields: []view.Field{
-			{Name: "outcome", Value: string(c.Outcome), Status: view.HealthStatus(c.Outcome)},
-			{Name: "message", Value: c.Message},
-		}})
-	}
+	checks := view.Section{Title: "CHECKS", Items: view.HealthItems(doc.Checks)}
 	rollback := view.Section{Title: "ROLLBACK"}
 	if r := doc.Rollback; r != nil {
 		rollback.Fields = []view.Field{
 			{Name: "to", Value: r.PreviousVersion},
-			{Name: "until", Value: formatTime(r.AvailableUntil, dateLayout)},
+			{Name: "until", Value: view.Time(r.AvailableUntil)},
 		}
 		if c := r.Insights; c != nil {
 			rollback.Fields = append(rollback.Fields, view.Field{Name: "insights", Value: fmt.Sprintf("%d passing, %d warning, %d error, %d unknown", c.Passing, c.Warning, c.Error, c.Unknown)})
@@ -539,7 +529,7 @@ func insightView(doc apidoc.InsightDescription) view.Description {
 		{Name: "reason", Value: in.StatusReason},
 		{Name: "description", Value: in.Description},
 		{Name: "recommendation", Value: doc.Recommendation},
-		{Name: "refreshed", Value: formatTime(in.LastRefreshTime, dateLayout)},
+		{Name: "refreshed", Value: view.Time(in.LastRefreshTime)},
 	}})
 	resources := view.Section{Title: "RESOURCES"}
 	for i, r := range doc.Resources {

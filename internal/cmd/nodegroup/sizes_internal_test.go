@@ -13,8 +13,8 @@ import (
 // list cell and in the describe view, never as 0.
 func TestUnknownSizes(t *testing.T) {
 	n := apidoc.Nodegroup{Name: "web", Status: "ACTIVE", Version: "1.33"}
-	if got := nodes(n); got != unknownCell {
-		t.Errorf("nodes cell = %q, want %q", got, unknownCell)
+	if got := view.NodesCell(n); got != view.UnknownCell {
+		t.Errorf("nodes cell = %q, want %q", got, view.UnknownCell)
 	}
 	var scaling []view.Field
 	for _, s := range describeView(apidoc.NodegroupDescription{Nodegroup: n}).Sections {
@@ -23,9 +23,9 @@ func TestUnknownSizes(t *testing.T) {
 		}
 	}
 	want := []view.Field{
-		{Name: "desired", Value: unknownCell, Status: view.Unknown},
-		{Name: "min", Value: unknownCell, Status: view.Unknown},
-		{Name: "max", Value: unknownCell, Status: view.Unknown},
+		{Name: "desired", Value: view.UnknownCell, Status: view.Unknown},
+		{Name: "min", Value: view.UnknownCell, Status: view.Unknown},
+		{Name: "max", Value: view.UnknownCell, Status: view.Unknown},
 	}
 	if diff := cmp.Diff(want, scaling); diff != "" {
 		t.Errorf("SCALING (-want +got):\n%s", diff)

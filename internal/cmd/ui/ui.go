@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 	"time"
 
@@ -14,49 +13,34 @@ import (
 	"github.com/charmbracelet/colorprofile"
 	"github.com/spf13/cobra"
 
-	"github.com/dantech2000/refresh/internal/awsx"
 	"github.com/dantech2000/refresh/internal/change"
+	"github.com/dantech2000/refresh/internal/cmd/changecmd"
 	"github.com/dantech2000/refresh/internal/cmd/fleetcmd"
 	"github.com/dantech2000/refresh/internal/cmdutil"
-	"github.com/dantech2000/refresh/internal/contexts"
 	"github.com/dantech2000/refresh/internal/fleet"
 	"github.com/dantech2000/refresh/internal/tui"
 	"github.com/dantech2000/refresh/internal/tui/backend"
 	"github.com/dantech2000/refresh/internal/tui/state"
+	"github.com/dantech2000/refresh/internal/view"
 )
 
 // minInterval is the shortest time between two sweeps.
 const minInterval = 10 * time.Second
 
 type options struct {
-	ios      *cmdutil.IOStreams
-	aws      func(ctx context.Context) (*awsx.Provider, error)
-	contexts func() (*contexts.Store, error)
-	global   *cmdutil.GlobalOptions
-	now      func() time.Time
-	after    func(time.Duration) <-chan time.Time
-	// deps builds the dependencies of a change from the provider.
-	deps func(provider *awsx.Provider) change.Deps
+	f   *cmdutil.Factory
+	ios *cmdutil.IOStreams
 
 	allRegions     bool
 	interval       time.Duration
 	allowChanges   bool
 	waitTimeout    time.Duration
 	waitTimeoutSet bool
-
-	// profileInEffect returns the AWS profile of the run, and profile
-	// holds it.
-	profileInEffect func() (string, error)
-	profile         string
 }
 
 // NewCmdUI returns the ui command.
 func NewCmdUI(f *cmdutil.Factory) *cobra.Command {
-	o := &options{ios: f.IOStreams, aws: f.AWS, contexts: f.Contexts, global: &f.Global, now: f.Now, after: f.After,
-		profileInEffect: func() (string, error) { return cmdutil.ProfileInEffect(f) },
-		deps: func(provider *awsx.Provider) change.Deps {
-			return change.Deps{AWS: provider, Fetch: &fleet.Fetcher{Now: f.Now}, Kube: f.Kube, Now: f.Now, After: f.After, AfterFunc: f.AfterFunc, Tick: f.Tick}
-		}}
+	o := &options{f: f, ios: f.IOStreams}
 	cmd := &cobra.Command{
 		Use:   "ui",
 		Short: "Open the terminal UI for the fleet (experimental)",
@@ -108,7 +92,7 @@ Exit codes:
 }
 
 func (o *options) validate() error {
-	if err := fleetcmd.ValidateSweepFlags(o.global, o.allRegions); err != nil {
+	if err := fleetcmd.ValidateSweepFlags(&o.f.Global, o.allRegions); err != nil {
 		return err
 	}
 	if o.interval < minInterval {
@@ -124,36 +108,38 @@ func (o *options) validate() error {
 }
 
 func (o *options) run(ctx context.Context) error {
-	provider, err := o.aws(ctx)
+	provider, err := o.f.AWS(ctx)
 	if err != nil {
 		return err
 	}
 	// The top bar shows the profile in effect also when AWS_PROFILE or
 	// the context names it. Loading the provider read the same settings.
-	if o.profile, err = o.profileInEffect(); err != nil {
+	profile, err := cmdutil.ProfileInEffect(o.f)
+	if err != nil {
 		return err
 	}
+	global := &o.f.Global
 	bctx, cancel := backendContext(ctx)
 	defer cancel()
 
 	b := backend.New(bctx, provider, backend.Options{
-		Regions:         fleetcmd.SweepRegions(o.global, provider.Region(), o.allRegions),
+		Regions:         fleetcmd.SweepRegions(global, provider.Region(), o.allRegions),
 		Interval:        o.interval,
 		AllowChanges:    o.allowChanges,
-		ReadTimeout:     o.global.Timeout,
+		ReadTimeout:     global.Timeout,
 		WaitTimeout:     o.waitTimeout,
 		WaitTimeoutSet:  o.waitTimeoutSet,
-		Deps:            o.deps(provider),
-		Profile:         o.global.Profile,
-		ProfileInEffect: o.profile,
+		Deps:            changecmd.DepsOf(o.f, provider),
+		Profile:         global.Profile,
+		ProfileInEffect: profile,
 		Context:         o.contextName(),
-		Kubeconfig:      o.global.Kubeconfig,
-		KubeContext:     o.global.KubeContext,
+		Kubeconfig:      global.Kubeconfig,
+		KubeContext:     global.KubeContext,
 		SweepError: func(ctx context.Context, res *fleet.SweepResult) error {
 			return fleetcmd.SweepError(ctx, provider, res)
 		},
-		Now:   o.now,
-		After: o.after,
+		Now:   o.f.Now,
+		After: o.f.After,
 	})
 	done := make(chan struct{})
 	go func() {
@@ -275,13 +261,13 @@ func sayUnfinished(w io.Writer, changes []state.Change) {
 		cut = append(cut, line)
 	}
 	if len(inEKS) > 0 {
-		_, _ = fmt.Fprintf(w, "%s still running in EKS; the UI no longer follows %s:\n", plural(len(inEKS), "change"), them(len(inEKS)))
+		_, _ = fmt.Fprintf(w, "%s still running in EKS; the UI no longer follows %s:\n", view.Plural(len(inEKS), "change"), them(len(inEKS)))
 		for _, line := range inEKS {
 			_, _ = fmt.Fprintln(w, line)
 		}
 	}
 	if len(cut) > 0 {
-		_, _ = fmt.Fprintf(w, "%s of this UI stopped with it:\n", plural(len(cut), "change"))
+		_, _ = fmt.Fprintf(w, "%s of this UI stopped with it:\n", view.Plural(len(cut), "change"))
 		for _, line := range cut {
 			_, _ = fmt.Fprintln(w, line)
 		}
@@ -324,24 +310,9 @@ func kindWord(k change.Kind) string {
 	return string(k) + " of"
 }
 
-func plural(n int, noun string) string {
-	if n == 1 {
-		return "1 " + noun
-	}
-	return fmt.Sprintf("%d %ss", n, noun)
-}
-
 // contextName is the active refresh context, for the top bar, or "".
 func (o *options) contextName() string {
-	store, err := o.contexts()
-	if err != nil {
-		return ""
-	}
-	file, err := store.Load()
-	if err != nil {
-		return ""
-	}
-	name, _, ok, err := file.Active(os.Getenv(contexts.EnvContext))
+	name, _, ok, err := cmdutil.ActiveContext(o.f)
 	if err != nil || !ok {
 		return ""
 	}

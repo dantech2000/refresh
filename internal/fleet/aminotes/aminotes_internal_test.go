@@ -1,4 +1,4 @@
-package nodegroup
+package aminotes
 
 import (
 	"context"
@@ -101,7 +101,7 @@ func TestSummarizeReleaseBody(t *testing.T) {
 
 func TestChangelogLinesFetched(t *testing.T) {
 	srv, _ := releaseServer(t, http.StatusOK, threeReleases)
-	lines, warnings := changelogLines(context.Background(), srv.Client(), srv.URL, []changelogTarget{
+	lines, warnings := collect(context.Background(), srv.Client(), srv.URL, []Target{
 		{Nodegroup: "ng-a", AMIType: "AL2023_x86_64_STANDARD", Release: "1.31.0-20260201"},
 	})
 	want := []string{
@@ -122,7 +122,7 @@ func TestChangelogLinesFetched(t *testing.T) {
 
 func TestChangelogLinesOnNewestRelease(t *testing.T) {
 	srv, _ := releaseServer(t, http.StatusOK, threeReleases)
-	lines, warnings := changelogLines(context.Background(), srv.Client(), srv.URL, []changelogTarget{
+	lines, warnings := collect(context.Background(), srv.Client(), srv.URL, []Target{
 		{Nodegroup: "ng-a", AMIType: "AL2_x86_64", Release: "1.31.0-20260601"},
 	})
 	want := []string{"nodegroup ng-a: on the newest published release (1.31.0-20260601)"}
@@ -143,7 +143,7 @@ func TestChangelogLinesNotesCap(t *testing.T) {
 	}
 	b.WriteString("]")
 	srv, _ := releaseServer(t, http.StatusOK, b.String())
-	lines, warnings := changelogLines(context.Background(), srv.Client(), srv.URL, []changelogTarget{
+	lines, warnings := collect(context.Background(), srv.Client(), srv.URL, []Target{
 		{Nodegroup: "ng-a", AMIType: "AL2023_ARM_64_STANDARD", Release: "1.32.0-20250101"},
 	})
 	if len(warnings) != 0 {
@@ -156,7 +156,7 @@ func TestChangelogLinesNotesCap(t *testing.T) {
 
 func TestChangelogLinesOneFetchForSeveralTargets(t *testing.T) {
 	srv, requests := releaseServer(t, http.StatusOK, threeReleases)
-	lines, warnings := changelogLines(context.Background(), srv.Client(), srv.URL, []changelogTarget{
+	lines, warnings := collect(context.Background(), srv.Client(), srv.URL, []Target{
 		{Nodegroup: "ng-a", AMIType: "AL2023_x86_64_STANDARD", Release: "1.31.0-20260201"},
 		{Nodegroup: "ng-b", AMIType: "AL2_ARM_64", Release: "1.31.0-20260601"},
 		{Nodegroup: "ng-c", AMIType: "AL2023_x86_64_NVIDIA", Release: "1.31.0-20260301"},
@@ -195,39 +195,39 @@ func TestChangelogLinesOtherFamilies(t *testing.T) {
 	const windows = "https://docs.aws.amazon.com/eks/latest/userguide/eks-ami-versions-windows.html"
 	cases := []struct {
 		name     string
-		target   changelogTarget
+		target   Target
 		lines    []string
 		warnings []string
 	}{
 		{
 			name:   "bottlerocket",
-			target: changelogTarget{Nodegroup: "ng", AMIType: "BOTTLEROCKET_x86_64", Release: "1.20.3-5d9ac849"},
+			target: Target{Nodegroup: "ng", AMIType: "BOTTLEROCKET_x86_64", Release: "1.20.3-5d9ac849"},
 			lines:  []string{"nodegroup ng: see release notes: " + bottlerocket},
 		},
 		{
 			name:   "bottlerocket with an all-digit commit hash",
-			target: changelogTarget{Nodegroup: "ng", AMIType: "BOTTLEROCKET_ARM_64_NVIDIA", Release: "1.20.3-20240101"},
+			target: Target{Nodegroup: "ng", AMIType: "BOTTLEROCKET_ARM_64_NVIDIA", Release: "1.20.3-20240101"},
 			lines:  []string{"nodegroup ng: see release notes: " + bottlerocket},
 		},
 		{
 			name:   "windows",
-			target: changelogTarget{Nodegroup: "ng", AMIType: "WINDOWS_CORE_2022_x86_64", Release: "1.31-2026.01.14"},
+			target: Target{Nodegroup: "ng", AMIType: "WINDOWS_CORE_2022_x86_64", Release: "1.31-2026.01.14"},
 			lines:  []string{"nodegroup ng: see release notes: " + windows},
 		},
 		{
 			name:   "custom",
-			target: changelogTarget{Nodegroup: "ng", AMIType: "CUSTOM", Release: "1.31.0-20260201"},
+			target: Target{Nodegroup: "ng", AMIType: "CUSTOM", Release: "1.31.0-20260201"},
 		},
 		{
 			name:     "unknown",
-			target:   changelogTarget{Nodegroup: "ng", AMIType: "FUTURE_OS_x86_64", Release: "1.31.0-20260201"},
+			target:   Target{Nodegroup: "ng", AMIType: "FUTURE_OS_x86_64", Release: "1.31.0-20260201"},
 			warnings: []string{`release notes unavailable for nodegroup ng: no release notes source for AMI type "FUTURE_OS_x86_64"`},
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			srv, requests := releaseServer(t, http.StatusInternalServerError, "")
-			lines, warnings := changelogLines(context.Background(), srv.Client(), srv.URL, []changelogTarget{tc.target})
+			lines, warnings := collect(context.Background(), srv.Client(), srv.URL, []Target{tc.target})
 			if diff := cmp.Diff(tc.lines, lines); diff != "" {
 				t.Errorf("lines (-want +got):\n%s", diff)
 			}
@@ -243,7 +243,7 @@ func TestChangelogLinesOtherFamilies(t *testing.T) {
 
 func TestChangelogLinesUnparseableRelease(t *testing.T) {
 	srv, requests := releaseServer(t, http.StatusOK, threeReleases)
-	lines, warnings := changelogLines(context.Background(), srv.Client(), srv.URL, []changelogTarget{
+	lines, warnings := collect(context.Background(), srv.Client(), srv.URL, []Target{
 		{Nodegroup: "ng-a", AMIType: "AL2023_x86_64_STANDARD", Release: "custom-x"},
 	})
 	if len(lines) != 0 {
@@ -260,7 +260,7 @@ func TestChangelogLinesUnparseableRelease(t *testing.T) {
 
 func TestChangelogLinesNilClient(t *testing.T) {
 	srv, requests := releaseServer(t, http.StatusOK, threeReleases)
-	lines, warnings := changelogLines(context.Background(), nil, srv.URL, []changelogTarget{
+	lines, warnings := collect(context.Background(), nil, srv.URL, []Target{
 		{Nodegroup: "ng-a", AMIType: "AL2023_x86_64_STANDARD", Release: "1.31.0-20260201"},
 	})
 	if len(lines) != 0 {
@@ -293,7 +293,7 @@ func TestChangelogLinesFetchFailures(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			srv, requests := releaseServer(t, tc.status, tc.body)
-			lines, warnings := changelogLines(context.Background(), srv.Client(), srv.URL, []changelogTarget{
+			lines, warnings := collect(context.Background(), srv.Client(), srv.URL, []Target{
 				{Nodegroup: "ng-a", AMIType: "AL2023_x86_64_STANDARD", Release: "1.31.0-20260201"},
 				{Nodegroup: "ng-b", AMIType: "BOTTLEROCKET_x86_64", Release: "1.20.3-5d9ac849"},
 				{Nodegroup: "ng-c", AMIType: "AL2_x86_64", Release: "1.31.0-20260301"},
@@ -329,7 +329,7 @@ func TestChangelogLinesLargeReleaseList(t *testing.T) {
 		t.Fatalf("list is %d bytes, want between 1 MiB and the limit", b.Len())
 	}
 	srv, _ := releaseServer(t, http.StatusOK, b.String())
-	lines, warnings := changelogLines(context.Background(), srv.Client(), srv.URL, []changelogTarget{
+	lines, warnings := collect(context.Background(), srv.Client(), srv.URL, []Target{
 		{Nodegroup: "ng-a", AMIType: "AL2023_x86_64_STANDARD", Release: "1.34.10-20260501"},
 	})
 	if len(warnings) != 0 {
@@ -345,7 +345,7 @@ func TestChangelogLinesCancelledContext(t *testing.T) {
 	srv, requests := releaseServer(t, http.StatusOK, threeReleases)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	lines, warnings := changelogLines(ctx, srv.Client(), srv.URL, []changelogTarget{
+	lines, warnings := collect(ctx, srv.Client(), srv.URL, []Target{
 		{Nodegroup: "ng-a", AMIType: "AL2023_x86_64_STANDARD", Release: "1.31.0-20260201"},
 	})
 	if len(lines) != 0 {
@@ -361,7 +361,7 @@ func TestChangelogLinesCancelledContext(t *testing.T) {
 }
 
 func TestChangelogLinesNoTargets(t *testing.T) {
-	lines, warnings := changelogLines(context.Background(), nil, "", nil)
+	lines, warnings := collect(context.Background(), nil, "", nil)
 	if len(lines) != 0 || len(warnings) != 0 {
 		t.Errorf("lines = %q, warnings = %q; want none", lines, warnings)
 	}

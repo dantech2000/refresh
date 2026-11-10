@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/spf13/cobra"
 
@@ -17,14 +16,8 @@ import (
 )
 
 type describeOptions struct {
-	ios    *cmdutil.IOStreams
-	global *cmdutil.GlobalOptions
-	// now returns the time that a snapshot records.
-	now func() time.Time
-	// resolve returns the cluster of the run, from the flag or the
-	// defaults, and clients the AWS clients of its region.
-	resolve func(cluster string) (cmdutil.Target, error)
-	clients func(ctx context.Context) (*awsx.Clients, error)
+	f   *cmdutil.Factory
+	ios *cmdutil.IOStreams
 
 	cluster string
 	addon   string
@@ -35,11 +28,7 @@ type describeOptions struct {
 }
 
 func newCmdDescribe(f *cmdutil.Factory) *cobra.Command {
-	o := &describeOptions{
-		ios: f.IOStreams, global: &f.Global, now: f.Now,
-		resolve: func(cluster string) (cmdutil.Target, error) { return cmdutil.ResolveCluster(f, cluster, true) },
-		clients: func(ctx context.Context) (*awsx.Clients, error) { return cmdutil.ClusterClients(ctx, f) },
-	}
+	o := &describeOptions{f: f, ios: f.IOStreams}
 	cmd := &cobra.Command{
 		Use:   "describe <addon>",
 		Short: "Describe one add-on of a cluster",
@@ -82,7 +71,7 @@ Exit codes:
 
 func (o *describeOptions) complete(args []string) error {
 	o.addon = args[0]
-	target, err := o.resolve(o.cluster)
+	target, err := cmdutil.ResolveCluster(o.f, o.cluster, true)
 	o.target = target
 	return err
 }
@@ -92,20 +81,16 @@ func (o *describeOptions) complete(args []string) error {
 func (o *describeOptions) validate() error { return awsx.CheckAddonName(o.addon) }
 
 func (o *describeOptions) run(ctx context.Context) error {
-	ctx, cancel := cmdutil.WithTimeout(ctx, o.global.Timeout)
+	ctx, cancel := cmdutil.WithTimeout(ctx, o.f.Global.Timeout)
 	defer cancel()
-	clients, err := o.clients(ctx)
+	read, err := fleetcmd.FetchCluster(ctx, o.f, o.target, fleet.Need{OnlyAddons: []string{o.addon}})
 	if err != nil {
 		return err
 	}
-	fetcher := fleet.Fetcher{Now: o.now}
-	snap, err := fetcher.Fetch(ctx, clients, o.target.Cluster, fleet.Need{OnlyAddons: []string{o.addon}})
-	if err != nil {
-		return fleetcmd.ClusterError(ctx, &fetcher, clients, o.target.Cluster, err)
-	}
+	snap := read.Snapshot
 	addon := snap.Addons[0]
 	if addon.State != fleet.Collected {
-		return o.addonError(ctx, &fetcher, snap)
+		return o.addonError(ctx, read)
 	}
 
 	doc := apidoc.AddonDescription{
@@ -119,29 +104,23 @@ func (o *describeOptions) run(ctx context.Context) error {
 // addonError returns the error for an add-on that could not be read. One
 // that does not exist gets the names that are close to it, which costs one
 // list call.
-func (o *describeOptions) addonError(ctx context.Context, fetcher *fleet.Fetcher, snap *fleet.Snapshot) error {
+func (o *describeOptions) addonError(ctx context.Context, read *fleetcmd.Read) error {
+	snap := read.Snapshot
 	if len(snap.Failures) == 0 {
 		return fmt.Errorf("could not read add-on %s of cluster %s", o.addon, snap.Cluster.Name)
 	}
 	failure := snap.Failures[0]
 	if failure.Reason != apidoc.ReasonNotFound {
 		if failure.Reason == apidoc.ReasonInterrupted {
-			return fmt.Errorf("interrupted: %w", context.Canceled)
+			return cmdutil.ErrInterrupted
 		}
 		return errors.New("could not read " + view.FailureLine(failure))
 	}
-	clients, err := o.clients(ctx)
-	if err != nil {
-		return err
-	}
 	// Without the list the error still says what is wrong.
-	names, _ := fetcher.AddonNames(ctx, clients, snap.Cluster.Name)
+	names, _ := read.Fetcher.AddonNames(ctx, read.Clients, snap.Cluster.Name)
 	return cmdutil.NotFoundError("add-on", o.addon, "cluster "+snap.Cluster.Name, names,
 		"refresh addon list -c "+snap.Cluster.Name)
 }
-
-// dateLayout is how a describe view prints a time.
-const dateLayout = "2006-01-02 15:04 UTC"
 
 // describeView returns the table and plain form of doc.
 func describeView(doc apidoc.AddonDescription) view.Description {
@@ -159,22 +138,14 @@ func describeView(doc apidoc.AddonDescription) view.Description {
 			{Title: "OVERVIEW", Fields: []view.Field{
 				{Name: "version", Value: a.Version},
 				{Name: "status", Value: a.Status, Status: view.StatusOf(a.Status)},
-				{Name: "health", Value: string(a.Health), Status: healthStatus(a.Health)},
+				{Name: "health", Value: string(a.Health), Status: view.AddonHealthStatus(a.Health)},
 				{Name: "arn", Value: a.ARN},
 				{Name: "service account role", Value: a.ServiceAccountRoleARN},
-				{Name: "created", Value: formatTime(a.CreatedAt)},
-				{Name: "modified", Value: formatTime(a.ModifiedAt)},
+				{Name: "created", Value: view.Time(a.CreatedAt)},
+				{Name: "modified", Value: view.Time(a.ModifiedAt)},
 			}},
 			{Title: "ISSUES", Items: issues},
 			{Title: "CONFIGURATION", Fields: []view.Field{{Name: "values", Value: a.Configuration}}},
 		},
 	}
-}
-
-// formatTime returns t for a describe view, or "" for the zero time.
-func formatTime(t time.Time) string {
-	if t.IsZero() {
-		return ""
-	}
-	return t.UTC().Format(dateLayout)
 }

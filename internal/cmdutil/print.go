@@ -1,6 +1,8 @@
 package cmdutil
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"slices"
@@ -33,6 +35,37 @@ func Print(ios *IOStreams, format Format, doc apidoc.Document, v HumanView) erro
 		return WriteLines(ios.Out, v.Render(ios.Theme(), width))
 	}
 	return fmt.Errorf("cannot print as %q", format)
+}
+
+// PrintResult prints the result of a read and returns the error that ends
+// the run. It is the output contract of a result that may be partial:
+//
+//  1. doc in format, or v for a person (Print).
+//  2. The failures on stderr, for the formats whose stdout cannot list
+//     them (ReportFailures).
+//  3. ErrInterrupted when the user interrupted the run.
+//  4. Else the IncompleteError of failures: exit 4, or nil.
+func PrintResult(ctx context.Context, ios *IOStreams, format Format, doc apidoc.Document, v HumanView, failures []apidoc.Failure) error {
+	if err := PrintReport(ctx, ios, format, doc, v, failures); err != nil {
+		return err
+	}
+	return IncompleteError(failures)
+}
+
+// PrintReport does the first three steps of PrintResult and returns nil
+// where PrintResult would go on: for a command that decides its own exit
+// code from the result, failures included.
+func PrintReport(ctx context.Context, ios *IOStreams, format Format, doc apidoc.Document, v HumanView, failures []apidoc.Failure) error {
+	if err := Print(ios, format, doc, v); err != nil {
+		return err
+	}
+	if format != FormatTable {
+		ReportFailures(ios, failures)
+	}
+	if errors.Is(ctx.Err(), context.Canceled) {
+		return ErrInterrupted
+	}
+	return nil
 }
 
 // WriteLines writes each line and a line break to w, in one write.

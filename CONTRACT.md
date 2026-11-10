@@ -83,6 +83,7 @@ Every command is `refresh <noun> <verb>`, except the five that have no noun: `st
 | `addon describe` | `<addon>` | `-c`, then the resolution order |
 | `addon update` | `[addon...]`, or `--all` | `-c`, then the resolution order |
 | `status`, `cluster list`, `ui` | none | A sweep: the regions from `-r`, `-A`, or the default |
+| `nodegroup update --all-clusters` | none | Every cluster of the regions of `-r`; without `-r`, of the home region only. It never reads `REFRESH_EKS_REGIONS` and has no `-A`. With no `-r` and no home region it is an error. |
 
 Cluster resolution order:
 

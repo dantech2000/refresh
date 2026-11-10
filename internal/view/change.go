@@ -188,20 +188,8 @@ func gateSections(g *apidoc.Gate, suffix string) []Section {
 			{Name: "accepted", Value: strings.Join(g.Accepted, "\n")},
 			{Name: "forced", Value: strings.Join(g.Forced, "\n")},
 		}},
-		{Title: "CHECKS" + suffix, Items: healthItems(g.Checks)},
+		{Title: "CHECKS" + suffix, Items: HealthItems(g.Checks)},
 	}
-}
-
-// healthItems returns one item for each health result.
-func healthItems(results []apidoc.HealthResult) []Item {
-	items := make([]Item, len(results))
-	for i, r := range results {
-		items[i] = Item{Name: r.Name, Fields: []Field{
-			{Name: "outcome", Value: string(r.Outcome), Status: HealthStatus(r.Outcome)},
-			{Name: "message", Value: r.Message},
-		}}
-	}
-	return items
 }
 
 // numbered returns the lines as fields named 1, 2, and so on.
@@ -312,7 +300,7 @@ func RunView(doc apidoc.Run) Description {
 			}},
 			Section{Title: "RESULTS" + suffix, Items: resultItems(c)},
 			Section{Title: "BLOCKERS" + suffix, Items: blockerItems(c.Cluster, c.Blockers)},
-			Section{Title: "VERIFICATION" + suffix, Items: healthItems(c.Verification)},
+			Section{Title: "VERIFICATION" + suffix, Items: HealthItems(c.Verification)},
 		)
 		d.Sections = append(d.Sections, gateSections(c.Gate, suffix)...)
 		d.Sections = append(d.Sections, Section{Title: "NOTICES" + suffix, Fields: numbered(c.Notices)})

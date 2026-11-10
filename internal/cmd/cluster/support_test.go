@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/dantech2000/refresh/internal/apidoc"
+	"github.com/dantech2000/refresh/internal/view"
 )
 
 // A cluster in extended support shows the premium over standard support in
@@ -17,8 +18,8 @@ func TestSupport_Premium(t *testing.T) {
 	tests := []struct {
 		name, got, want string
 	}{
-		{"text", supportText(paid), "extended (40d) +$0.50/hr"},
-		{"text, auto-upgrade", supportText(auto), "extended (40d)"},
+		{"text", view.SupportCell(paid), "extended (40d) +$0.50/hr"},
+		{"text, auto-upgrade", view.SupportCell(auto), "extended (40d)"},
 		{"line", supportLine(paid), "extended until 2027-06-01 (40 days), +$0.50/hr over standard support"},
 		{"line, auto-upgrade", supportLine(auto), "extended until 2027-06-01 (40 days), at a higher price"},
 	}
