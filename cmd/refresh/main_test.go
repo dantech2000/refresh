@@ -380,8 +380,8 @@ func TestUpdateCachePath(t *testing.T) {
 // "refresh version" stands in for client-go and for refresh.
 //
 // klog and slog have one logger each for the process. The test does not
-// run in parallel, and execute puts the default loggers back, so no other
-// test sees the routing of this one.
+// run in parallel. execute puts the slog default back, and the cleanup
+// clears klog, so no other test sees the routing of this one.
 func TestLogs(t *testing.T) {
 	const line = "watch of *v1.Node ended"
 	// refreshLine is a debug line of refresh itself, through slog.
