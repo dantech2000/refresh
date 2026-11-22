@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.18.2](https://github.com/dantech2000/refresh/compare/v0.18.1...v0.18.2) (2026-11-21)
+
+
+### Bug Fixes
+
+* **build:** bump the toolchain to go1.26.11 for GO-2026-6859 ([#659](https://github.com/dantech2000/refresh/issues/659)) ([59806fc](https://github.com/dantech2000/refresh/commit/59806fce45e3f5b4c82bc33e6aa0ae772f63aebe))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/feature/ec2/imds ([#655](https://github.com/dantech2000/refresh/issues/655)) ([575bf1c](https://github.com/dantech2000/refresh/commit/575bf1c1fbe1035e5905a92e7ca6e07ea1b3ce49))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/internal/v4a ([#649](https://github.com/dantech2000/refresh/issues/649)) ([d9ddde7](https://github.com/dantech2000/refresh/commit/d9ddde7b61f553f6ca4ad8d45d2730e79fd52bc3))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/autoscaling ([#651](https://github.com/dantech2000/refresh/issues/651)) ([aff6067](https://github.com/dantech2000/refresh/commit/aff6067c8ea1addecd8b7faa004a1f5b9907ad0c))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/eks ([#653](https://github.com/dantech2000/refresh/issues/653)) ([e5ce507](https://github.com/dantech2000/refresh/commit/e5ce50735c94fdd166c9fe2a2f29a96164a3e941))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/internal/presigned-url ([#652](https://github.com/dantech2000/refresh/issues/652)) ([e1ccfb1](https://github.com/dantech2000/refresh/commit/e1ccfb1a5c6ba9919a94a1870d25ea703ba23a3f))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/servicequotas ([#658](https://github.com/dantech2000/refresh/issues/658)) ([4c38702](https://github.com/dantech2000/refresh/commit/4c387029614b0e81a918aa2cf590c5a6cdf3fe5e))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/ssm ([#654](https://github.com/dantech2000/refresh/issues/654)) ([1404837](https://github.com/dantech2000/refresh/commit/140483744098d4d37dc74ec22cb003f88afb5af6))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/ssooidc ([#656](https://github.com/dantech2000/refresh/issues/656)) ([0ce173d](https://github.com/dantech2000/refresh/commit/0ce173d48641952d60c5887b96ba58165a61510c))
+* **deps:** bump golang.org/x/sys from 0.49.0 to 0.50.0 ([#650](https://github.com/dantech2000/refresh/issues/650)) ([dd99743](https://github.com/dantech2000/refresh/commit/dd997438e483ab2b6c7ec82a859df0f13ace2595))
+
 ## [0.18.1](https://github.com/dantech2000/refresh/compare/v0.18.0...v0.18.1) (2026-11-10)
 
 
