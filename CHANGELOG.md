@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.18.3](https://github.com/dantech2000/refresh/compare/v0.18.2...v0.18.3) (2026-11-23)
+
+
+### Bug Fixes
+
+* **deps:** bump charm.land/bubbletea/v2 from 2.1.1 to 2.1.2 ([#667](https://github.com/dantech2000/refresh/issues/667)) ([869dd79](https://github.com/dantech2000/refresh/commit/869dd79cee28c42e3f8cc8c9d3b11fe1c90e77ca))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/cloudwatch ([#675](https://github.com/dantech2000/refresh/issues/675)) ([bcbc5c7](https://github.com/dantech2000/refresh/commit/bcbc5c7e9803a5c9d74987502b4f5247b07ea672))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/ec2 ([#669](https://github.com/dantech2000/refresh/issues/669)) ([e1daf29](https://github.com/dantech2000/refresh/commit/e1daf296b9c22efa03474cdf5b3a786afd3941a3))
+* **deps:** bump github.com/aws/aws-sdk-go-v2/service/sso ([#673](https://github.com/dantech2000/refresh/issues/673)) ([f82db54](https://github.com/dantech2000/refresh/commit/f82db546b4398d7a529555db83a11a7d60a59004))
+* **deps:** bump github.com/charmbracelet/x/ansi from 0.11.9 to 0.11.10 ([#674](https://github.com/dantech2000/refresh/issues/674)) ([3931d0a](https://github.com/dantech2000/refresh/commit/3931d0ae92b43b65a4d637cc5e50c41e51537a78))
+* **deps:** bump github.com/pb33f/go-yaml from 0.1.1 to 0.2.0 ([#666](https://github.com/dantech2000/refresh/issues/666)) ([79a1018](https://github.com/dantech2000/refresh/commit/79a1018cf481cf7c2433d2616ec9b646aeda6140))
+* **deps:** bump go.yaml.in/yaml/v3 from 3.0.5 to 3.0.6 ([#670](https://github.com/dantech2000/refresh/issues/670)) ([ea66814](https://github.com/dantech2000/refresh/commit/ea66814ae8376255124d71774f33f58d96b2f752))
+* **deps:** bump golang.org/x/net from 0.62.0 to 0.63.0 ([#668](https://github.com/dantech2000/refresh/issues/668)) ([a972dc0](https://github.com/dantech2000/refresh/commit/a972dc021fb341c8bae932ccfaaee2a2b7ad251c))
+* **deps:** bump golang.org/x/text from 0.43.0 to 0.44.0 ([#671](https://github.com/dantech2000/refresh/issues/671)) ([dfa8d34](https://github.com/dantech2000/refresh/commit/dfa8d348712b8e86f514edf3b477684e20f97af9))
+
 ## [0.18.2](https://github.com/dantech2000/refresh/compare/v0.18.1...v0.18.2) (2026-11-21)
 
 
